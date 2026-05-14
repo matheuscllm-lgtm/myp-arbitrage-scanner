@@ -2,3 +2,9 @@ cloudscraper>=1.2.71
 beautifulsoup4>=4.12.0
 lxml>=4.9.0
 openpyxl>=3.1.0
+# CloudFlare frequentemente serve com Content-Encoding: br (Brotli). Sem este
+# pacote, requests retorna bytes crus comprimidos e o parser HTML falha
+# silenciosamente (0 editions encontradas). Bug observado em CI 2026-05-14
+# vs local funcionar — pacote provavelmente já estava no env local via
+# sub-dep de outra ferramenta.
+brotli>=1.1.0
