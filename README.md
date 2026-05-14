@@ -63,13 +63,13 @@ python myp_arbitrage_scanner.py --editions "Prismatic Evolutions" -o my_scan.xls
 
 ## GitHub Actions — rodar na nuvem
 
-O workflow `.github/workflows/scan.yml` executa o scanner no GitHub:
+O workflow `.github/workflows/weekly-scan.yml` executa o scanner no GitHub:
 
-- **Manual:** Actions → "MYP Scan" → Run workflow. Inputs: editions (csv), threshold, min_price, delay.
-- **Automático:** semanal (domingo 10:00 BRT / 13:00 UTC). Default editions = 5 sets recentes.
+- **Manual:** Actions → "Weekly MYP Scan" → Run workflow. Inputs: `editions` (substrings em "", vazio = scan tudo), `threshold`, `min_price`, `max_editions`, `max_products`, `delay`.
+- **Automático:** semanal (domingo 09:00 BRT / 12:00 UTC). Default = scan completo (todas edições, threshold 25%).
 - **Output:** xlsx + `.debug/` enviados como workflow artifact, retenção 30 dias. Download via Actions UI.
 
-Sem secrets necessários — MYP API/scrape é anônimo. Timeout 120min (suficiente pra ~7 sets típicos).
+Sem secrets necessários — MYP API/scrape é anônimo. Timeout 180min cobre worst-case (~2h scan completo). Concurrency group `myp-scan` previne overlaps.
 
 ## Encoding
 
