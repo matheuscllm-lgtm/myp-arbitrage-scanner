@@ -43,6 +43,10 @@ concurrency:
   group: myp-scan
   cancel-in-progress: false
 
+# v5.6 (2026-05-14): aggregate job precisa committar markdown summary no repo
+permissions:
+  contents: write
+
 jobs:
   # ── compute matrix shape baseado em chunk_total ──
   plan:
@@ -181,3 +185,44 @@ jobs:
             myp_arbitrage_*.xlsx
           retention-days: 30
           if-no-files-found: warn
+
+      # v5.6: gera markdown summary pra ficar visível no repo (sem precisar
+      # baixar artifact). Cada scan vira results/weekly-DATE.md + atualiza
+      # results/latest-weekly.md como ponteiro pro último.
+      - name: Generate markdown summary
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          XLSX=$(ls -t myp_arbitrage_*.xlsx 2>/dev/null | head -1)
+          if [ -z "$XLSX" ]; then
+            echo "::warning::Sem XLSX consolidado, pulando summary"
+            exit 0
+          fi
+          DATE=$(date -u +%Y-%m-%d)
+          mkdir -p results
+          OUT="results/weekly-${DATE}.md"
+          python myp_summary.py "$XLSX" \
+            --output "$OUT" \
+            --type weekly \
+            --run-id "${{ github.run_id }}" \
+            --repo "${{ github.repository }}"
+          # Pointer pro último (operador abre só esse no Obsidian)
+          cp "$OUT" "results/latest-weekly.md"
+          echo "Generated: $OUT + results/latest-weekly.md"
+
+      - name: Commit markdown to repo
+        run: |
+          if [ ! -f "results/latest-weekly.md" ]; then
+            echo "Sem markdown gerado, pulando commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add results/
+          if git diff --cached --quiet; then
+            echo "Nada novo pra commitar"
+            exit 0
+          fi
+          git commit -m "results: weekly scan $(date -u +%Y-%m-%d) [skip ci]"
+          git push
+          echo "Pushed markdown summary to main"
