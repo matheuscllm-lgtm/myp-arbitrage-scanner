@@ -1,0 +1,91 @@
+name: MYP Scan
+
+on:
+  # Manual trigger via Actions UI — operator inputs editions/threshold/delay
+  workflow_dispatch:
+    inputs:
+      editions:
+        description: 'Editions a escanear (substrings, separadas por vírgula)'
+        required: false
+        default: 'Ascended Heroes,Black Bolt,White Flare,Destined Rivals,Prismatic Evolutions'
+      threshold:
+        description: 'Margem mínima % (integer, ex 25)'
+        required: false
+        default: '25'
+      min_price:
+        description: 'Preço mínimo EN-NM em R$ (default 80)'
+        required: false
+        default: '80'
+      delay:
+        description: 'Segundos entre requests (default 1.5; aumentar se MYP estiver instável)'
+        required: false
+        default: '1.5'
+
+  # Cron semanal — domingo 13:00 UTC = 10:00 BRT (UTC-3)
+  # Ajustar manualmente se horário de verão mudar offset
+  schedule:
+    - cron: '0 13 * * 0'
+
+concurrency:
+  group: myp-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run scanner
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          # Default values quando triggered por cron (schedule não passa inputs)
+          EDITIONS_RAW="${{ github.event.inputs.editions || 'Ascended Heroes,Black Bolt,White Flare,Destined Rivals,Prismatic Evolutions' }}"
+          THRESHOLD="${{ github.event.inputs.threshold || '25' }}"
+          MIN_PRICE="${{ github.event.inputs.min_price || '80' }}"
+          DELAY="${{ github.event.inputs.delay || '1.5' }}"
+
+          # Converter csv → space-separated com quoting via xargs (preserva substring multi-word)
+          IFS=',' read -ra EDITION_ARR <<< "$EDITIONS_RAW"
+          EDITIONS_ARGS=()
+          for ed in "${EDITION_ARR[@]}"; do
+            # trim leading/trailing whitespace
+            ed_trimmed=$(echo "$ed" | sed 's/^ *//; s/ *$//')
+            EDITIONS_ARGS+=("$ed_trimmed")
+          done
+
+          OUTPUT_NAME="myp_scan_$(date +%Y%m%d_%H%M).xlsx"
+          echo "Running scan: editions=${EDITIONS_ARGS[*]} threshold=$THRESHOLD min_price=$MIN_PRICE delay=$DELAY"
+
+          python myp_arbitrage_scanner.py \
+            --editions "${EDITIONS_ARGS[@]}" \
+            --threshold "$THRESHOLD" \
+            --min-price "$MIN_PRICE" \
+            --delay "$DELAY" \
+            --output "$OUTPUT_NAME"
+
+      - name: Upload scan output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: myp-scan-${{ github.run_id }}
+          path: |
+            myp_scan_*.xlsx
+            .debug/
+          retention-days: 30
+          if-no-files-found: warn
