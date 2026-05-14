@@ -80,6 +80,26 @@ $env:PYTHONIOENCODING = "utf-8"
 py myp_arbitrage_scanner.py --editions "Ascended Heroes"
 ```
 
+## ⚠️ Vício conhecido da MYP API (por que este scanner NÃO usa API)
+
+A MYP tem uma REST API pública em `https://mypcards.com/api/v1` (descoberta 2026-05-07, sem auth, OpenAPI 3.1). Schema `Produto` retorna `min_price`, `avg_price`, `max_price` em BRL agregados + `tcg_price` USD da TCGPlayer.
+
+**Vício:** os preços agregados (`min_price` etc.) **misturam todas as línguas** (PT + JP + EN + IT + ES + ...) num campo único. Não há filtro `?language=en` no servidor. Para arbitragem EN-NM (que é o que vendemos no TCGPlayer), o `min_price` pode estar refletindo uma listing PT/JP irrelevante.
+
+**Sintoma real (2026-05-07):** Terapagos ex scr 170 — API mostrou R$100 floor com 14 listings. HTML scrape confirmou: **0 EN, 13 PT**. Sem o scrape, teríamos cancelado R$580 de deals válidos CT achando que MYP dominava.
+
+**Bonus quirk — apostrophe bug:** endpoint `/carta/{nome}` retorna HTTP 200 + cards vazios pra nomes com `'`. Cards como "Team Rocket's X", "N's Plan", "Lillie's X", "Morty's X" não retornam match mesmo existindo. Workaround: URL-encode `%27` ou skip via pattern.
+
+**Por isso este scanner NÃO usa a API**, vai direto no HTML scrape per-product:
+- O parser pega cada `<tr>` da seller table, lê o `flag-icon[title]` pra detectar idioma, filtra `Inglês` + `NM`
+- Ground truth por listing — não tem como a API substituir isso
+
+**Quando a API ainda é útil (em ferramenta separada):**
+- Cross-reference rápido de 1 card CT contra MYP (lookup pontual em ~1s) — em `Scripts/myp_api_lookup.py`
+- Pre-filtro pra batch grande (200+ deals) antes de ir pro targeted scrape detalhado
+
+Para o nosso pipeline normal (CT scan → cross-reference MYP), o caminho é direto pro `myp_targeted_scrape.py` (combo: API só pega URL do produto + cloudscraper filtra EN-NM nas tabelas). Ground truth em ~2-5s/card.
+
 ## Limitações conhecidas
 
 - **Truncamento de sellers**: MYP não expõe paginação per-language no rendered HTML. Cards com flag T1 indicam onde isso é provavelmente acontecendo, mas o scanner não consegue listar os sellers truncados — validação manual via perfil de sellers é necessária.
