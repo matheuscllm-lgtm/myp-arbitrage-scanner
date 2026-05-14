@@ -98,11 +98,15 @@ def check_catalog(html: str) -> tuple[bool, str]:
         if links:
             strategy = 3
 
+    # Calibração 2026-05-14: page 1 retorna ~48 links consistentemente
+    # (catálogo total ~348 dividido em ~7-8 pages). Threshold conservador
+    # de 20 pega quebra real (selectors mudaram → 0 ou poucos links) sem
+    # gerar falso positivo em scrape saudável.
     n = len(links)
     if n == 0:
-        return False, f"Zero edition links extraíveis com strategies 1+2+3 (selectors quebraram?)"
-    if n < MIN_EDITIONS / 4:   # 50, ~25% do esperado mínimo só na page 1 — sinal forte de quebra
-        return False, f"Só {n} edition links na page 1 (esperado >50 numa page típica). Strategy {strategy}. Catalog scrape provavelmente quebrado."
+        return False, f"Zero edition links extraíveis com strategies 1+2+3 (selectors quebraram completamente)"
+    if n < 20:
+        return False, f"Só {n} edition links na page 1 (esperado ~48). Strategy {strategy}. Selectors podem estar parcialmente quebrados."
     return True, f"{n} edition links na page 1 via strategy {strategy} (sanity OK)"
 
 
