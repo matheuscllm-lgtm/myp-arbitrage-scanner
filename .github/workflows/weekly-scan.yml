@@ -82,6 +82,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: myp-scan-${{ github.run_id }}
+          include-hidden-files: true  # .debug/ é hidden por começar com ponto
           path: |
             myp_arbitrage_*.xlsx
             .debug/
