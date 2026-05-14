@@ -349,9 +349,15 @@ class MYPScraper:
         card.product_code = code_match.group(0) if code_match else ""
 
         # ── TCG Player price (always EN reference) ──
+        # 2026-05-14 v5.3: usa findall + [-1] (mesma defensive pattern do
+        # strikethrough fix). Cobre o caso de .estat-tcg ter múltiplos R$
+        # (ex.: "Last R$ X | Avg R$ Y") — pega o último valor numérico em
+        # vez de falhar parse com texto multi-preço.
         tcg_el = soup.select_one(".estat-tcg")
         if tcg_el:
-            card.tcg_player_price = self._parse_brl(tcg_el.get_text())
+            tcg_matches = re.findall(r'R\$\s*[\d.,]+', tcg_el.get_text())
+            if tcg_matches:
+                card.tcg_player_price = self._parse_brl(tcg_matches[-1])
 
         # If no TCG Player price, skip this product entirely
         if not card.tcg_player_price:
@@ -478,14 +484,17 @@ class MYPScraper:
             )
 
         # ── Rarity ──
+        # 2026-05-14 v5.3: page_text.lower() precomputed (era chamado N vezes
+        # no loop, ~50µs cada para um page_text típico de 300KB).
         rarity_keywords = [
             "Illustration Rare", "Special Art Rare", "Hyper Rare",
             "Ultra Rare", "Secret Rare", "Art Rare", "Double Rare",
             "Rara Hiper", "Rara Ultra", "Rara Secreta", "Rara",
             "Incomum", "Comum",
         ]
+        page_text_lower = page_text.lower()
         for rarity in rarity_keywords:
-            if rarity.lower() in page_text.lower():
+            if rarity.lower() in page_text_lower:
                 card.rarity = rarity
                 break
 
