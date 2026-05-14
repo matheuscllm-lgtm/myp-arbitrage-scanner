@@ -40,7 +40,11 @@ concurrency:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    # 2026-05-14: bump 180→350 após run 25838111134 estourar 3h sem completar
+    # (~85% do catálogo processado, 17 deals visíveis no log mas zero XLSX
+    # gerado porque morreu antes do generate_xlsx). Catálogo cresceu vs
+    # estimate de 2h da memória. 350min cobre worst case ~5h.
+    timeout-minutes: 350
 
     steps:
       - name: Checkout repo
