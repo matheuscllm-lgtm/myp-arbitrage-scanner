@@ -55,12 +55,16 @@ Changelog v5.3 (2026-05-12 — após caso Psyduck/bartsimpson):
     como R$275 quando deveria ser R$220.
 """
 
+# v5.6.1 fix: requests é transitive dep do cloudscraper E é referenciado em
+# `except (requests.RequestException, ...)` no _get retry loop (v5.4 C3 fix).
+# Antes era importado APENAS no fallback ImportError do cloudscraper, causando
+# NameError em qualquer setup que tenha cloudscraper (todos os production runs).
+import requests
 try:
     import cloudscraper
     HAS_CLOUDSCRAPER = True
 except ImportError:
     HAS_CLOUDSCRAPER = False
-    import requests
 
 from bs4 import BeautifulSoup
 import re
