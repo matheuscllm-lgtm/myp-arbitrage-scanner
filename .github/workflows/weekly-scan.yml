@@ -77,6 +77,27 @@ jobs:
           echo "Args: $ARGS"
           python myp_arbitrage_scanner.py $ARGS
 
+      - name: Diagnose if 0 editions (dump HTML head+title+body sample)
+        if: always()
+        run: |
+          echo "===== .debug/ contents ====="
+          ls -la .debug/ 2>&1 || echo "no .debug dir"
+          echo ""
+          echo "===== debug_1.html size + first 4000 chars ====="
+          if [ -f .debug/debug_1.html ]; then
+            wc -c .debug/debug_1.html
+            echo "--- HEAD ---"
+            head -c 4000 .debug/debug_1.html
+            echo ""
+            echo "--- TAIL ---"
+            tail -c 2000 .debug/debug_1.html
+            echo ""
+            echo "--- grep cloudflare/challenge/captcha ---"
+            grep -iE "cloudflare|challenge|captcha|just a moment|ddos|forbidden|access denied" .debug/debug_1.html | head -10 || echo "no CF markers"
+          else
+            echo "debug_1.html NOT FOUND"
+          fi
+
       - name: Upload scan outputs
         if: always()
         uses: actions/upload-artifact@v4
