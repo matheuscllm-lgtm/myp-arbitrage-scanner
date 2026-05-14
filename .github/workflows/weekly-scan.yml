@@ -1,15 +1,22 @@
 name: Weekly MYP Scan
 
+# v5.5 (2026-05-14): refator pra matrix job + aggregate.
+#
+# Problema anterior: full scan single-thread = ~7h (348 editions × 50 prods × 1.5s),
+# não cabia em GH Actions free tier (max 6h job). 2 runs em 2026-05-14 estouraram
+# 180min e 350min timeouts respectivamente, zero XLSX gerado.
+#
+# Solução: matrix de 6 chunks paralelos via --chunk-index/--chunk-total interleaved
+# slicing no scanner. Cada chunk processa ~58 editions em ~1h. Job final agrega via
+# myp_aggregate.py em XLSX consolidado idêntico ao formato single-thread.
+
 on:
   schedule:
-    # Cron em UTC. 12:00 UTC dom = 09:00 BRT dom. Semanal porque scan completo
-    # leva ~2h (ritmo CloudFlare bypass + delay 1.5s) e inventário MYP não
-    # muda tão rápido quanto CT live listings.
-    - cron: '0 12 * * 0'
+    - cron: '0 12 * * 0'   # dom 12 UTC = 09 BRT
   workflow_dispatch:
     inputs:
       editions:
-        description: 'Substrings de NOMES de edição (separadas por espaço, em "")'
+        description: 'Substrings de edições (separadas por espaço, em "")'
         required: false
         default: ''
       threshold:
@@ -20,31 +27,48 @@ on:
         description: 'Preço mínimo BRL (default 80)'
         required: false
         default: '80'
-      max_editions:
-        description: 'Cap de edições (0 = todas)'
-        required: false
-        default: '0'
-      max_products:
-        description: 'Cap total de produtos (0 = todos; útil pra smoke test)'
-        required: false
-        default: '0'
       delay:
         description: 'Delay entre requests em segundos (default 1.5)'
         required: false
         default: '1.5'
+      chunk_total:
+        description: 'Número de chunks paralelos (default 6; max 20)'
+        required: false
+        default: '6'
 
 concurrency:
   group: myp-scan
   cancel-in-progress: false
 
 jobs:
-  scan:
+  # ── compute matrix shape baseado em chunk_total ──
+  plan:
     runs-on: ubuntu-latest
-    # 2026-05-14: bump 180→350 após run 25838111134 estourar 3h sem completar
-    # (~85% do catálogo processado, 17 deals visíveis no log mas zero XLSX
-    # gerado porque morreu antes do generate_xlsx). Catálogo cresceu vs
-    # estimate de 2h da memória. 350min cobre worst case ~5h.
-    timeout-minutes: 350
+    outputs:
+      chunk_indices: ${{ steps.plan.outputs.chunk_indices }}
+      chunk_total: ${{ steps.plan.outputs.chunk_total }}
+    steps:
+      - name: Compute chunk indices
+        id: plan
+        run: |
+          TOTAL="${{ github.event.inputs.chunk_total || '6' }}"
+          # Cap defensivo: 1-20 chunks
+          if [ "$TOTAL" -lt 1 ]; then TOTAL=1; fi
+          if [ "$TOTAL" -gt 20 ]; then TOTAL=20; fi
+          # JSON array de 0..TOTAL-1
+          INDICES=$(python3 -c "import json; print(json.dumps(list(range($TOTAL))))")
+          echo "chunk_indices=$INDICES" >> $GITHUB_OUTPUT
+          echo "chunk_total=$TOTAL" >> $GITHUB_OUTPUT
+          echo "Plan: $TOTAL chunks → $INDICES"
+
+  scan:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 120   # por chunk; com 6 chunks de ~58 editions cada, ~70min sobra folga
+    strategy:
+      fail-fast: false    # um chunk falhar não derruba os outros
+      matrix:
+        chunk_index: ${{ fromJSON(needs.plan.outputs.chunk_indices) }}
 
     steps:
       - name: Checkout repo
@@ -61,34 +85,96 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run scanner
+      - name: Run scanner chunk ${{ matrix.chunk_index }}/${{ needs.plan.outputs.chunk_total }}
         env:
           PYTHONIOENCODING: utf-8
         run: |
           THRESHOLD="${{ github.event.inputs.threshold || '25' }}"
           MIN_PRICE="${{ github.event.inputs.min_price || '80' }}"
-          MAX_ED="${{ github.event.inputs.max_editions || '0' }}"
-          MAX_PROD="${{ github.event.inputs.max_products || '0' }}"
           DELAY="${{ github.event.inputs.delay || '1.5' }}"
           EDITIONS_INPUT="${{ github.event.inputs.editions || '' }}"
+          CI="${{ matrix.chunk_index }}"
+          CT="${{ needs.plan.outputs.chunk_total }}"
 
           ARGS="--threshold $THRESHOLD --min-price $MIN_PRICE --delay $DELAY"
-          ARGS="$ARGS --output myp_arbitrage_$(date +%Y%m%d_%H%M).xlsx"
-          [ "$MAX_ED" != "0" ] && ARGS="$ARGS --max-editions $MAX_ED"
-          [ "$MAX_PROD" != "0" ] && ARGS="$ARGS --max-products $MAX_PROD"
+          ARGS="$ARGS --chunk-index $CI --chunk-total $CT"
+          ARGS="$ARGS --output myp_chunk_${CI}.xlsx"
           [ -n "$EDITIONS_INPUT" ] && ARGS="$ARGS --editions $EDITIONS_INPUT"
 
           echo "Args: $ARGS"
           python myp_arbitrage_scanner.py $ARGS
 
-      - name: Upload scan outputs
+      - name: Upload chunk artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: myp-scan-${{ github.run_id }}
-          include-hidden-files: true  # .debug/ é hidden por começar com ponto
+          name: myp-chunk-${{ matrix.chunk_index }}
+          include-hidden-files: true
+          path: |
+            myp_chunk_*.xlsx
+            .debug/
+          retention-days: 30
+          if-no-files-found: warn
+
+  aggregate:
+    needs: scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Roda mesmo se algum chunk falhar — agrega o que tem
+    if: always() && needs.scan.result != 'cancelled'
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Download all chunk artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: myp-chunk-*
+          merge-multiple: true
+          path: chunks/
+
+      - name: List downloaded chunks
+        run: |
+          echo "Chunks recebidos:"
+          ls -la chunks/ || echo "(diretório vazio)"
+          find chunks/ -name 'myp_chunk_*.xlsx' -ls
+
+      - name: Aggregate chunks into consolidated XLSX
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          THRESHOLD="${{ github.event.inputs.threshold || '25' }}"
+          # converter percent → fração pra generate_xlsx
+          THRESHOLD_FRAC=$(python3 -c "print($THRESHOLD / 100)")
+          OUT="myp_arbitrage_$(date -u +%Y%m%d_%H%M).xlsx"
+          CHUNK_COUNT=$(find chunks/ -name 'myp_chunk_*.xlsx' | wc -l)
+          if [ "$CHUNK_COUNT" -eq 0 ]; then
+            echo "::error::Zero chunks recuperados — não há nada pra agregar"
+            exit 1
+          fi
+          python myp_aggregate.py chunks/myp_chunk_*.xlsx \
+            --output "$OUT" \
+            --threshold "$THRESHOLD_FRAC"
+          echo "Final XLSX: $OUT"
+
+      - name: Upload consolidated artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: myp-scan-consolidated-${{ github.run_id }}
           path: |
             myp_arbitrage_*.xlsx
-            .debug/
           retention-days: 30
           if-no-files-found: warn

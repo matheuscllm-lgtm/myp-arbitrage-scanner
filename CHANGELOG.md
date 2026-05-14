@@ -1,5 +1,59 @@
 # Changelog
 
+## v5.5 — 2026-05-14 — Matrix job + aggregation (infraestrutura escalável)
+
+Full scan single-thread = ~7h (348 editions × ~50 prods × 1.5s delay) — não cabe
+em GH Actions free tier (max 6h/job). Duas runs em 2026-05-14 estouraram 180min
+e 350min timeouts respectivamente; zero XLSX gerado em ambas. **Decisão arquitetural:
+matrix job paralelo + step de aggregation.**
+
+### Scanner
+
+- Novas flags `--chunk-index N` `--chunk-total M` em `myp_arbitrage_scanner.py`.
+  Após `get_all_editions()` + filter, faz `editions[N::M]` (interleaved slicing).
+  Interleaved escolhido sobre block para load balancing — edição sizes variam
+  muito, blocos sequenciais poderiam concentrar todas as massivas num único chunk.
+- Validação: `0 <= chunk_index < chunk_total`, senão `raise ValueError`.
+
+### Aggregator
+
+- Novo arquivo `myp_aggregate.py`. Lê todos os `myp_chunk_*.xlsx`, reconstrói
+  `CardData` da sheet `"All EN Cards"` de cada um, dedupe defensivo por
+  `product_url` (chunks interleaved NÃO deveriam gerar duplicata, mas se
+  operador rodar 2 chunks sobrepostos, evita inflar relatório), depois
+  invoca `generate_xlsx` reusando single source of truth do scanner.
+- Suporta glob nos inputs (Windows shell não expande).
+- Imprime stats por chunk + count de duplicates removidas.
+- Sheets resultantes idênticas ao formato single-thread: `🔥 Deals`,
+  `All EN Cards`, `🏆 Top 50 Margin`, `🚨 Validate Manually`, `Summary`.
+
+### Workflow (`weekly-scan.yml`)
+
+Refator pra 3 jobs:
+
+1. **`plan`** — gera matrix de chunk indices baseado em `chunk_total`
+   (default 6, cap 1-20). Output: `chunk_indices=[0,1,2,3,4,5]`.
+2. **`scan`** (matrix, `fail-fast: false`) — cada chunk roda o scanner com
+   `--chunk-index N --chunk-total M`, faz upload de `myp_chunk_N.xlsx` como
+   artifact `myp-chunk-N`. Timeout 120min por chunk (sobra folga vs ~70min real).
+3. **`aggregate`** (`needs: scan`, `if: always() && != cancelled`) — baixa todos
+   os artifacts `myp-chunk-*` via `download-artifact@v4` com `merge-multiple: true`,
+   roda `myp_aggregate.py chunks/myp_chunk_*.xlsx`, faz upload do consolidated
+   xlsx como `myp-scan-consolidated-{run_id}`.
+
+### Trade-offs documentados
+
+- **Interleaved vs block:** interleaved, load balancing > previsibilidade
+- **6 chunks default:** balanceia parallelismo vs overhead de startup × 6 jobs
+- **fail-fast: false:** preserva chunks que completaram se um falhar
+- **Aggregate roda mesmo com falha parcial:** entrega XLSX dos chunks bem-sucedidos
+- **Novo input `chunk_total`:** operador pode override (3 chunks pra teste rápido,
+  10 chunks pra max speed)
+- **Sem cache de catalog scrape entre chunks:** cada chunk re-baixa `/pokemon/edicoes`
+  (~30s overhead × 6 = 3min total, aceitável)
+- **CI minutes consumption:** 6 chunks × ~70min = ~420 minutes-instance, vs 7h × 1 = 420
+  minutes single-thread. Mesmo consumo total, mas paralelo = wall-time ~1h em vez de 7h.
+
 ## v5.4 — 2026-05-14 — Production hardening (code review fixes)
 
 Code review formal pelo agente `pr-review-toolkit:code-reviewer` rodado pré-entrega

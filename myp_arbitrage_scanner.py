@@ -617,13 +617,16 @@ class MYPScraper:
 
     # ── Main scan ────────────────────────────────────────────────────
     def scan(self, max_editions: int = 0, max_products: int = 0,
-             edition_filter: list[str] = None) -> list[CardData]:
+             edition_filter: list[str] = None,
+             chunk_index: int = 0, chunk_total: int = 1) -> list[CardData]:
         log.info("═" * 60)
         log.info("  MYP Cards Arbitrage Scanner")
         log.info(f"  Threshold: {MARGIN_THRESHOLD*100:.0f}% | Language: EN only | Condition: NM")
         log.info(f"  Min price: R${MIN_PRICE_BRL:.0f}")
         if edition_filter:
             log.info(f"  Edition filter: {', '.join(edition_filter)}")
+        if chunk_total > 1:
+            log.info(f"  Chunk: {chunk_index}/{chunk_total} (interleaved)")
         log.info("═" * 60)
 
         editions = self.get_all_editions()
@@ -646,6 +649,21 @@ class MYPScraper:
 
         if max_editions:
             editions = editions[:max_editions]
+
+        # v5.5: chunk slicing interleaved (load balanceado vs sequential blocks).
+        # editions[N::M] garante distribuição equilibrada quando edition sizes
+        # variam (sequential blocks colocariam todas as massivas num único chunk).
+        if chunk_total > 1:
+            if not (0 <= chunk_index < chunk_total):
+                raise ValueError(
+                    f"chunk_index={chunk_index} fora do range [0,{chunk_total})"
+                )
+            total_before = len(editions)
+            editions = editions[chunk_index::chunk_total]
+            log.info(
+                f"  Chunk slicing: {total_before} editions → {len(editions)} "
+                f"(chunk {chunk_index}/{chunk_total})"
+            )
 
         for i, ed in enumerate(editions):
             log.info(f"\n[{i+1}/{len(editions)}] 📦 {ed['title']}")
@@ -887,6 +905,11 @@ Exemplos:
                        help="Filtrar por edições específicas (substring match). Ex: --editions \"Ascended Heroes\" \"Prismáticas\"")
     parser.add_argument("-o", "--output", type=str, default="",
                        help="Caminho do arquivo .xlsx de saída")
+    # v5.5: chunk slicing pra GH Actions matrix job
+    parser.add_argument("--chunk-index", type=int, default=0,
+                       help="Índice do chunk (0-based). Usado com --chunk-total pra dividir scan em jobs paralelos.")
+    parser.add_argument("--chunk-total", type=int, default=1,
+                       help="Total de chunks (1 = sem chunking). Editions são fatiadas via slicing interleaved.")
     args = parser.parse_args()
 
     # C1 fix (2026-05-12): MYP usa percent integer (35 = 35%), oposto do CT
@@ -906,7 +929,8 @@ Exemplos:
 
     scraper = MYPScraper(delay=args.delay)
     cards = scraper.scan(max_editions=args.max_editions, max_products=args.max_products,
-                         edition_filter=args.editions)
+                         edition_filter=args.editions,
+                         chunk_index=args.chunk_index, chunk_total=args.chunk_total)
 
     # v5.4 M1 + invariant check: cron precisa distinguir "scan saudável com
     # zero deals" de "scraper quebrado". Exit codes:
