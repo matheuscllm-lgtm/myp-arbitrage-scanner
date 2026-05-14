@@ -934,11 +934,29 @@ Exemplos:
 
     # v5.4 M1 + invariant check: cron precisa distinguir "scan saudável com
     # zero deals" de "scraper quebrado". Exit codes:
-    #   0 = healthy run (com ou sem deals — tem cards)
+    #   0 = healthy run (com ou sem deals — tem cards, OU chunk vazio legítimo)
     #   1 = scraper provavelmente quebrado (funnel collapsou OU sem cards)
     #   2 = filter user-error (--editions não casou nada)
     import sys as _sys
     stats = scraper._stats
+
+    # v5.5 fix: chunk vazio legítimo. Quando chunk_total > 1 e editions[N::M]
+    # retorna lista vazia (ex.: --editions casou 1 edição mas chunk_total=6 →
+    # só chunk 0 tem trabalho), o chunk deve sair limpo com exit 0, NÃO
+    # marcar o job como falha. Aggregate ignora chunks que não produziram XLSX.
+    is_empty_chunk = (
+        args.chunk_total > 1
+        and stats["products_scanned"] == 0
+        and stats["pages_fetched"] > 0  # catalog scrape rodou OK
+    )
+    if is_empty_chunk:
+        log.info(
+            f"✓ Chunk {args.chunk_index}/{args.chunk_total} vazio após slicing "
+            f"(zero editions atribuídas a este chunk). Saindo limpo, "
+            f"aggregate ignora chunks sem XLSX."
+        )
+        _sys.exit(0)
+
     if not cards:
         # Distinção: filter typo vs site/scraper broken
         if args.editions:
