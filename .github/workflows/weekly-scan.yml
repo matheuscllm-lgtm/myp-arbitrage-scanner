@@ -1,0 +1,89 @@
+name: Weekly MYP Scan
+
+on:
+  schedule:
+    # Cron em UTC. 12:00 UTC dom = 09:00 BRT dom. Semanal porque scan completo
+    # leva ~2h (ritmo CloudFlare bypass + delay 1.5s) e inventário MYP não
+    # muda tão rápido quanto CT live listings.
+    - cron: '0 12 * * 0'
+  workflow_dispatch:
+    inputs:
+      editions:
+        description: 'Substrings de NOMES de edição (separadas por espaço, em "")'
+        required: false
+        default: ''
+      threshold:
+        description: 'Margem mínima em percent (default 25 = 25%)'
+        required: false
+        default: '25'
+      min_price:
+        description: 'Preço mínimo BRL (default 80)'
+        required: false
+        default: '80'
+      max_editions:
+        description: 'Cap de edições (0 = todas)'
+        required: false
+        default: '0'
+      max_products:
+        description: 'Cap total de produtos (0 = todos; útil pra smoke test)'
+        required: false
+        default: '0'
+      delay:
+        description: 'Delay entre requests em segundos (default 1.5)'
+        required: false
+        default: '1.5'
+
+concurrency:
+  group: myp-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run scanner
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          THRESHOLD="${{ github.event.inputs.threshold || '25' }}"
+          MIN_PRICE="${{ github.event.inputs.min_price || '80' }}"
+          MAX_ED="${{ github.event.inputs.max_editions || '0' }}"
+          MAX_PROD="${{ github.event.inputs.max_products || '0' }}"
+          DELAY="${{ github.event.inputs.delay || '1.5' }}"
+          EDITIONS_INPUT="${{ github.event.inputs.editions || '' }}"
+
+          ARGS="--threshold $THRESHOLD --min-price $MIN_PRICE --delay $DELAY"
+          ARGS="$ARGS --output myp_arbitrage_$(date +%Y%m%d_%H%M).xlsx"
+          [ "$MAX_ED" != "0" ] && ARGS="$ARGS --max-editions $MAX_ED"
+          [ "$MAX_PROD" != "0" ] && ARGS="$ARGS --max-products $MAX_PROD"
+          [ -n "$EDITIONS_INPUT" ] && ARGS="$ARGS --editions $EDITIONS_INPUT"
+
+          echo "Args: $ARGS"
+          python myp_arbitrage_scanner.py $ARGS
+
+      - name: Upload scan outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: myp-scan-${{ github.run_id }}
+          path: |
+            myp_arbitrage_*.xlsx
+            .debug/
+          retention-days: 30
+          if-no-files-found: warn
