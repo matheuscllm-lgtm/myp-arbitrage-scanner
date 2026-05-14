@@ -1,0 +1,192 @@
+name: Daily MYP Quick Scan
+
+# v1 (2026-05-14): scan diário focado nos sets hot/recentes onde os preços
+# se movem mais rápido. Full scan (348 editions × ~50 prods × 1.5s = ~7h)
+# fica restrito ao weekly aos domingos; daily roda subset filtrado com
+# matrix de 2 chunks paralelos pra wall time ~15-25min.
+#
+# Default editions cobrem:
+#   - "Mega"            → me1, me1.5, me2, me2.5, me3, me3.5, me4 (todas Mega Evolution)
+#   - "Ascended"        → ME: Ascended Heroes (asc)
+#   - "Black Bolt"      → blk
+#   - "White Flare"     → wht
+#   - "Destined Rivals" → dri
+#   - "Journey Together"→ jtg
+#   - "Surging Sparks"  → ssp
+#   - "Stellar Crown"   → scr
+#   - "Prismatic"       → pre (Prismatic Evolutions)
+#
+# Operador pode customizar editions via workflow_dispatch (ex.: investigar
+# um set específico todos os dias enquanto faz pesquisa).
+
+on:
+  schedule:
+    # 13:00 UTC = 10:00 BRT — staggered atrás do CT (08:00 BRT) pra não
+    # competir por runner, e fora do horário do weekly MYP (Sunday 12:00 UTC).
+    - cron: '0 13 * * *'
+  workflow_dispatch:
+    inputs:
+      editions:
+        description: 'Edições a escanear (substrings separadas por espaço)'
+        required: false
+        default: 'Mega Ascended "Black Bolt" "White Flare" "Destined Rivals" "Journey Together" "Surging Sparks" "Stellar Crown" Prismatic'
+      threshold:
+        description: 'Margem mínima em percent (default 25)'
+        required: false
+        default: '25'
+      min_price:
+        description: 'Preço mínimo BRL (default 80)'
+        required: false
+        default: '80'
+      delay:
+        description: 'Delay entre requests em segundos (default 1.5)'
+        required: false
+        default: '1.5'
+      chunk_total:
+        description: 'Número de chunks paralelos (default 2 pra scan rápido)'
+        required: false
+        default: '2'
+
+# Concurrency separada do weekly — daily e weekly podem rodar em paralelo
+# (acontece nos domingos quando ambos triggam ~mesmo horário).
+concurrency:
+  group: myp-scan-daily
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      chunk_indices: ${{ steps.plan.outputs.chunk_indices }}
+      chunk_total: ${{ steps.plan.outputs.chunk_total }}
+    steps:
+      - name: Compute chunk indices
+        id: plan
+        run: |
+          TOTAL="${{ github.event.inputs.chunk_total || '2' }}"
+          if [ "$TOTAL" -lt 1 ]; then TOTAL=1; fi
+          if [ "$TOTAL" -gt 20 ]; then TOTAL=20; fi
+          INDICES=$(python3 -c "import json; print(json.dumps(list(range($TOTAL))))")
+          echo "chunk_indices=$INDICES" >> $GITHUB_OUTPUT
+          echo "chunk_total=$TOTAL" >> $GITHUB_OUTPUT
+          echo "Plan (daily): $TOTAL chunks → $INDICES"
+
+  scan:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 60   # daily quick scan; subset pequeno + 2 chunks = ~15-25min
+    strategy:
+      fail-fast: false
+      matrix:
+        chunk_index: ${{ fromJSON(needs.plan.outputs.chunk_indices) }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run scanner chunk ${{ matrix.chunk_index }}/${{ needs.plan.outputs.chunk_total }}
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          THRESHOLD="${{ github.event.inputs.threshold || '25' }}"
+          MIN_PRICE="${{ github.event.inputs.min_price || '80' }}"
+          DELAY="${{ github.event.inputs.delay || '1.5' }}"
+          DEFAULT_ED='Mega Ascended "Black Bolt" "White Flare" "Destined Rivals" "Journey Together" "Surging Sparks" "Stellar Crown" Prismatic'
+          EDITIONS_INPUT="${{ github.event.inputs.editions }}"
+          # Fallback pro default se input vazio (cron não passa inputs)
+          if [ -z "$EDITIONS_INPUT" ]; then
+            EDITIONS_INPUT="$DEFAULT_ED"
+          fi
+          CI="${{ matrix.chunk_index }}"
+          CT="${{ needs.plan.outputs.chunk_total }}"
+
+          ARGS="--threshold $THRESHOLD --min-price $MIN_PRICE --delay $DELAY"
+          ARGS="$ARGS --chunk-index $CI --chunk-total $CT"
+          ARGS="$ARGS --output myp_chunk_${CI}.xlsx"
+          # --editions usa nargs="+": shell precisa expandir as substrings.
+          # Usando eval pra que aspas duplas agrupem "Black Bolt" etc.
+          eval "python myp_arbitrage_scanner.py $ARGS --editions $EDITIONS_INPUT"
+
+      - name: Upload chunk artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: myp-daily-chunk-${{ matrix.chunk_index }}
+          include-hidden-files: true
+          path: |
+            myp_chunk_*.xlsx
+            .debug/
+          retention-days: 14   # daily tem retention menor que weekly (30d)
+          if-no-files-found: warn
+
+  aggregate:
+    needs: scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: always() && needs.scan.result != 'cancelled'
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Download all daily chunk artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: myp-daily-chunk-*
+          merge-multiple: true
+          path: chunks/
+
+      - name: List downloaded chunks
+        run: |
+          echo "Chunks recebidos:"
+          ls -la chunks/ || echo "(diretório vazio)"
+          find chunks/ -name 'myp_chunk_*.xlsx' -ls
+
+      - name: Aggregate chunks into consolidated XLSX
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          THRESHOLD="${{ github.event.inputs.threshold || '25' }}"
+          THRESHOLD_FRAC=$(python3 -c "print($THRESHOLD / 100)")
+          OUT="myp_daily_$(date -u +%Y%m%d_%H%M).xlsx"
+          CHUNK_COUNT=$(find chunks/ -name 'myp_chunk_*.xlsx' | wc -l)
+          if [ "$CHUNK_COUNT" -eq 0 ]; then
+            echo "::error::Zero chunks recuperados — não há nada pra agregar"
+            exit 1
+          fi
+          python myp_aggregate.py chunks/myp_chunk_*.xlsx \
+            --output "$OUT" \
+            --threshold "$THRESHOLD_FRAC"
+          echo "Final daily XLSX: $OUT"
+
+      - name: Upload consolidated daily artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: myp-daily-consolidated-${{ github.run_id }}
+          path: |
+            myp_daily_*.xlsx
+          retention-days: 14
+          if-no-files-found: warn
