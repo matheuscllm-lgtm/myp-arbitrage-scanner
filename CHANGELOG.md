@@ -54,6 +54,20 @@ Refator pra 3 jobs:
 - **CI minutes consumption:** 6 chunks × ~70min = ~420 minutes-instance, vs 7h × 1 = 420
   minutes single-thread. Mesmo consumo total, mas paralelo = wall-time ~1h em vez de 7h.
 
+### Smoke test (run 25875239320, 2026-05-14)
+
+`chunk_total=3 editions=Ascended` — só 1 edição casou, chunks 1+2 vazios após slicing.
+
+- ✅ `plan` ok (output `chunk_indices=[0,1,2]`)
+- ✅ `scan (0)` 14m17s — processou Ascended Heroes (99 produtos, 3 deals)
+- ✅ `scan (1)` ~30s — empty chunk legítimo, exit 0, log: `Chunk slicing: 1 editions → 0 (chunk 1/3)` + `✓ Chunk 1/3 vazio após slicing`
+- ✅ `scan (2)` ~30s — idem
+- ✅ `aggregate` 17s — `myp_aggregate.py chunks/myp_chunk_*.xlsx` consolidou em XLSX final
+- ✅ Final XLSX: 31 EN cards, 3 deals, 5 sheets idênticas ao formato single-thread (`🔥 Deals`, `All EN Cards`, `🏆 Top 50 Margin`, `🚨 Validate Manually`, `Summary`)
+
+Estrutura matrix + aggregation validada end-to-end. v5.5.1 fix (`bd707f3`)
+crítico — sem ele, chunks vazios marcariam o job como red.
+
 ## v5.4 — 2026-05-14 — Production hardening (code review fixes)
 
 Code review formal pelo agente `pr-review-toolkit:code-reviewer` rodado pré-entrega
