@@ -86,10 +86,20 @@ MARGIN_THRESHOLD = 0.25          # 25% margem mínima para alerta
 MIN_PRICE_BRL = 80.0             # preço mínimo EN em R$ (ignora cartas baratas)
 REQUEST_DELAY = 1.5              # segundos entre requests
 MAX_PAGES_PER_EDITION = 30       # max páginas por edição
+MAX_EDITION_PAGES = 50           # v5.4 H4: cap em get_all_editions (evita infinite loop)
+MIN_EDITIONS_EXPECTED = 200      # v5.4 C2: catalog scrape sanity floor (~326 esperado, alarme em <200)
 TIMEOUT = 20                     # timeout HTTP em segundos
 HTTP_MAX_RETRIES = 3             # M1 fix: retries em transient errors
 DEBUG_DIR = Path(__file__).resolve().parent / ".debug"   # M4 fix: subpasta dedicada
 SUPRANUMERARY_PRICE_THRESHOLD = 200.0  # H3 fix: TCG R$ acima disso + rarity="Comum" = SIR/HR suspeito
+# v5.4 H1: idiomas EN reconhecidos. Tudo fora dessa lista que parecer um title de
+# flag-icon (não vazio) é tratado como "unknown" e contado pra warn-once.
+KNOWN_LANGUAGES = {
+    "Inglês", "Português", "Japonês", "Italiano",
+    "Espanhol", "Francês", "Alemão", "Coreano",
+    "English", "Portuguese", "Japanese",
+}
+EN_LANGUAGES = {"Inglês", "English"}
 
 HEADERS = {
     "User-Agent": (
@@ -157,7 +167,11 @@ class MYPScraper:
             # 2026-05-12: contador de risco de truncamento de EN-NM
             # (alguma seller table cheia sem EN visível — caso bartsimpson Psyduck)
             "en_truncation_risks": 0,
+            # v5.4 H1: títulos de idioma fora de KNOWN_LANGUAGES (drop silencioso)
+            "skipped_unknown_lang_titles": 0,
         }
+        # v5.4 H1: warn-once cache pra unknown language titles
+        self._unknown_lang_seen: set[str] = set()
 
     def _get(self, url: str, save_debug: bool = False) -> Optional[BeautifulSoup]:
         """Fetch a page and return parsed soup. M1 fix: retry com backoff."""
@@ -178,7 +192,10 @@ class MYPScraper:
                     log.info(f"  DEBUG: saved HTML to {debug_file}")
 
                 return BeautifulSoup(resp.text, "lxml")
-            except Exception as e:
+            except (requests.RequestException, ConnectionError, TimeoutError, OSError) as e:
+                # v5.4 C3: catch só erros de rede. Parser bugs (lxml/bs4),
+                # AttributeError, MemoryError etc devem propagar — indicam
+                # mudança de HTML ou bug de código que merece crash, não retry.
                 last_err = e
                 if hasattr(e, 'response') and e.response is not None:
                     last_status = f" (HTTP {e.response.status_code})"
@@ -212,7 +229,9 @@ class MYPScraper:
         """Scrape /pokemon/edicoes for all available editions."""
         editions = []
         page = 1
-        while True:
+        # v5.4 H4: cap em MAX_EDITION_PAGES previne infinite loop se MYP
+        # alguma vez retornar pages que parecem ter conteúdo novo indefinidamente.
+        while page <= MAX_EDITION_PAGES:
             url = f"{BASE_URL}/pokemon/edicoes?page={page}"
             log.info(f"Fetching editions page {page}...")
             soup = self._get(url, save_debug=(page == 1))
@@ -288,7 +307,22 @@ class MYPScraper:
             if found_on_page == 0:
                 break
             page += 1
+        else:
+            # v5.4 H4: hit MAX_EDITION_PAGES sem natural exit — sinal de bug
+            log.warning(
+                f"  ⚠️ get_all_editions hit MAX_EDITION_PAGES={MAX_EDITION_PAGES} "
+                f"sem encontrar fim natural. Possível recursão de paginação no MYP."
+            )
 
+        # v5.4 C2: sanity check — catalog scrape esperado tem ~326 editions.
+        # Abaixo de MIN_EDITIONS_EXPECTED é forte indicador que selectors
+        # quebraram mid-catalog (Strategy 3 fallback pode silenciosamente truncar).
+        if len(editions) < MIN_EDITIONS_EXPECTED:
+            log.warning(
+                f"  🚨 Catalog scrape suspeito: {len(editions)} editions "
+                f"encontradas (esperado >={MIN_EDITIONS_EXPECTED}). "
+                f"Selectors podem ter quebrado mid-catalog. Validar manualmente."
+            )
         log.info(f"Found {len(editions)} editions")
         return editions
 
@@ -298,6 +332,9 @@ class MYPScraper:
         product_urls = []
         seen = set()
         page = 1
+        # v5.4 H3: detecta loop de página duplicada (MYP retornando page 1
+        # quando page=N overflowing). Compara primeira URL de page N vs N-1.
+        prev_first_url: Optional[str] = None
 
         while page <= MAX_PAGES_PER_EDITION:
             url = f"{edition_url}?page={page}"
@@ -306,6 +343,26 @@ class MYPScraper:
                 break
 
             links = soup.select('a[href*="/pokemon/produto/"]')
+
+            # v5.4 H3: page first-URL fingerprint
+            current_first_url: Optional[str] = None
+            for link in links:
+                href = link.get("href", "")
+                if href:
+                    current_first_url = (
+                        f"{BASE_URL}{href}" if href.startswith("/") else href
+                    )
+                    break
+            if (page > 1 and prev_first_url is not None
+                    and current_first_url == prev_first_url):
+                log.warning(
+                    f"  🚨 Pagination loop detectado em {edition_url}: "
+                    f"page {page} retornou mesma primeira URL de page {page-1}. "
+                    f"Stopping para evitar under-coverage silencioso."
+                )
+                break
+            prev_first_url = current_first_url
+
             new_count = 0
             for link in links:
                 href = link.get("href", "")
@@ -393,12 +450,23 @@ class MYPScraper:
                 rows_in_table += 1
 
                 # Extrai preço (qualquer idioma) pra rastrear max visível.
-                # 2026-05-12 v5.3: usa LAST match pra pegar preço atual em rows
-                # com promo strikethrough (ex.: "R$ 275,00 R$ 220,00" — R$275
-                # é o preço antigo riscado, R$220 é o ativo). re.findall + [-1]
-                # corrige bug que inflava preço quando seller estava em promoção.
+                # 2026-05-12 v5.3: row pode ter strikethrough promo
+                # ("R$ 275,00 R$ 220,00" — R$275 antigo riscado, R$220 ativo).
+                # v5.4 H2: usa min() em vez de [-1] — preço ativo é sempre
+                # o menor (promo); [-1] quebrava se MYP injetasse 3º R$
+                # (frete, "you save", etc). Min é defensivo a layout drift.
                 price_matches = re.findall(r'R\$\s*[\d.,]+', row_text)
-                row_price = self._parse_brl(price_matches[-1]) if price_matches else None
+                row_price = None
+                if price_matches:
+                    parsed = [self._parse_brl(p) for p in price_matches]
+                    parsed = [p for p in parsed if p is not None and p > 0]
+                    if parsed:
+                        row_price = min(parsed)
+                    if len(price_matches) > 2:
+                        log.debug(
+                            f"  Row com {len(price_matches)} R$ matches "
+                            f"(esperado 1-2): {row_text[:120]}"
+                        )
                 if row_price and row_price > max_price_in_table:
                     max_price_in_table = row_price
 
@@ -411,13 +479,25 @@ class MYPScraper:
                     # Fallback: check any [title] that matches a known language
                     for el in row.select("[title]"):
                         title_val = el.get("title", "").strip()
-                        if title_val in ("Inglês", "Português", "Japonês", "Italiano",
-                                         "Espanhol", "Francês", "Alemão", "Coreano",
-                                         "English", "Portuguese", "Japanese"):
+                        if title_val in KNOWN_LANGUAGES:
                             lang = title_val
                             break
 
-                if lang not in ("Inglês", "English"):
+                # v5.4 H1: lang não-vazio mas fora do conhecido = drift potencial
+                # (ex.: MYP normalizar "Inglês" → "Ingles" sem acento, ou novo
+                # idioma adicionado). Counter + warn-once previne silent zero.
+                if lang and lang not in KNOWN_LANGUAGES:
+                    self._stats["skipped_unknown_lang_titles"] += 1
+                    if lang not in self._unknown_lang_seen:
+                        self._unknown_lang_seen.add(lang)
+                        log.warning(
+                            f"  ⚠️ Idioma desconhecido detectado: '{lang}' "
+                            f"(não está em KNOWN_LANGUAGES). Pode ser drift de "
+                            f"título flag-icon do MYP. Adicionar à constante "
+                            f"se for mapeamento legítimo."
+                        )
+
+                if lang not in EN_LANGUAGES:
                     continue
 
                 # Filter: NM (Near Mint) only — skip Played, Damaged, etc.
@@ -614,6 +694,7 @@ class MYPScraper:
         log.info(f"      No TCG price: {self._stats['skipped_no_tcg_price']}")
         log.info(f"      No EN sellers: {self._stats['skipped_no_en_sellers']}")
         log.info(f"      Low price (<R${MIN_PRICE_BRL:.0f}): {self._stats['skipped_low_price']}")
+        log.info(f"      Unknown lang titles (v5.4 H1): {self._stats['skipped_unknown_lang_titles']}")
         log.info(f"  ── Other diagnostics:")
         log.info(f"      Supranumerary warnings (H3): {self._stats['supranumerary_warnings']}")
         log.info(f"      EN truncation risks (T1): {self._stats['en_truncation_risks']}")
@@ -720,9 +801,11 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
     # ── Sheet 3: Top 50 by Margin (visual review pool) ──
     # Operador inspeciona visualmente pra decidir se é chase (pokémon
     # icônico, arte bonita, etc.) — não filtra por threshold.
+    # v5.4 M3: filtra None-margin antes de slice (evita padding visual em
+    # runs com <50 cards válidos).
     ws_top = wb.create_sheet("🏆 Top 50 Margin")
     write_headers(ws_top)
-    top50 = all_sorted[:50]
+    top50 = [c for c in all_sorted if c.margin_pct is not None][:50]
     for i, card in enumerate(top50, 2):
         write_card_row(ws_top, i, card)
     ws_top.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{max(len(top50)+1, 2)}"
@@ -825,9 +908,37 @@ Exemplos:
     cards = scraper.scan(max_editions=args.max_editions, max_products=args.max_products,
                          edition_filter=args.editions)
 
-    if cards:
-        generate_xlsx(cards, output_path, MARGIN_THRESHOLD)
-        print(f"\nDone! Open: {output_path}")
-    else:
-        log.warning("No English cards found with both MYP and TCG Player prices.")
-        log.info("Tips: try --max-editions 5 for a quick test, or increase --delay")
+    # v5.4 M1 + invariant check: cron precisa distinguir "scan saudável com
+    # zero deals" de "scraper quebrado". Exit codes:
+    #   0 = healthy run (com ou sem deals — tem cards)
+    #   1 = scraper provavelmente quebrado (funnel collapsou OU sem cards)
+    #   2 = filter user-error (--editions não casou nada)
+    import sys as _sys
+    stats = scraper._stats
+    if not cards:
+        # Distinção: filter typo vs site/scraper broken
+        if args.editions:
+            log.error(
+                f"❌ --editions filter ({', '.join(args.editions)}) não casou "
+                f"nenhuma edição. Verificar nomes (substring match contra title MYP)."
+            )
+            _sys.exit(2)
+        # Sem filter, ou filter casou mas processou zero — likely broken
+        log.error(
+            f"❌ Scan retornou zero cards. Funnel: "
+            f"pages={stats['pages_fetched']}, products={stats['products_scanned']}, "
+            f"en_found={stats['en_found']}. Check .debug/ HTML samples."
+        )
+        _sys.exit(1)
+
+    # v5.4 invariant: muita página fetchada mas zero EN encontrado = scraper broken
+    if stats["pages_fetched"] > 100 and stats["en_found"] == 0:
+        log.error(
+            f"❌ Invariant violation: {stats['pages_fetched']} páginas baixadas "
+            f"mas {stats['en_found']} EN cards encontrados. Provável: selector "
+            f"break, language detector quebrado, ou MYP rebuild. Check warnings."
+        )
+        _sys.exit(1)
+
+    generate_xlsx(cards, output_path, MARGIN_THRESHOLD)
+    print(f"\nDone! Open: {output_path}")
