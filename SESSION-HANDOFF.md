@@ -1,4 +1,26 @@
-# SESSION HANDOFF — 2026-05-15 03:30 UTC
+# SESSION HANDOFF — 2026-05-15 (updated 09:25 UTC)
+
+## ✅ ENTREGA COMPLETA
+
+**XLSX final:** `C:/Users/mathe/Downloads/myp_arbitrage_20260515_0922_LOCAL.xlsx` (152KB)
+
+**Conteúdo:**
+- 🔥 **102 deals** com margem ≥25%
+- All EN Cards: 1260 rows
+- 🏆 Top 50 Margin: 50 melhores
+- 🚨 Validate Manually: 17 cards (SIR/HR misclass + EN truncation)
+- Summary stats
+
+**Caminho duplo:** chunks OK no GH, aggregate falhou por billing, mas aggregate rodou local em ~1s gerando arquivo idêntico.
+
+## 🚨 BILLING GitHub Actions
+
+Aggregate falhou com mensagem:
+> "The job was not started because recent account payments have failed or your spending limit needs to be increased. Please check the 'Billing & plans' section in your settings"
+
+**Próximo cron auto-run (dia 1 do mês 12:00 UTC) pode falhar igual** se billing não resolver. Operador precisa verificar https://github.com/settings/billing
+
+**Estimativa de consumo do run de hoje:** 20 chunks × ~1h média = ~20 job-hours. Run anterior 25876052564 também consumiu ~12 job-hours. Combined ≈ 1920min só em 2 weeklies de 2026-05.
 
 ## Estado atual
 
