@@ -6,7 +6,13 @@
 - chunk_total=20 (override via input)
 - ETA completar: ~05:00 UTC (02:00 BRT)
 - URL: https://github.com/matheuscllm-lgtm/myp-arbitrage-scanner/actions/runs/25898507612
-- Background watch ativo (Claude session): notifica quando completar
+- ~~Background watch ativo~~ → **morreu aos 21min por rate limit GitHub API (5000/hr)**. Run continua rodando no servidor sem problemas. Rate limit reseta ~04:46 UTC.
+
+**Snapshot do estado em t+21min (último visível antes do rate limit):**
+- plan: ✓ completed
+- 20× scan chunks: todos com "Run scanner chunk N/20" em progresso (nenhum completo ainda — esperado, chunks de ~90min)
+
+**Próximo check válido:** depois de ~04:46 UTC, uma única `gh run view 25898507612` mostra estado real.
 
 **Fix permanente já em main:** commit `ee48b06` — default chunk_total 6→20 no workflow yml.
 
