@@ -14,13 +14,10 @@ name: Weekly MYP Scan
 # single-thread.
 
 on:
-  schedule:
-    # 2026-05-15: monthly (dia 1 do mês às 12:00 UTC = 09:00 BRT). Bi-weekly
-    # (1+15) consumia ~2400min/mês só no weekly e estourava free tier 2000min/mês
-    # (incidente run 25898507612 onde aggregate job falhou por billing). Decisão
-    # operador: monthly + scans ad-hoc rodam LOCAL (não consome GH Actions).
-    # Daily Quick Scan a cada 2 dias mantido (~150min/mês).
-    - cron: '0 12 1 * *'
+  # 2026-05-15: cron schedule REMOVIDO — full scans pesados rodam LOCAL no PC
+  # do operador (zero billing). Daily Quick Scan continua automático no GH.
+  # Workflow permanece disparável manualmente via workflow_dispatch pra
+  # emergências (ex: PC indisponível, scan urgente fora do laptop).
   workflow_dispatch:
     inputs:
       editions:
