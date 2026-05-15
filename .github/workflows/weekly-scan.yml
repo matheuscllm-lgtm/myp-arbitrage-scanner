@@ -15,10 +15,12 @@ name: Weekly MYP Scan
 
 on:
   schedule:
-    # 2026-05-14: bi-weekly (dias 1 e 15 do mês às 12:00 UTC = 09:00 BRT) pra
-    # caber no free tier 2000min/mês. Antes era todo domingo (4×/mês = 1680min),
-    # agora 2×/mês = 840min. Combinado com daily (a cada 2 dias) ≈ 1290min/mês.
-    - cron: '0 12 1,15 * *'
+    # 2026-05-15: monthly (dia 1 do mês às 12:00 UTC = 09:00 BRT). Bi-weekly
+    # (1+15) consumia ~2400min/mês só no weekly e estourava free tier 2000min/mês
+    # (incidente run 25898507612 onde aggregate job falhou por billing). Decisão
+    # operador: monthly + scans ad-hoc rodam LOCAL (não consome GH Actions).
+    # Daily Quick Scan a cada 2 dias mantido (~150min/mês).
+    - cron: '0 12 1 * *'
   workflow_dispatch:
     inputs:
       editions:
