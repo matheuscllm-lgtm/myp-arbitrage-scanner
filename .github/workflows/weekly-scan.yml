@@ -1,14 +1,17 @@
 name: Weekly MYP Scan
 
 # v5.5 (2026-05-14): refator pra matrix job + aggregate.
+# v5.7.2 (2026-05-15): bump default chunk_total 6→20.
 #
-# Problema anterior: full scan single-thread = ~7h (348 editions × 50 prods × 1.5s),
-# não cabia em GH Actions free tier (max 6h job). 2 runs em 2026-05-14 estouraram
-# 180min e 350min timeouts respectivamente, zero XLSX gerado.
+# Problema anterior (v5.5 com chunk_total=6): full scan single-thread = ~7h,
+# não cabia em GH Actions free tier (max 6h job). Matrix de 6 chunks ainda
+# levava ~6h por chunk (348 editions / 6 = 58 editions/chunk × ~7min/edição
+# interleaved). Run 25876052564 (2026-05-14) bateu timeout 120min em 4/6 chunks.
 #
-# Solução: matrix de 6 chunks paralelos via --chunk-index/--chunk-total interleaved
-# slicing no scanner. Cada chunk processa ~58 editions em ~1h. Job final agrega via
-# myp_aggregate.py em XLSX consolidado idêntico ao formato single-thread.
+# Solução v5.7.2: matrix de 20 chunks paralelos via --chunk-index/--chunk-total
+# interleaved slicing no scanner. Cada chunk processa ~17 editions em ~90min.
+# Job final agrega via myp_aggregate.py em XLSX consolidado idêntico ao formato
+# single-thread.
 
 on:
   schedule:
@@ -35,9 +38,9 @@ on:
         required: false
         default: '1.5'
       chunk_total:
-        description: 'Número de chunks paralelos (default 6; max 20)'
+        description: 'Número de chunks paralelos (default 20; max 20)'
         required: false
-        default: '6'
+        default: '20'
 
 concurrency:
   group: myp-scan
@@ -58,7 +61,7 @@ jobs:
       - name: Compute chunk indices
         id: plan
         run: |
-          TOTAL="${{ github.event.inputs.chunk_total || '6' }}"
+          TOTAL="${{ github.event.inputs.chunk_total || '20' }}"
           # Cap defensivo: 1-20 chunks
           if [ "$TOTAL" -lt 1 ]; then TOTAL=1; fi
           if [ "$TOTAL" -gt 20 ]; then TOTAL=20; fi
@@ -71,7 +74,7 @@ jobs:
   scan:
     needs: plan
     runs-on: ubuntu-latest
-    timeout-minutes: 120   # por chunk; com 6 chunks de ~58 editions cada, ~70min sobra folga
+    timeout-minutes: 120   # por chunk; com 20 chunks de ~17 editions cada, ~30min sobra folga
     strategy:
       fail-fast: false    # um chunk falhar não derruba os outros
       matrix:
