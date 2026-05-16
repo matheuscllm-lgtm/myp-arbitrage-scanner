@@ -1,5 +1,50 @@
 # Changelog
 
+## v5.8 — 2026-05-16 — TCG suspect surfacing (Jirachi-style inflation fix)
+
+Bug pós-scan 2026-05-15: Jirachi PR-SM_SM161 apareceu como deal #1 a +1400% margem
+com TCG declarado R$1499 — última venda real R$19,99 (75x off, MYP bug em `.estat-tcg`).
+A heurística H2 v5.8 já existia em `CardData` (`tcg_suspect`, `myp_last_sale_brl`)
+mas era completamente invisível: nem entrava no XLSX, nem filtrava sheets, nem
+aparecia no markdown summary. Esta release surface o sanity check end-to-end.
+
+### Scanner (`myp_arbitrage_scanner.py`)
+- Nova constante `TCG_SUSPECT_RATIO_THRESHOLD = 10.0` (era hardcoded inline).
+- Novo counter `tcg_suspects` em `_stats`, logado ao final do scan.
+- Log warning **loud** ao detectar suspect (com ratio + valores) no `scrape_product`.
+- `generate_xlsx`: 2 colunas novas — `MYP Last Sale (R$)` e `⚠️ TCG Suspect`.
+- Sheet `🔥 Deals` **exclui** cards com `tcg_suspect=True` (Jirachi sai do topo).
+- Nova sheet `🚨 TCG Suspect` análoga à `🚨 Validate Manually`.
+- Summary sheet: linha "🚨 TCG Suspects" com contagem.
+
+### Aggregator (`myp_aggregate.py`)
+- `card_from_row` agora preserva `myp_last_sale_brl` e `tcg_suspect` lendo das
+  colunas correspondentes. Antes esses campos eram strip-ados na consolidação,
+  e o XLSX final do GH Actions voltava a mostrar Jirachi como deal #1.
+
+### Markdown summary (`myp_summary.py`)
+- Top 15 limpos agora exclui supranumerários **E** tcg_suspect.
+- Nova section `## 🚨 TCG Suspect` no markdown com colunas extra
+  (TCG declarado, última venda, margem fake) pra auditoria.
+- Stats line inclui contagem de suspects.
+
+### Single source of truth
+- `scripts/revalidate_deals.py` agora importa `TCG_SUSPECT_RATIO_THRESHOLD`
+  do scanner em vez de duplicar a constante. Mudar o threshold em um lugar
+  só agora afeta scan-time + revalidação.
+
+## v5.7.2 — 2026-05-15/16 — Operacional (sem mudança de código)
+
+Mudanças de processo/cron que afetam comportamento sem mexer no scanner:
+- `weekly-scan.yml`: cron schedule **removido**. Weekly full agora roda local
+  via Task Scheduler do PC do operador, eliminando consumo de CI minutes
+  (~840min/mês). Workflow ainda triggable via `workflow_dispatch`.
+- `daily-scan.yml`: cron schedule **removido** (decisão pós-exaustão da quota
+  GH Actions em 2026-05-15). Daily roda só manual via dispatch.
+- Default `chunk_total` 6 → 20 no `weekly-scan.yml` (validated pelo benchmark
+  do scan 2026-05-15: ~7min/edição interleaved).
+- Novo `scripts/run_weekly_local.ps1` wrapper pra Task Scheduler do PC.
+
 ## v5.5 — 2026-05-14 — Matrix job + aggregation (infraestrutura escalável)
 
 Full scan single-thread = ~7h (348 editions × ~50 prods × 1.5s delay) — não cabe

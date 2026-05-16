@@ -33,7 +33,7 @@ from openpyxl import load_workbook, Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from bs4 import BeautifulSoup
 
-from myp_arbitrage_scanner import MYPScraper
+from myp_arbitrage_scanner import MYPScraper, TCG_SUSPECT_RATIO_THRESHOLD
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,7 +42,8 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-SUSPECT_RATIO = 10.0  # se TCG declarado > 10x última venda real, suspeito
+# v5.8 (2026-05-16): single source of truth, importa do scanner
+SUSPECT_RATIO = TCG_SUSPECT_RATIO_THRESHOLD
 
 
 def parse_brl(text: str) -> float | None:
