@@ -20,11 +20,8 @@ name: Daily MYP Quick Scan
 # um set específico todos os dias enquanto faz pesquisa).
 
 on:
-  schedule:
-    # 2026-05-14: a cada 2 dias às 13:00 UTC (10:00 BRT) pra caber no free tier
-    # 2000min/mês (rodar todos os dias estouraria o budget combinado com weekly).
-    # Calendar-aware: dias 1,3,5,...,29,31 do mês = ~15-16 runs/mês × ~30min = ~450min.
-    - cron: '0 13 */2 * *'
+  # Sem agendamento: workflow só roda via dispatch manual (decisão operador
+  # 2026-05-16). Runs autônomos rodam LOCAL via venv + .env.
   workflow_dispatch:
     inputs:
       editions:
