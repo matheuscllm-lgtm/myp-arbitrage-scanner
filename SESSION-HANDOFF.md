@@ -31,6 +31,14 @@ Prototype raw→graded em `experimental/ev_scanner_v01.py`. Tese: comprar raw no
 - 17 PEND_POP_DATA (preço OK, Pop manual fill pendente)
 - 22 PEND_PRICE_DATA (PriceCharting search falhou — canonical card identity gap)
 
+### C) v5.8 — TCG Suspect end-to-end (PR #3, squash `e6b291c`)
+
+Bug identificado no scan 2026-05-15: Jirachi PR-SM_SM161 aparecia como deal #1 a +1400% com TCG declarado R$1499 vs última venda real R$19,99 (75x off, `.estat-tcg` do MYP estava inflado). Heurística `tcg_suspect` já existia em `CardData` desde commit `0ca15d2` mas era invisível — não ia pro XLSX, não filtrava sheets, não aparecia no markdown.
+
+**6 fixes:** scanner XLSX (+2 colunas, sheet 🚨 TCG Suspect, filtro em 🔥 Deals), aggregator preserva campos entre chunks, markdown summary com section dedicada, constante `TCG_SUSPECT_RATIO_THRESHOLD=10.0` extraída como single source of truth, `scripts/revalidate_deals.py` importa em vez de duplicar.
+
+**Validação:** `test_v5_8_offline.py` (5 asserts, ~2s, zero rede) — passa green. Tentativa de validar em produção via Daily Quick Scan + GH Actions falhou (billing exhausted) e via este ambiente cloud falhou (CloudFlare 403 em IP de datacenter). Validação real de scraping (`.estatistica-ultimo` selector) acontece no weekly local de domingo 17/05 01:00 BRT — operador checa contador `🚨 TCG Suspects: N` no Summary do XLSX.
+
 ## Commits desta janela (main)
 
 | Commit | Sessão | Descrição |
@@ -41,6 +49,11 @@ Prototype raw→graded em `experimental/ev_scanner_v01.py`. Tese: comprar raw no
 | `0251139` | A | weekly-scan: bi-weekly → monthly (provisório) |
 | `ee48b06` | A | weekly-scan: default chunk_total 6→20 |
 | `90c2cf1` | B | results/weekly-2026-05-15.md (local aggregate) |
+| `f0e87f7` | C | scanner v5.8 H1 — detectar idioma via condição textual |
+| `0ca15d2` | C | scanner v5.8 H2 — sanity check TCG vs última venda |
+| `8578121` | C | ops: drop daily cron schedule (dispatch only) |
+| `b6b61fc` | C | scanner v5.8 — surface tcg_suspect end-to-end |
+| `e6b291c` | C | **PR #3 squash-merge (6 fixes + offline test)** |
 
 ## Modelo operacional atual
 
@@ -67,7 +80,7 @@ Prototype raw→graded em `experimental/ev_scanner_v01.py`. Tese: comprar raw no
 ### P1 — Técnica (destrava mais sinal)
 - [ ] **Canonical card identity layer** (Codex critique #4) → set slug map MYP↔PriceCharting↔PSA Pop. Destrava 22 PEND_PRICE_DATA. Eng 1-2 dias.
 - [ ] **FX stress test** — rodar XLSX com FX 4,50 / 5,00 / 5,50; ver quais verdicts mudam.
-- [ ] **Bump CHANGELOG pra v5.7.2** (commits `ee48b06` + `6aa624d` mudaram comportamento sem versionar).
+- [x] ~~**Bump CHANGELOG pra v5.7.2**~~ — feito em 2026-05-16 junto com v5.8.
 
 ### P2 — Modelo (Codex critiques pendentes)
 - [ ] **VaR / CVaR / P(loss > X)** — gating por bankroll, não só EV positivo
@@ -190,4 +203,4 @@ $env:PYTHONIOENCODING="utf-8"
 
 ---
 
-*Sessão fechada 2026-05-16 ~06:00 BRT. Branch `main` em sync com origin. Próximo deliverable depende de Pop fill manual ou decisão sobre canonical identity layer.*
+*Sessão fechada 2026-05-16 ~06:00 BRT. Re-aberta ~19:00 BRT (sessão C: v5.8 surfacing + offline test). Fechada 2026-05-16 ~21:30 BRT após merge PR #3. Branch `main` em sync com origin (commit `e6b291c`). Próximo deliverable: validar weekly local domingo 17/05 01h BRT (checar `🚨 TCG Suspects: N` no Summary do XLSX), depois Pop fill manual OU canonical identity layer.*
