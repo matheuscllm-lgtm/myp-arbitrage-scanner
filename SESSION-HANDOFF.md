@@ -1,102 +1,85 @@
-# SESSION HANDOFF — 2026-05-15 (updated 09:25 UTC)
+# SESSION HANDOFF — 2026-05-16 (fechamento)
 
-## ✅ ENTREGA COMPLETA
+## ✅ Entrega realizada
 
-**XLSX final:** `C:/Users/mathe/Downloads/myp_arbitrage_20260515_0922_LOCAL.xlsx` (152KB)
+**XLSX:** `C:\Users\mathe\Downloads\myp_arbitrage_20260515_0922_LOCAL.xlsx` (152KB, 102 deals)
 
-**Conteúdo:**
-- 🔥 **102 deals** com margem ≥25%
-- All EN Cards: 1260 rows
-- 🏆 Top 50 Margin: 50 melhores
-- 🚨 Validate Manually: 17 cards (SIR/HR misclass + EN truncation)
-- Summary stats
+| Sheet | Conteúdo |
+|---|---|
+| 🔥 Deals | 102 cards margem ≥25% |
+| All EN Cards | 1260 rows |
+| 🏆 Top 50 Margin | Ranking pra triagem |
+| 🚨 Validate Manually | 17 cards SIR/HR + EN truncation risk |
+| Summary | Estatísticas agregadas |
 
-**Caminho duplo:** chunks OK no GH, aggregate falhou por billing, mas aggregate rodou local em ~1s gerando arquivo idêntico.
+## Mudanças aplicadas no repo
 
-## 🚨 BILLING GitHub Actions
+| Commit | Descrição |
+|---|---|
+| `ee48b06` | weekly-scan: default chunk_total 6→20 (resolve timeout) |
+| `0251139` | weekly-scan: bi-weekly → monthly (provisório) |
+| `6aa624d` | **weekly-scan: cron auto REMOVIDO** |
+| `6067fc5` | scripts/run_weekly_local.ps1 wrapper |
 
-Aggregate falhou com mensagem:
-> "The job was not started because recent account payments have failed or your spending limit needs to be increased. Please check the 'Billing & plans' section in your settings"
+## Modelo operacional atual
 
-**Próximo cron auto-run (dia 1 do mês 12:00 UTC) pode falhar igual** se billing não resolver. Operador precisa verificar https://github.com/settings/billing
+**Automação:**
+- Daily Quick Scan: GitHub Actions a cada 2 dias (~150min/mês)
+- Weekly Full Scan: **Windows Task Scheduler local** (`MYP_Weekly_Local_Scan`) domingo 01:00 BRT
 
-**Estimativa de consumo do run de hoje:** 20 chunks × ~1h média = ~20 job-hours. Run anterior 25876052564 também consumiu ~12 job-hours. Combined ≈ 1920min só em 2 weeklies de 2026-05.
+**Sob demanda:**
+- Scans ad-hoc: local via `scripts/run_weekly_local.ps1` ou comando direto
+- Emergência: `workflow_dispatch` em weekly-scan.yml (preservado)
 
-## Estado atual
+**Custo GitHub:** ~$0/mês (consumo ~150min de 2000min free tier).
 
-**Run em curso:** `25898507612` (Weekly MYP Scan, workflow_dispatch)
-- chunk_total=20 (override via input)
-- ETA completar: ~05:00 UTC (02:00 BRT)
-- URL: https://github.com/matheuscllm-lgtm/myp-arbitrage-scanner/actions/runs/25898507612
-- ~~Background watch ativo~~ → **morreu aos 21min por rate limit GitHub API (5000/hr)**. Run continua rodando no servidor sem problemas. Rate limit reseta ~04:46 UTC.
+## Pendências em aberto
 
-**Snapshot do estado em t+21min (último visível antes do rate limit):**
-- plan: ✓ completed
-- 20× scan chunks: todos com "Run scanner chunk N/20" em progresso (nenhum completo ainda — esperado, chunks de ~90min)
+- [ ] **Operador:** validar billing em https://github.com/settings/billing (informativo)
+- [ ] **Operador:** decidir se PC fica ligado domingos à noite (afeta Task Scheduler — task user-scope não acorda PC do sleep)
+- [ ] Bump CHANGELOG pra v5.7.2 (commits `ee48b06` + `6aa624d` mudaram comportamento sem versionar)
+- [ ] Backlog: paralelismo local via subprocess (reduzir 6h → ~1h scan)
 
-**Próximo check válido:** depois de ~04:46 UTC, uma única `gh run view 25898507612` mostra estado real.
+## Próximo evento agendado
 
-**Fix permanente já em main:** commit `ee48b06` — default chunk_total 6→20 no workflow yml.
+**Domingo 17/05/2026 às 01:00 BRT** — Task Scheduler dispara `run_weekly_local.ps1`. ETA término ~07:00 BRT. Arquivo em `Downloads\myp_weekly_*.xlsx` + `.log`.
 
-## Incidente que motivou esta sessão
+## Comandos de manutenção
 
-Run anterior `25876052564` (2026-05-14 17:51 UTC) falhou:
-- 4/6 chunks: timeout 120min ("exceeded the maximum execution time of 2h0m0s")
-- 2/6 chunks: exit code 1 (cancelados em cascata)
-- aggregate step: "Zero chunks recuperados — não há nada pra agregar"
-- Resultado: zero XLSX entregue
+```powershell
+# Disparar weekly manual agora
+schtasks /Run /TN "MYP_Weekly_Local_Scan"
 
-**Root cause:** matrix v5.5 default chunk_total=6 → 58 edições/chunk × ~7min/edição interleaved = ~6h/chunk, não cabe em `timeout-minutes: 120`.
+# Status da task
+schtasks /Query /TN "MYP_Weekly_Local_Scan" /V /FO LIST
 
-**Cálculo correto:** 348 edições MYP / 20 chunks = ~17 edições/chunk × ~7min = ~2h/chunk com folga ~30min.
+# Pausar/reabilitar
+schtasks /Change /TN "MYP_Weekly_Local_Scan" /DISABLE
+schtasks /Change /TN "MYP_Weekly_Local_Scan" /ENABLE
 
-## Quando completar (output esperado)
-
-Artefato final: `myp-consolidated-final` (XLSX)
-
-Download manual:
-```bash
-mkdir -p /tmp/myp-scan-output
-gh run download 25898507612 --repo matheuscllm-lgtm/myp-arbitrage-scanner -n myp-consolidated-final -D /tmp/myp-scan-output
+# Scan targeted (edições específicas)
+cd C:\Users\mathe\myp-arbitrage-scanner
+$env:PYTHONIOENCODING="utf-8"
+python myp_arbitrage_scanner.py --editions "<edicao>" --threshold 25 --output "C:\Users\mathe\Downloads\myp_targeted.xlsx"
 ```
 
-Auto-commit: workflow tem step de markdown summary (permissions: contents:write). Verificar `results/` após completar.
+## Memórias salvas (próxima sessão Claude lê automaticamente)
 
-## Próximas ações (em ordem)
+- `myp_weekly_chunk_sizing.md` — root cause + cálculo
+- `gh_run_watch_rate_limit.md` — `gh run watch` é tóxico em runs longos
+- `gh_actions_billing_fallback.md` — recovery quando aggregate GH falha por billing
+- `myp_operational_model_2026_05.md` — modelo operacional novo
+- `myp_local_task_scheduler.md` — setup completo do Task Scheduler
+- `session_log_2026_05_15_16_myp_weekly_rescue.md` — log consolidado
 
-1. **Quando watch notificar SUCCESS:**
-   - Confirmar XLSX gerado
-   - Operador acorda com scan pronto — entregar resumo do output
-2. **Se watch notificar FAILURE:**
-   - `gh run view 25898507612 --log-failed` pra diagnóstico
-   - Padrões a buscar: timeout (chunk individual >120min), drift canary trip, regressão de scrape
-3. **Se aggregate falhar mesmo com chunks OK:**
-   - Download artefatos individuais (`myp-chunk-N`)
-   - Rodar `myp_aggregate.py` local em venv
-4. **Se 5+ chunks falharem em padrão suspeito:**
-   - Investigar regressão (não cap 20 — diferente)
+## Lições gravadas
 
-## Pendências pós-entrega
-
-- [ ] Validar se XLSX tem ≥30 deals com margem >25% (sinal saudável histórico)
-- [ ] Push do auto-commit markdown summary (workflow faz sozinho)
-- [ ] Bump versão pra v5.7.2 em CHANGELOG (commit `ee48b06` já fez código)
-
-## Memórias relacionadas (cross-session context)
-
-- `myp_weekly_chunk_sizing.md` — root cause + cálculo detalhado
-- `feedback_autonomy_directive.md` — escopo MYP autônomo
-- `scanners_v22_v51_state.md` — estado canônico v5.7.x
-- `myp_seller_table_truncation.md` — flag `en_truncation_risk` em outputs
-
-## Diretivas operador (sessão 2026-05-15)
-
-- Modo autônomo amplo: decidir+executar técnico-mecânico
-- Cada tópico de estudo → review + save vault + save GitHub
-- Cancelar schedules futuros, foco em entrega de amanhã
-- Se operador demora >10s pra responder, agir conforme análise própria
-- Context exhaustion → preservar conhecimento crítico imediatamente
+1. Default `chunk_total` precisa benchmark real, não chute (~7min/edição interleaved real, não 1.5s/produto raw)
+2. `gh run watch` (polling 3s) esgota rate limit GH API em ~25min
+3. GH Actions billing barra jobs individuais — chunks podem OK, aggregate (último) é barrado
+4. Aggregate local sempre viável (myp_aggregate.py é self-contained)
+5. Modelo local-first elimina billing entirely, requer só PC ligado no horário
 
 ---
 
-*Handoff criado 2026-05-15 03:30 UTC durante sessão autônoma. Estado git: ee48b06 em main.*
+*Sessão fechada 2026-05-16. Estado git: branch main, commits acima pushed. Vault Obsidian: `MYP Cards Scan - 2026-05-15.md`.*
