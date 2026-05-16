@@ -33,6 +33,13 @@ aparecia no markdown summary. Esta release surface o sanity check end-to-end.
   do scanner em vez de duplicar a constante. Mudar o threshold em um lugar
   só agora afeta scan-time + revalidação.
 
+### Regression guard (`test_v5_8_offline.py`)
+- Novo teste offline com 5 asserts: threshold constant, PT/EN markers
+  disjuntos, math do caso Jirachi (75x), lógica H1 de language-by-condition,
+  e XLSX end-to-end (Jirachi excluído de Deals + presente em TCG Suspect +
+  borderline 9.5x sem false-positive). Roda em ~2s, zero rede. Próxima
+  alteração no filtro/surface quebra o build se regredir.
+
 ## v5.7.2 — 2026-05-15/16 — Operacional (sem mudança de código)
 
 Mudanças de processo/cron que afetam comportamento sem mexer no scanner:
