@@ -17,8 +17,8 @@ Requisitos:
     pip install cloudscraper beautifulsoup4 openpyxl lxml
 
 Autor: Matheus Chillemi / Claude
-Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3)
-Versão: v5.3
+Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8)
+Versão: v5.8
 
 Changelog v5.1 (2026-05-12 — auditoria C/H/M, mesma metodologia do CT scanner):
   - C1: --threshold < 1.0 auto-converte com warning (UX guard contra trap
@@ -96,6 +96,11 @@ TIMEOUT = 20                     # timeout HTTP em segundos
 HTTP_MAX_RETRIES = 3             # M1 fix: retries em transient errors
 DEBUG_DIR = Path(__file__).resolve().parent / ".debug"   # M4 fix: subpasta dedicada
 SUPRANUMERARY_PRICE_THRESHOLD = 200.0  # H3 fix: TCG R$ acima disso + rarity="Comum" = SIR/HR suspeito
+# v5.8 H2 (2026-05-16): se TCG declarado >> última venda real, MYP infla o
+# preço de referência. Caso Jirachi PR-SM_SM161: declarava R$1499 vs última
+# venda real R$19,99 (75x). Threshold 10x captura inflação grosseira sem
+# false-positive em cards com pouca liquidez (last sale antigo + alta).
+TCG_SUSPECT_RATIO_THRESHOLD = 10.0
 # v5.4 H1: idiomas EN reconhecidos. Tudo fora dessa lista que parecer um title de
 # flag-icon (não vazio) é tratado como "unknown" e contado pra warn-once.
 KNOWN_LANGUAGES = {
@@ -198,6 +203,10 @@ class MYPScraper:
             "en_truncation_risks": 0,
             # v5.4 H1: títulos de idioma fora de KNOWN_LANGUAGES (drop silencioso)
             "skipped_unknown_lang_titles": 0,
+            # v5.8 H2 (2026-05-16): cards com TCG declarado >> última venda
+            # real (Jirachi PR-SM_SM161 caso). Não filtra do funnel — fica
+            # em All EN Cards, mas é excluído da sheet 🔥 Deals.
+            "tcg_suspects": 0,
         }
         # v5.4 H1: warn-once cache pra unknown language titles
         self._unknown_lang_seen: set[str] = set()
@@ -463,9 +472,16 @@ class MYPScraper:
         # Sanity check: ratio TCG declarado / última venda real
         if card.myp_last_sale_brl and card.myp_last_sale_brl > 0:
             ratio = card.tcg_player_price / card.myp_last_sale_brl
-            if ratio > 10.0:
-                # TCG declarado é >10x última venda → MYP bug provável
+            if ratio > TCG_SUSPECT_RATIO_THRESHOLD:
+                # TCG declarado é >Nx última venda → MYP bug provável
                 card.tcg_suspect = True
+                self._stats["tcg_suspects"] += 1
+                log.warning(
+                    f"  🚨 TCG suspect: {card.name or url} | "
+                    f"TCG declarado R${card.tcg_player_price:.2f} é "
+                    f"{ratio:.1f}x última venda R${card.myp_last_sale_brl:.2f}. "
+                    f"Provável inflação do .estat-tcg — excluído da sheet 🔥 Deals."
+                )
 
         # ── Parse seller tables: extract EN sellers only ──
         # 2026-05-12: itera por tabela individualmente (não plano em tr)
@@ -778,6 +794,7 @@ class MYPScraper:
         log.info(f"  ── Other diagnostics:")
         log.info(f"      Supranumerary warnings (H3): {self._stats['supranumerary_warnings']}")
         log.info(f"      EN truncation risks (T1): {self._stats['en_truncation_risks']}")
+        log.info(f"      TCG suspects (H2 v5.8): {self._stats['tcg_suspects']}")
         log.info(f"      HTTP retries (M1): {self._stats['http_retries']}")
         log.info("═" * 60)
 
@@ -808,12 +825,23 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
     normal = Font(name="Arial", size=10)
     bold_green = Font(name="Arial", size=10, bold=True, color="006100")
 
+    # v5.8 (2026-05-16): 2 colunas novas pra surfaçar o sanity check H2:
+    #   - "MYP Last Sale (R$)" entre TCG Player e Margin %
+    #   - "⚠️ TCG Suspect" depois de EN Trunc
+    # Sem isso, o operador via Jirachi PR-SM_SM161 como deal #1 a 1400% mesmo
+    # com TCG inflado 75x vs última venda real. Aggregate lê via dict-by-name,
+    # então a ordem das colunas não quebra o pipeline.
     headers = [
         "Card Name", "Edition", "Rarity",
-        "MYP EN NM (R$)", "TCG Player (R$)",
-        "Margin %", "Diff (R$)", "NM Sellers", "⚠️ EN Trunc", "URL", "Updated",
+        "MYP EN NM (R$)", "TCG Player (R$)", "MYP Last Sale (R$)",
+        "Margin %", "Diff (R$)", "NM Sellers",
+        "⚠️ EN Trunc", "⚠️ TCG Suspect", "URL", "Updated",
     ]
-    widths = [38, 32, 16, 16, 16, 11, 13, 10, 11, 55, 16]
+    widths = [38, 32, 16, 16, 16, 17, 11, 13, 10, 11, 14, 55, 16]
+    PRICE_COLS = {4, 5, 6, 8}       # MYP EN NM, TCG Player, Last Sale, Diff
+    MARGIN_COL = 7
+    EN_TRUNC_COL = 10
+    TCG_SUSPECT_COL = 11
 
     def write_headers(ws):
         for col, h in enumerate(headers, 1):
@@ -829,19 +857,20 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
     def write_card_row(ws, row, card):
         diff = (card.tcg_player_price or 0) - (card.myp_lowest_en_nm or 0)
         trunc_flag = "⚠️ MAYBE" if card.en_truncation_risk else ""
+        suspect_flag = "🚨 SUSPECT" if card.tcg_suspect else ""
         vals = [
             card.name, card.edition, card.rarity,
-            card.myp_lowest_en_nm, card.tcg_player_price,
-            card.margin_pct, diff, card.en_nm_sellers, trunc_flag,
-            card.product_url, card.last_updated,
+            card.myp_lowest_en_nm, card.tcg_player_price, card.myp_last_sale_brl,
+            card.margin_pct, diff, card.en_nm_sellers,
+            trunc_flag, suspect_flag, card.product_url, card.last_updated,
         ]
         for col, v in enumerate(vals, 1):
             c = ws.cell(row=row, column=col, value=v)
             c.font = normal
             c.border = border
-            if col in (4, 5, 7):      # price columns
+            if col in PRICE_COLS:
                 c.number_format = '#,##0.00'
-            if col == 6:               # margin %
+            if col == MARGIN_COL:
                 c.number_format = '0.0%'
                 if v and v >= 0.50:
                     c.font = bold_green
@@ -850,17 +879,26 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
                     c.fill = yellow_fill
                 elif v and v < 0:
                     c.fill = red_fill
-            if col == 9 and card.en_truncation_risk:  # ⚠️ EN Trunc column
+            if col == EN_TRUNC_COL and card.en_truncation_risk:
                 c.fill = red_fill
+                c.alignment = Alignment(horizontal="center")
+            if col == TCG_SUSPECT_COL and card.tcg_suspect:
+                c.fill = red_fill
+                c.font = Font(bold=True, color="9C0006", name="Arial", size=10)
                 c.alignment = Alignment(horizontal="center")
 
     # ── Sheet 1: Deals ──
+    # v5.8 (2026-05-16): exclui cards com tcg_suspect (TCG declarado >10x última
+    # venda real). Jirachi PR-SM_SM161 era #1 a 1400% com TCG=R$1499 fictício;
+    # ratio 75x da última venda. Suspects ainda aparecem em `All EN Cards` e na
+    # sheet dedicada `🚨 TCG Suspect` pra inspeção.
     ws1 = wb.active
     ws1.title = "🔥 Deals"
     write_headers(ws1)
 
     deals = sorted(
-        [c for c in cards if c.margin_pct and c.margin_pct >= threshold],
+        [c for c in cards
+         if c.margin_pct and c.margin_pct >= threshold and not c.tcg_suspect],
         key=lambda x: x.margin_pct or 0, reverse=True,
     )
     for i, card in enumerate(deals, 2):
@@ -906,7 +944,22 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
     if validate:
         ws_val.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{len(validate)+1}"
 
-    # ── Sheet 5: Summary ──
+    # ── Sheet 5: 🚨 TCG Suspect (v5.8) ──
+    # Cards com TCG declarado >10x última venda real do MYP — provável bug do
+    # campo .estat-tcg (caso Jirachi PR-SM_SM161). Excluídos de `🔥 Deals` mas
+    # exibidos aqui pra inspeção manual antes de descartar definitivamente.
+    ws_susp = wb.create_sheet("🚨 TCG Suspect")
+    write_headers(ws_susp)
+    suspects = sorted(
+        [c for c in cards if c.tcg_suspect],
+        key=lambda x: x.margin_pct or -999, reverse=True,
+    )
+    for i, card in enumerate(suspects, 2):
+        write_card_row(ws_susp, i, card)
+    if suspects:
+        ws_susp.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{len(suspects)+1}"
+
+    # ── Sheet 6: Summary ──
     ws3 = wb.create_sheet("Summary")
     ws3.column_dimensions['A'].width = 32
     ws3.column_dimensions['B'].width = 25
@@ -921,11 +974,14 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
     ws3.cell(row=5, column=2, value="English (EN)").font = normal
     ws3.cell(row=6, column=1, value="Total EN Cards").font = label_font
     ws3.cell(row=6, column=2, value=len(cards)).font = normal
-    ws3.cell(row=7, column=1, value="Deals Found").font = label_font
+    ws3.cell(row=7, column=1, value="Deals Found (clean)").font = label_font
     ws3.cell(row=7, column=2, value=len(deals)).font = bold_green
+    # v5.8: surface TCG suspects + truncation risks no Summary
+    ws3.cell(row=8, column=1, value="🚨 TCG Suspects").font = label_font
+    ws3.cell(row=8, column=2, value=len(suspects)).font = normal
 
-    ws3.cell(row=9, column=1, value="Top 10 Deals:").font = Font(bold=True, size=12, name="Arial")
-    for i, d in enumerate(deals[:10], 10):
+    ws3.cell(row=10, column=1, value="Top 10 Deals:").font = Font(bold=True, size=12, name="Arial")
+    for i, d in enumerate(deals[:10], 11):
         ws3.cell(row=i, column=1, value=d.name).font = normal
         margin_cell = ws3.cell(row=i, column=2, value=f"{d.margin_pct*100:.1f}% — R${d.margin_brl:,.2f}")
         margin_cell.font = bold_green

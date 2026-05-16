@@ -52,6 +52,11 @@ def card_from_row(headers: list[str], row: tuple) -> CardData | None:
     card.rarity = rec.get("Rarity") or ""
     card.myp_lowest_en_nm = rec.get("MYP EN NM (R$)")
     card.tcg_player_price = rec.get("TCG Player (R$)")
+    # v5.8 (2026-05-16): preservar sanity-check fields entre chunks. Aggregate
+    # estava strip-ando tcg_suspect → consolidated XLSX volta a mostrar Jirachi
+    # como deal #1. .get() retorna None se chunk antigo não tem essas colunas.
+    card.myp_last_sale_brl = rec.get("MYP Last Sale (R$)")
+    card.tcg_suspect = bool(rec.get("⚠️ TCG Suspect"))
     card.margin_pct = rec.get("Margin %")
     # Diff é calculado em generate_xlsx, não precisamos preservar
     card.en_nm_sellers = rec.get("NM Sellers") or 0

@@ -101,8 +101,18 @@ def main() -> int:
     deals = [c for c in all_cards if c.get("Margin %") and c["Margin %"] >= 0.25]
     deals_sorted = sorted(deals, key=lambda c: c.get("Margin %") or 0, reverse=True)
 
-    deals_clean = [c for c in deals_sorted if not is_supranumerary(c.get("Card Name"))]
+    # v5.8 (2026-05-16): Top 15 "limpos" exclui agora 3 buckets: supranumerários,
+    # truncation-risk E tcg_suspect (Jirachi PR-SM_SM161 caso). Antes Jirachi
+    # aparecia como #1 em latest-weekly.md mesmo com TCG inflado 75x.
+    def _is_suspect(c) -> bool:
+        return bool(c.get("⚠️ TCG Suspect"))
+
+    deals_clean = [
+        c for c in deals_sorted
+        if not is_supranumerary(c.get("Card Name")) and not _is_suspect(c)
+    ]
     deals_supranum = [c for c in deals_sorted if is_supranumerary(c.get("Card Name"))]
+    deals_suspect = [c for c in deals_sorted if _is_suspect(c)]
 
     truncations = [c for c in all_cards if c.get("⚠️ EN Trunc")]
 
@@ -123,11 +133,12 @@ def main() -> int:
 
     # Stats line
     total = summary_data.get("Total EN Cards", len(all_cards))
-    deals_n = summary_data.get("Deals Found", len(deals))
+    deals_n = summary_data.get("Deals Found (clean)", summary_data.get("Deals Found", len(deals)))
     threshold = summary_data.get("Margin Threshold", "25%")
     lines.append(f"**Cards EN escaneados:** {total} | **Deals (≥{threshold}):** {deals_n} | "
-                 f"**Limpos (sem SIR flag):** {len(deals_clean)} | "
-                 f"**Validar manual (truncation):** {len(truncations)}")
+                 f"**Limpos:** {len(deals_clean)} | "
+                 f"**🚨 TCG suspects:** {len(deals_suspect)} | "
+                 f"**Truncation:** {len(truncations)}")
     lines.append("")
 
     if args.run_id:
@@ -172,6 +183,28 @@ def main() -> int:
             margin = fmt_pct(c.get("Margin %"))
             lines.append(f"| {i} | {name} | {ed} | {myp} | {tcg} | {margin} |")
     lines.append("")
+
+    # ── TCG Suspect (v5.8 — MYP infla .estat-tcg) ──
+    if deals_suspect:
+        lines.append("## 🚨 TCG Suspect (campo .estat-tcg inflado pelo MYP)")
+        lines.append("")
+        lines.append("> Cards onde TCG declarado pelo MYP é >10x a última venda real "
+                     "do próprio MYP. Provável bug do `.estat-tcg`. Caso Jirachi "
+                     "PR-SM_SM161: MYP declarava R$1499 vs última venda R$19,99 (75x). "
+                     "Margens absurdas aqui são quase certamente artefato. **Já excluídos "
+                     "do Top 15 limpos**, listados aqui pra auditoria.")
+        lines.append("")
+        lines.append("| # | Carta | Edição | MYP R$ | TCG decl R$ | Última venda R$ | Margem (fake) |")
+        lines.append("|---|---|---|---:|---:|---:|---:|")
+        for i, c in enumerate(deals_suspect[:10], 1):
+            name = (c.get("Card Name") or "")[:55]
+            ed = (c.get("Edition") or "")[:30]
+            myp = fmt_brl(c.get("MYP EN NM (R$)"))
+            tcg = fmt_brl(c.get("TCG Player (R$)"))
+            last = fmt_brl(c.get("MYP Last Sale (R$)"))
+            margin = fmt_pct(c.get("Margin %"))
+            lines.append(f"| {i} | {name} | {ed} | {myp} | {tcg} | {last} | {margin} |")
+        lines.append("")
 
     # ── Truncation risks ──
     if truncations:
