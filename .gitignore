@@ -14,9 +14,12 @@ ENV/
 
 # Scanner outputs
 *.xlsx
+*.xlsx.bak
 .debug/
 .myp_run_*.log
 *.tmp
+
+# Experimental PriceCharting scrape cache (lives in %TEMP%)
 
 # Secrets
 .env
