@@ -156,6 +156,11 @@ class CardData:
     rarity: str = ""
     myp_lowest_en_nm: Optional[float] = None   # menor preço EN NM no MYP
     tcg_player_price: Optional[float] = None    # preço referência TCG Player (EN)
+    # v5.8 H2 (2026-05-16): MYP às vezes reporta .estat-tcg inflado (caso
+    # Jirachi PR-SM_SM161: MYP=R$1499 vs TCGPlayer real $26=R$132 = 11x off).
+    # Capturar última venda real do MYP pra sanity check.
+    myp_last_sale_brl: Optional[float] = None
+    tcg_suspect: bool = False                    # True se TCG declarado >> última venda real
     margin_pct: Optional[float] = None
     margin_brl: Optional[float] = None
     en_nm_sellers: int = 0                      # qtd vendedores EN NM
@@ -444,6 +449,23 @@ class MYPScraper:
         if not card.tcg_player_price:
             self._stats["skipped_no_tcg_price"] += 1
             return None
+
+        # v5.8 H2 (2026-05-16): capturar última venda real MYP pra sanity check.
+        # MYP às vezes infla `.estat-tcg` (Jirachi PR-SM_SM161: declarava R$1499
+        # mas TCGPlayer real $26=R$132 e última venda MYP foi R$19,99 — diff 75x).
+        # Se TCG declarado >> última venda, provavelmente bug do MYP.
+        last_sale_el = soup.select_one(".estatistica-ultimo")
+        if last_sale_el:
+            ls_matches = re.findall(r'R\$\s*[\d.,]+', last_sale_el.get_text())
+            if ls_matches:
+                card.myp_last_sale_brl = self._parse_brl(ls_matches[-1])
+
+        # Sanity check: ratio TCG declarado / última venda real
+        if card.myp_last_sale_brl and card.myp_last_sale_brl > 0:
+            ratio = card.tcg_player_price / card.myp_last_sale_brl
+            if ratio > 10.0:
+                # TCG declarado é >10x última venda → MYP bug provável
+                card.tcg_suspect = True
 
         # ── Parse seller tables: extract EN sellers only ──
         # 2026-05-12: itera por tabela individualmente (não plano em tr)
