@@ -110,26 +110,6 @@ KNOWN_LANGUAGES = {
 }
 EN_LANGUAGES = {"Inglês", "English"}
 
-# v5.8 (2026-05-16): MYP renderiza flag-icon='Inglês' polluído em sellers PT
-# (caso Jirachi PR-SM_SM161 e ~22 deals do scan 2026-05-15). Fix: usar texto
-# da CONDIÇÃO como ground truth de idioma — interface do site mostra condição
-# no idioma do seller. Se row tem qualquer marker PT, idioma é PT (forçado),
-# mesmo se flag-icon disser "Inglês". Reduz falsos positivos sem custo.
-PT_CONDITION_MARKERS = (
-    "quase nova",       # NM em PT
-    "pouco jogada",     # SP em PT
-    "muito jogada",     # MP em PT
-    "bastante jogada",  # HP em PT
-    "estragada",        # DMG em PT
-)
-EN_CONDITION_MARKERS = (
-    "near mint",
-    "slightly played",
-    "moderately played",
-    "heavily played",
-    "damaged",
-)
-
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -532,34 +512,18 @@ class MYPScraper:
                 if row_price and row_price > max_price_in_table:
                     max_price_in_table = row_price
 
-                # v5.8 H1 (2026-05-16): detectar idioma via CONDIÇÃO TEXTUAL primeiro
-                # (ground truth). MYP renderiza flag-icon='Inglês' polluído em sellers
-                # PT às vezes (Jirachi PR-SM_SM161 + ~22 deals falsos no scan 2026-05-15).
-                # Se row tem marker PT inequívoco, FORÇA lang=Português, mesmo que
-                # flag-icon diga "Inglês".
-                row_text_lower = row_text.lower()
-                has_pt_marker = any(m in row_text_lower for m in PT_CONDITION_MARKERS)
-                has_en_marker = any(m in row_text_lower for m in EN_CONDITION_MARKERS)
-
+                # Find language from flag-icon span (specific selector)
                 lang = None
-                if has_pt_marker and not has_en_marker:
-                    # Texto inequívoco PT: forçar idioma (ignora flag-icon polluído)
-                    lang = "Português"
-                elif has_en_marker and not has_pt_marker:
-                    lang = "Inglês"
+                flag_el = row.select_one("span.flag-icon[title]")
+                if flag_el:
+                    lang = flag_el.get("title", "").strip()
                 else:
-                    # Ambíguo (ex: condição abreviada "NM" sem texto longo) ou
-                    # row sem condição visível → cair no flag-icon como fallback
-                    flag_el = row.select_one("span.flag-icon[title]")
-                    if flag_el:
-                        lang = flag_el.get("title", "").strip()
-                    else:
-                        # Fallback: check any [title] that matches a known language
-                        for el in row.select("[title]"):
-                            title_val = el.get("title", "").strip()
-                            if title_val in KNOWN_LANGUAGES:
-                                lang = title_val
-                                break
+                    # Fallback: check any [title] that matches a known language
+                    for el in row.select("[title]"):
+                        title_val = el.get("title", "").strip()
+                        if title_val in KNOWN_LANGUAGES:
+                            lang = title_val
+                            break
 
                 # v5.4 H1: lang não-vazio mas fora do conhecido = drift potencial
                 # (ex.: MYP normalizar "Inglês" → "Ingles" sem acento, ou novo
