@@ -19,6 +19,8 @@ ENV/
 .myp_run_*.log
 logs/
 *.tmp
+chunk*.log
+.run_with_*.py
 
 # Experimental PriceCharting scrape cache (lives in %TEMP%)
 
