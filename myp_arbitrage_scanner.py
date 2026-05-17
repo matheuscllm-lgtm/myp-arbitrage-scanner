@@ -59,6 +59,7 @@ Changelog v5.3 (2026-05-12 — após caso Psyduck/bartsimpson):
 # `except (requests.RequestException, ...)` no _get retry loop (v5.4 C3 fix).
 # Antes era importado APENAS no fallback ImportError do cloudscraper, causando
 # NameError em qualquer setup que tenha cloudscraper (todos os production runs).
+import os
 import requests
 try:
     import cloudscraper
@@ -159,15 +160,24 @@ class CardData:
 class MYPScraper:
     def __init__(self, delay: float = REQUEST_DELAY):
         if HAS_CLOUDSCRAPER:
+            # 2026-05-17: Cloudflare passou a bloquear o fingerprint chrome/windows
+            # do cloudscraper (HTTP 403 cf-mitigated: challenge). Firefox/windows
+            # ainda passa. Mantemos chrome no env var pra rollback fácil.
+            browser_fp = os.environ.get("MYP_CLOUDSCRAPER_BROWSER", "firefox")
             self.session = cloudscraper.create_scraper(
-                browser={"browser": "chrome", "platform": "windows", "desktop": True},
+                browser={"browser": browser_fp, "platform": "windows", "desktop": True},
             )
-            log.info("Using cloudscraper (CloudFlare bypass enabled)")
+            log.info(f"Using cloudscraper (browser={browser_fp}, CloudFlare bypass enabled)")
+            # Não sobrescreve User-Agent — o cloudscraper já configura UA coerente
+            # com o TLS fingerprint do browser escolhido. Forçar UA Chrome num
+            # fingerprint Firefox = mismatch detectado pelo CF (403).
+            non_ua_headers = {k: v for k, v in HEADERS.items() if k.lower() != "user-agent"}
+            self.session.headers.update(non_ua_headers)
         else:
             self.session = requests.Session()
             log.warning("cloudscraper not installed — may get 403 errors!")
             log.warning("Fix: pip install cloudscraper")
-        self.session.headers.update(HEADERS)
+            self.session.headers.update(HEADERS)
         self.delay = delay
         self.cards: list[CardData] = []
         self._stats = {

@@ -17,6 +17,7 @@ ENV/
 *.xlsx.bak
 .debug/
 .myp_run_*.log
+logs/
 *.tmp
 
 # Experimental PriceCharting scrape cache (lives in %TEMP%)
