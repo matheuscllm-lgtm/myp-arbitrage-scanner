@@ -47,16 +47,29 @@ SUSPECT_RATIO = TCG_SUSPECT_RATIO_THRESHOLD
 
 
 def parse_brl(text: str) -> float | None:
+    """v5.8.2: match scanner _parse_brl logic exactly (BR canonical + US
+    decimal leakage handling). Pre-fix this code already handled BR-only and
+    US-only via the `if "," in s` branch, but '30.000' (BR thousands without
+    decimal) and '1,500.00' (US with thousands) failed."""
     if not text:
         return None
     m = re.search(r'[\d.,]+', text)
     if not m:
         return None
     s = m.group(0)
-    # Normaliza: "1.499,95" → 1499.95 ; "100.00" → 100.00 ; "19.99" → 19.99
-    # MYP usa formatos mistos. Se tem vírgula, vírgula é decimal e pontos são milhares.
-    if "," in s:
-        s = s.replace(".", "").replace(",", ".")
+    has_comma = "," in s
+    has_dot = "." in s
+    if has_comma and has_dot:
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif has_comma:
+        s = s.replace(",", ".")
+    elif has_dot:
+        parts = s.split(".")
+        if len(parts) > 2 or len(parts[-1]) == 3:
+            s = s.replace(".", "")
     try:
         return float(s)
     except ValueError:

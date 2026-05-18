@@ -238,14 +238,40 @@ class MYPScraper:
 
     @staticmethod
     def _parse_brl(text: str) -> Optional[float]:
-        """Parse Brazilian Real price format: 'R$ 1.900,00' → 1900.0"""
+        """Parse price string. Handles BR canonical ('R$ 1.900,00') AND US
+        decimal leakage ('R$ 30.00') that MYP sometimes emits in
+        `.estatistica-ultimo`. v5.8.2 fix: previously '30.00' → 3000.0 (read
+        as BR thousands), broke sanity-check ratio → false negatives.
+        """
         if not text:
             return None
         text = re.sub(r'[R$\s\xa0]', '', text.strip())
         if not text:
             return None
-        # R$ 1.900,00 → remove thousands dot, convert decimal comma
-        text = text.replace('.', '').replace(',', '.')
+        has_comma = ',' in text
+        has_dot = '.' in text
+        if has_comma and has_dot:
+            # Both present. Whichever appears LAST is the decimal separator.
+            if text.rfind(',') > text.rfind('.'):
+                # BR canonical: '1.500,00' → '1500.00'
+                text = text.replace('.', '').replace(',', '.')
+            else:
+                # US thousands: '1,500.00' → '1500.00'
+                text = text.replace(',', '')
+        elif has_comma:
+            # Only comma → BR decimal: '30,00' → '30.00'
+            text = text.replace(',', '.')
+        elif has_dot:
+            # Only dot → disambiguate by suffix length.
+            # 2-digit suffix → decimal ('30.00' = 30.0; '1234.56' = 1234.56)
+            # 3-digit suffix with single dot → BR thousands ('30.000' = 30000)
+            # Multiple dots → BR thousands ('1.500.000' = 1500000)
+            parts = text.split('.')
+            if len(parts) > 2:
+                text = text.replace('.', '')
+            elif len(parts[-1]) == 3:
+                text = text.replace('.', '')
+            # else: keep as-is (US decimal style)
         try:
             val = float(text)
             return val if val > 0 else None
@@ -424,9 +450,22 @@ class MYPScraper:
         card.edition = edition_name
         card.last_updated = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-        # Name
+        # Name. v5.8.2: defensive fallback chain. h1 ausente acontece quando
+        # MYP rota retorna template diferente (ex.: erro JS injetado) e o XLSX
+        # 2026-05-17 saiu com Card Name=None em 1252/1252 rows. Backup: <title>
+        # ou slug da URL.
         h1 = soup.select_one("h1")
         card.name = h1.get_text(strip=True) if h1 else ""
+        if not card.name:
+            title_tag = soup.find("title")
+            if title_tag and title_tag.text:
+                card.name = title_tag.text.split("|")[0].strip()
+        if not card.name:
+            slug = url.rstrip("/").split("/")[-1].replace("-", " ").strip()
+            if slug and not slug.isdigit():
+                card.name = slug.title()
+        if not card.name:
+            log.warning(f"  No name extractable from {url}")
 
         # Product code
         page_text = soup.get_text()
