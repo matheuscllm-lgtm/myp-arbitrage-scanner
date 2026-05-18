@@ -97,6 +97,22 @@ TIMEOUT = 20                     # timeout HTTP em segundos
 HTTP_MAX_RETRIES = 3             # M1 fix: retries em transient errors
 DEBUG_DIR = Path(__file__).resolve().parent / ".debug"   # M4 fix: subpasta dedicada
 SUPRANUMERARY_PRICE_THRESHOLD = 200.0  # H3 fix: TCG R$ acima disso + rarity="Comum" = SIR/HR suspeito
+# v5.8.3 (2026-05-18): cartas Jumbo (oversized ~25×35cm) têm mercado/preço
+# distintos da versão standard. MYP agrupa standard + jumbo na MESMA página de
+# produto; a variante é indicada por seller-row na coluna `.estoque-lista-nomeenfoil`
+# ("Foil"). Detectamos e excluímos rows Jumbo da contagem EN. Caso M-Rayquaza-EX
+# 098/98 XY 7 (produto 32737): h1 sem "Jumbo" mas 5 sellers com Jumbo no Foil col
+# inflavam o min preço EN.
+JUMBO_FOIL_RE = re.compile(r"jumbo", re.IGNORECASE)
+# Mantemos filtro por título como segunda camada — caso MYP algum dia liste
+# Jumbo como produto standalone.
+JUMBO_TITLE_RE = re.compile(r"\bjumbo\b", re.IGNORECASE)
+# v5.8.3 (2026-05-18): Flareon VMAX (018/203) "Prize Pack Series" — observado
+# 1 seller único (`gvrgyn`) listando como Inglês quando a carta não tem print
+# EN nessa edição (mislabeling). Sem cross-check pokemontcg.io confiável, a
+# heurística defensiva é tratar 1-seller-EN como single_seller_risk e mover
+# pra Validate Manually. Não suprime — apenas escala visibilidade.
+SINGLE_EN_SELLER_RISK_THRESHOLD = 1  # 1 seller EN = risco de mislabeling
 # v5.8 H2 (2026-05-16): se TCG declarado >> última venda real, MYP infla o
 # preço de referência. Caso Jirachi PR-SM_SM161: declarava R$1499 vs última
 # venda real R$19,99 (75x). Threshold 10x captura inflação grosseira sem
@@ -151,6 +167,10 @@ class CardData:
     margin_brl: Optional[float] = None
     en_nm_sellers: int = 0                      # qtd vendedores EN NM
     en_truncation_risk: bool = False            # 2026-05-12: alguma seller table está no cap (15/20) sem EN visível → EN possivelmente escondido
+    # v5.8.3 (2026-05-18): único seller EN visível → risco de mislabeling de idioma
+    # (caso Flareon VMAX 018/203 Prize Pack: 1 seller gvrgyn lista como EN mas
+    # carta não tem print EN nessa edição). Sinaliza pra Validate Manually.
+    single_en_seller_risk: bool = False
     last_updated: str = ""
 
 
@@ -197,6 +217,17 @@ class MYPScraper:
             # real (Jirachi PR-SM_SM161 caso). Não filtra do funnel — fica
             # em All EN Cards, mas é excluído da sheet 🔥 Deals.
             "tcg_suspects": 0,
+            # v5.8.3 (2026-05-18): produtos Jumbo (oversized) skipados pelo
+            # filtro de TÍTULO (camada 2). `.estat-tcg` reflete preço da carta
+            # standard, deal é fictício.
+            "skipped_jumbo": 0,
+            # v5.8.3 (2026-05-18): seller rows com foil="Jumbo" filtradas pela
+            # camada 1 (caso M-Rayquaza-EX XY 7: standard + jumbo no mesmo
+            # produto, MYP diferencia via coluna `.estoque-lista-nomeenfoil`).
+            "jumbo_rows_filtered": 0,
+            # v5.8.3 (2026-05-18): cards com apenas 1 seller EN visível —
+            # risco de seller mislabeling (caso Flareon VMAX 018/203).
+            "single_en_seller_risks": 0,
         }
         # v5.4 H1: warn-once cache pra unknown language titles
         self._unknown_lang_seen: set[str] = set()
@@ -467,6 +498,15 @@ class MYPScraper:
         if not card.name:
             log.warning(f"  No name extractable from {url}")
 
+        # v5.8.3 (2026-05-18): SKIP Jumbo (oversized) cards. `.estat-tcg` no MYP
+        # reflete preço da carta standard, gerando deals fictícios com margem
+        # gigante (ex.: M-Rayquaza-EX 098/98 XY 7 Jumbo). Skip ANTES de fetch
+        # de tabela de seller pra economizar processamento e evitar contaminação.
+        if card.name and JUMBO_TITLE_RE.search(card.name):
+            self._stats["skipped_jumbo"] += 1
+            log.info(f"  ⏭️  Skipping Jumbo card: {card.name}")
+            return None
+
         # Product code
         page_text = soup.get_text()
         code_match = re.search(r'pokemon_[a-z]{2,3}_[\w/]+', page_text)
@@ -520,6 +560,7 @@ class MYPScraper:
         # (caso bartsimpson Psyduck R$300 EN sendo truncado por 20 listings PT/JP).
         en_prices = []
         en_sellers = 0
+        jumbo_rows_seen = 0  # v5.8.3: rows com foil="Jumbo" (caso M-Rayquaza-EX XY 7)
         TABLE_CAP_THRESHOLD = 15   # tabela com >= 15 rows sem EN visível → candidato a truncamento
 
         seller_tables = soup.select("table.table-striped.table-bordered")
@@ -591,6 +632,19 @@ class MYPScraper:
                 if lang not in EN_LANGUAGES:
                     continue
 
+                # v5.8.3 (2026-05-18): skip rows com foil="Jumbo" (oversized).
+                # MYP agrupa standard + jumbo na mesma página de produto; a
+                # coluna `td.estoque-lista-nomeenfoil` indica a variante. TCG
+                # Player price refere-se à standard, então jumbo rows inflam
+                # `min(en_prices)` artificialmente (caso M-Rayquaza-EX 098/98
+                # XY 7: 5 sellers Jumbo a R$650 enquanto TCG standard era
+                # R$4801 → margin fictícia de 638%).
+                foil_el = row.select_one("td.estoque-lista-nomeenfoil")
+                foil_txt = foil_el.get_text(strip=True) if foil_el else ""
+                if JUMBO_FOIL_RE.search(foil_txt):
+                    jumbo_rows_seen += 1
+                    continue
+
                 # Filter: NM (Near Mint) only — skip Played, Damaged, etc.
                 row_upper = row_text.upper()
                 is_nm = ("NM" in row_upper or "QUASE NOVA" in row_upper
@@ -629,6 +683,14 @@ class MYPScraper:
                     truncation_risk = True
                     break
 
+        # v5.8.3: log se rows Jumbo foram filtradas
+        if jumbo_rows_seen > 0:
+            self._stats["jumbo_rows_filtered"] += jumbo_rows_seen
+            log.info(
+                f"  ⏭️  Skipped {jumbo_rows_seen} Jumbo seller row(s) "
+                f"em {card.name or url}"
+            )
+
         # If no EN+NM sellers found, skip
         if not en_prices:
             self._stats["skipped_no_en_sellers"] += 1
@@ -645,6 +707,18 @@ class MYPScraper:
         card.myp_lowest_en_nm = min(en_prices)
         card.en_nm_sellers = en_sellers
         card.en_truncation_risk = truncation_risk
+        # v5.8.3 (2026-05-18): 1 seller EN só = risco de mislabeling
+        # (caso Flareon VMAX 018/203 Prize Pack: seller único listava como EN
+        # carta sem print EN). Flag pra Validate Manually em vez de skip,
+        # pra não suprimir deals legítimos de cards realmente raros.
+        if en_sellers <= SINGLE_EN_SELLER_RISK_THRESHOLD:
+            card.single_en_seller_risk = True
+            self._stats["single_en_seller_risks"] += 1
+            log.warning(
+                f"  ⚠️ Single EN seller risk: {card.name or url} | "
+                f"apenas {en_sellers} seller EN-NM visível — "
+                f"possível mislabeling de idioma. Validar manualmente."
+            )
         if truncation_risk:
             self._stats["en_truncation_risks"] += 1
             log.warning(
@@ -804,10 +878,13 @@ class MYPScraper:
         log.info(f"      No EN sellers: {self._stats['skipped_no_en_sellers']}")
         log.info(f"      Low price (<R${MIN_PRICE_BRL:.0f}): {self._stats['skipped_low_price']}")
         log.info(f"      Unknown lang titles (v5.4 H1): {self._stats['skipped_unknown_lang_titles']}")
+        log.info(f"      Jumbo cards (title, v5.8.3): {self._stats['skipped_jumbo']}")
+        log.info(f"      Jumbo seller rows filtered (v5.8.3): {self._stats['jumbo_rows_filtered']}")
         log.info(f"  ── Other diagnostics:")
         log.info(f"      Supranumerary warnings (H3): {self._stats['supranumerary_warnings']}")
         log.info(f"      EN truncation risks (T1): {self._stats['en_truncation_risks']}")
         log.info(f"      TCG suspects (H2 v5.8): {self._stats['tcg_suspects']}")
+        log.info(f"      Single EN seller risks (v5.8.3): {self._stats['single_en_seller_risks']}")
         log.info(f"      HTTP retries (M1): {self._stats['http_retries']}")
         log.info("═" * 60)
 
@@ -848,13 +925,14 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
         "Card Name", "Edition", "Rarity",
         "MYP EN NM (R$)", "TCG Player (R$)", "MYP Last Sale (R$)",
         "Margin %", "Diff (R$)", "NM Sellers",
-        "⚠️ EN Trunc", "⚠️ TCG Suspect", "URL", "Updated",
+        "⚠️ EN Trunc", "⚠️ TCG Suspect", "⚠️ Single Seller", "URL", "Updated",
     ]
-    widths = [38, 32, 16, 16, 16, 17, 11, 13, 10, 11, 14, 55, 16]
+    widths = [38, 32, 16, 16, 16, 17, 11, 13, 10, 11, 14, 14, 55, 16]
     PRICE_COLS = {4, 5, 6, 8}       # MYP EN NM, TCG Player, Last Sale, Diff
     MARGIN_COL = 7
     EN_TRUNC_COL = 10
     TCG_SUSPECT_COL = 11
+    SINGLE_SELLER_COL = 12
 
     def write_headers(ws):
         for col, h in enumerate(headers, 1):
@@ -871,11 +949,13 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
         diff = (card.tcg_player_price or 0) - (card.myp_lowest_en_nm or 0)
         trunc_flag = "⚠️ MAYBE" if card.en_truncation_risk else ""
         suspect_flag = "🚨 SUSPECT" if card.tcg_suspect else ""
+        single_flag = "⚠️ 1 SELLER" if card.single_en_seller_risk else ""
         vals = [
             card.name, card.edition, card.rarity,
             card.myp_lowest_en_nm, card.tcg_player_price, card.myp_last_sale_brl,
             card.margin_pct, diff, card.en_nm_sellers,
-            trunc_flag, suspect_flag, card.product_url, card.last_updated,
+            trunc_flag, suspect_flag, single_flag,
+            card.product_url, card.last_updated,
         ]
         for col, v in enumerate(vals, 1):
             c = ws.cell(row=row, column=col, value=v)
@@ -899,6 +979,9 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
                 c.fill = red_fill
                 c.font = Font(bold=True, color="9C0006", name="Arial", size=10)
                 c.alignment = Alignment(horizontal="center")
+            if col == SINGLE_SELLER_COL and card.single_en_seller_risk:
+                c.fill = yellow_fill
+                c.alignment = Alignment(horizontal="center")
 
     # ── Sheet 1: Deals ──
     # v5.8 (2026-05-16): exclui cards com tcg_suspect (TCG declarado >10x última
@@ -909,9 +992,13 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
     ws1.title = "🔥 Deals"
     write_headers(ws1)
 
+    # v5.8.3 (2026-05-18): também exclui single_en_seller_risk de Deals.
+    # Esses cards (1 seller EN) têm risco de mislabeling de idioma — operador
+    # acha em "🚨 Validate Manually" pra inspeção antes de operar.
     deals = sorted(
         [c for c in cards
-         if c.margin_pct and c.margin_pct >= threshold and not c.tcg_suspect],
+         if c.margin_pct and c.margin_pct >= threshold
+         and not c.tcg_suspect and not c.single_en_seller_risk],
         key=lambda x: x.margin_pct or 0, reverse=True,
     )
     for i, card in enumerate(deals, 2):
@@ -941,15 +1028,15 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
         write_card_row(ws_top, i, card)
     ws_top.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{max(len(top50)+1, 2)}"
 
-    # ── Sheet 4: 🚨 Validate Manually (cards com en_truncation_risk) ──
-    # 2026-05-12 v5.3: cards onde alguma seller table bateu cap sem EN visível.
-    # Lowest EN-NM reportado é teto — listing real pode ser mais barato. Operador
-    # valida buscando perfil de seller direto (ex.: bartsimpson teve Psyduck R$300 EN
-    # truncado da página enquanto scanner reportou R$415).
+    # ── Sheet 4: 🚨 Validate Manually ──
+    # Inclui cards com qualquer flag de risco de detecção:
+    #   - en_truncation_risk (2026-05-12 v5.3): seller table no cap sem EN visível
+    #   - single_en_seller_risk (v5.8.3 2026-05-18): 1 seller EN → possível mislabeling
     ws_val = wb.create_sheet("🚨 Validate Manually")
     write_headers(ws_val)
     validate = sorted(
-        [c for c in cards if c.en_truncation_risk],
+        [c for c in cards
+         if c.en_truncation_risk or c.single_en_seller_risk],
         key=lambda x: x.margin_pct or -999, reverse=True,
     )
     for i, card in enumerate(validate, 2):

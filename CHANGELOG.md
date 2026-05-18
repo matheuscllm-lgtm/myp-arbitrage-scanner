@@ -1,5 +1,45 @@
 # Changelog
 
+## v5.8.3 — 2026-05-18 — Skip Jumbo + single-seller-EN risk surfacing
+
+Dois bugs reportados pelo operador no XLSX `myp_weekly_20260517_1519`:
+
+### Bug A — Jumbo sellers no mesmo produto da carta standard
+Cartas Jumbo (oversized ~25×35cm de colecionador) têm mercado/preço distintos
+da versão standard. **MYP agrupa standard + jumbo na MESMA página de produto**;
+a variante é indicada por seller-row na coluna `td.estoque-lista-nomeenfoil`
+("Foil"). Caso M-Rayquaza-EX (098/98) XY 7 produto 32737:
+- h1 = `"M-Rayquaza-EX (098/98)M Rayquaza-EX"` (sem "Jumbo")
+- 5 sellers com Foil="Jumbo" a R$650
+- TCG declarado R$4801,45 (preço da standard)
+- Margem fictícia: 638%
+
+- **Camada 1 — per-row filter** (`JUMBO_FOIL_RE`): rows onde
+  `td.estoque-lista-nomeenfoil` casa `/jumbo/i` são puladas. Counter
+  `jumbo_rows_filtered` no `_stats`.
+- **Camada 2 — title filter** (`JUMBO_TITLE_RE`, `\bjumbo\b` case-insensitive):
+  skip cedo se o título do produto contém "Jumbo" (caso MYP algum dia separe
+  em produto standalone). Counter `skipped_jumbo` no `_stats`.
+
+### Bug B — Flareon VMAX 018/203 single-seller EN mislabeling
+Investigação do HTML real (`scripts/_investigate_flareon_jumbo.py`) confirmou que
+o produto tem **1 único seller** (`gvrgyn`) marcado como `flag-icon[title="Inglês"]`,
+condição NM, R$ 89,90 contra TCG R$ 456,20. Não há bug de detecção do scanner —
+o site afirma que é EN. Hipótese mais plausível: seller mislabeling de idioma
+em carta que não tem print EN nessa edição (Prize Pack Series).
+
+Sem cross-check externo (pokemontcg.io card-ID per-edition) não dá pra confirmar
+o "EN não existe" de forma automatizada. Solução defensiva sem suprimir deals
+genuínos:
+
+- **Novo campo** `CardData.single_en_seller_risk: bool` (default False).
+- **Threshold** `SINGLE_EN_SELLER_RISK_THRESHOLD = 1` — flag quando `en_nm_sellers <= 1`.
+- **Exclui de `🔥 Deals`**, **inclui em `🚨 Validate Manually`** (já existente).
+- **Nova coluna XLSX** `"⚠️ Single Seller"` em todas as sheets de cards.
+- **Counter** `single_en_seller_risks` no `_stats`, logado ao final.
+- **Aggregator** (`myp_aggregate.py`) preserva o flag entre chunks (mesmo padrão
+  do tcg_suspect do v5.8).
+
 ## v5.8 — 2026-05-16 — TCG suspect surfacing (Jirachi-style inflation fix)
 
 Bug pós-scan 2026-05-15: Jirachi PR-SM_SM161 apareceu como deal #1 a +1400% margem

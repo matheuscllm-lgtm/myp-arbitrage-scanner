@@ -61,6 +61,8 @@ def card_from_row(headers: list[str], row: tuple) -> CardData | None:
     # Diff é calculado em generate_xlsx, não precisamos preservar
     card.en_nm_sellers = rec.get("NM Sellers") or 0
     card.en_truncation_risk = bool(rec.get("⚠️ EN Trunc"))
+    # v5.8.3 (2026-05-18): preservar flag de single-seller risk entre chunks
+    card.single_en_seller_risk = bool(rec.get("⚠️ Single Seller"))
     card.product_url = rec.get("URL") or ""
     card.last_updated = rec.get("Updated") or ""
     # margin_brl: derived
