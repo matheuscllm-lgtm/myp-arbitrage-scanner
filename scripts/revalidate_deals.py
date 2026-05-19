@@ -187,13 +187,16 @@ def revalidate(input_xlsx: Path, output_xlsx: Path, delay: float = 1.5):
     for r in clean:
         ws_clean.append(r)
     _style_header(ws_clean, headers, fill="C6EFCE")
+    _apply_data_formats(ws_clean, headers)
 
     # Suspect Deals
+    susp_headers = headers + ["TCG Decl Re-check", "Last Sale", "Ratio"]
     ws_susp = wb_out.create_sheet("🚨 TCG Suspect")
-    ws_susp.append(headers + ["TCG Decl Re-check", "Last Sale", "Ratio"])
+    ws_susp.append(susp_headers)
     for r, result in suspect:
         ws_susp.append(list(r) + [result["tcg_declared"], result["last_sale"], result["ratio"]])
-    _style_header(ws_susp, headers + ["TCG Decl Re-check", "Last Sale", "Ratio"], fill="FFC7CE")
+    _style_header(ws_susp, susp_headers, fill="FFC7CE")
+    _apply_data_formats(ws_susp, susp_headers)
 
     # Copy All EN Cards
     if "All EN Cards" in wb_in.sheetnames:
@@ -202,6 +205,7 @@ def revalidate(input_xlsx: Path, output_xlsx: Path, delay: float = 1.5):
         for row in src.iter_rows(values_only=True):
             ws_all.append(row)
         _style_header(ws_all, headers, fill="DCE6F1")
+        _apply_data_formats(ws_all, headers)
 
     # Summary
     ws_sum = wb_out.create_sheet("Summary")
@@ -223,6 +227,27 @@ def _style_header(ws, headers, fill="4472C4"):
         c.font = Font(bold=True)
         c.fill = PatternFill(start_color=fill, end_color=fill, fill_type="solid")
         c.alignment = Alignment(horizontal="center")
+
+
+def _apply_data_formats(ws, headers):
+    """v5.8.6 bug #5: apply Excel number_format to columns whose header
+    semantics imply a format (Margin → 0.00%, R$ prices → #,##0.00).
+
+    Without this the rebuilt XLSX showed raw 0.483 in the Margin cells
+    even though the upstream scanner stored a fraction. Operator opening
+    the file saw "0.48" instead of "48,30%" — inconsistent with header
+    "Margin %" and downstream merge/triage scripts that filter by margin.
+    """
+    margin_cols = [i + 1 for i, h in enumerate(headers)
+                   if isinstance(h, str) and "margin" in h.lower()
+                   and "%" in h]
+    price_cols = [i + 1 for i, h in enumerate(headers)
+                  if isinstance(h, str) and "(r$)" in h.lower()]
+    for r in range(2, ws.max_row + 1):
+        for col in margin_cols:
+            ws.cell(row=r, column=col).number_format = "0.00%"
+        for col in price_cols:
+            ws.cell(row=r, column=col).number_format = "#,##0.00"
 
 
 def main():

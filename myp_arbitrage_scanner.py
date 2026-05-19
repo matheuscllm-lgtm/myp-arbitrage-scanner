@@ -1034,7 +1034,11 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
             if col in PRICE_COLS:
                 c.number_format = '#,##0.00'
             if col == MARGIN_COL:
-                c.number_format = '0.0%'
+                # v5.8.6 bug #5: standardize on 2-decimal % across the
+                # pipeline (revalidate_deals.py also uses "0.00%"). Header
+                # is "Margin %" — value is stored as fraction (e.g. 0.483)
+                # so format must render as percentage to match semantics.
+                c.number_format = '0.00%'
                 if v and v >= 0.50:
                     c.font = bold_green
                     c.fill = green_fill
