@@ -17,8 +17,8 @@ Requisitos:
     pip install cloudscraper beautifulsoup4 openpyxl lxml
 
 Autor: Matheus Chillemi / Claude
-Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8)
-Versão: v5.8
+Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4)
+Versão: v5.8.4
 
 Changelog v5.1 (2026-05-12 — auditoria C/H/M, mesma metodologia do CT scanner):
   - C1: --threshold < 1.0 auto-converte com warning (UX guard contra trap
@@ -103,16 +103,35 @@ SUPRANUMERARY_PRICE_THRESHOLD = 200.0  # H3 fix: TCG R$ acima disso + rarity="Co
 # ("Foil"). Detectamos e excluímos rows Jumbo da contagem EN. Caso M-Rayquaza-EX
 # 098/98 XY 7 (produto 32737): h1 sem "Jumbo" mas 5 sellers com Jumbo no Foil col
 # inflavam o min preço EN.
-JUMBO_FOIL_RE = re.compile(r"jumbo", re.IGNORECASE)
-# Mantemos filtro por título como segunda camada — caso MYP algum dia liste
-# Jumbo como produto standalone.
-JUMBO_TITLE_RE = re.compile(r"\bjumbo\b", re.IGNORECASE)
+#
+# v5.8.4 (2026-05-19): regex broader cobre também 'oversized', 'box topper',
+# 'poster card'. MYP usa qualquer um desses pra produtos físicos não-standard.
+# \b word-boundary em todos pra consistência (foil_re antes não tinha; rara
+# colisão tipo "jumbocard" não documentada mas defensivo).
+OVERSIZED_FOIL_RE = re.compile(
+    r"\b(jumbo|oversized)\b", re.IGNORECASE,
+)
+# Filtro por título como segunda camada — caso MYP liste oversized como
+# produto standalone (sem distinção via coluna foil).
+OVERSIZED_TITLE_RE = re.compile(
+    r"\b(jumbo|oversized|box\s?topper|poster\s?card)\b", re.IGNORECASE,
+)
+# Aliases retrocompat — `postprocess_v583_flags.py` ainda importa o nome
+# antigo. Manter até refactor downstream completo. NÃO criar novos usos.
+JUMBO_FOIL_RE = OVERSIZED_FOIL_RE
+JUMBO_TITLE_RE = OVERSIZED_TITLE_RE
 # v5.8.3 (2026-05-18): Flareon VMAX (018/203) "Prize Pack Series" — observado
 # 1 seller único (`gvrgyn`) listando como Inglês quando a carta não tem print
 # EN nessa edição (mislabeling). Sem cross-check pokemontcg.io confiável, a
 # heurística defensiva é tratar 1-seller-EN como single_seller_risk e mover
 # pra Validate Manually. Não suprime — apenas escala visibilidade.
-SINGLE_EN_SELLER_RISK_THRESHOLD = 1  # 1 seller EN = risco de mislabeling
+# v5.8.4 (2026-05-19): CLI override via --min-en-sellers. Default permanece 1
+# (legacy v5.8.3 behavior). Card é flagged quando `en_sellers <
+# MIN_EN_SELLERS_FOR_DEALS` (strict less-than). Threshold pode ser elevado
+# pra cenários mais conservadores (ex.: --min-en-sellers 2 trata 1 OU 2
+# sellers como risco).
+SINGLE_EN_SELLER_RISK_THRESHOLD = 1  # legacy alias (≤ threshold = risk)
+MIN_EN_SELLERS_FOR_DEALS_DEFAULT = 2  # < default = flagged (matches legacy 1≤1)
 # v5.8 H2 (2026-05-16): se TCG declarado >> última venda real, MYP infla o
 # preço de referência. Caso Jirachi PR-SM_SM161: declarava R$1499 vs última
 # venda real R$19,99 (75x). Threshold 10x captura inflação grosseira sem
@@ -178,7 +197,15 @@ class CardData:
 # SCRAPER
 # ══════════════════════════════════════════════════════════════════════
 class MYPScraper:
-    def __init__(self, delay: float = REQUEST_DELAY):
+    def __init__(
+        self,
+        delay: float = REQUEST_DELAY,
+        min_en_sellers: int = MIN_EN_SELLERS_FOR_DEALS_DEFAULT,
+    ):
+        # v5.8.4 (2026-05-19): threshold configurable via CLI. Card é flagged
+        # quando `en_sellers < min_en_sellers`. Default 2 reproduz v5.8.3
+        # (que checava `en_sellers <= SINGLE_EN_SELLER_RISK_THRESHOLD=1`).
+        self.min_en_sellers = min_en_sellers
         if HAS_CLOUDSCRAPER:
             # 2026-05-17: Cloudflare passou a bloquear o fingerprint chrome/windows
             # do cloudscraper (HTTP 403 cf-mitigated: challenge). Firefox/windows
@@ -268,15 +295,23 @@ class MYPScraper:
         return None
 
     @staticmethod
-    def _parse_brl(text: str) -> Optional[float]:
+    def _parse_brl(text) -> Optional[float]:
         """Parse price string. Handles BR canonical ('R$ 1.900,00') AND US
         decimal leakage ('R$ 30.00') that MYP sometimes emits in
         `.estatistica-ultimo`. v5.8.2 fix: previously '30.00' → 3000.0 (read
         as BR thousands), broke sanity-check ratio → false negatives.
+
+        v5.8.4 (2026-05-19): defensive against None / non-str inputs. Reviewer
+        flagged that `text.strip()` raises AttributeError if a caller ever
+        passes an Optional[str] that turns out None (or a numeric from a
+        future refactor). Guard before stripping.
         """
+        if text is None or not isinstance(text, str):
+            return None
+        text = text.strip()
         if not text:
             return None
-        text = re.sub(r'[R$\s\xa0]', '', text.strip())
+        text = re.sub(r'[R$\s\xa0]', '', text)
         if not text:
             return None
         has_comma = ',' in text
@@ -502,9 +537,9 @@ class MYPScraper:
         # reflete preço da carta standard, gerando deals fictícios com margem
         # gigante (ex.: M-Rayquaza-EX 098/98 XY 7 Jumbo). Skip ANTES de fetch
         # de tabela de seller pra economizar processamento e evitar contaminação.
-        if card.name and JUMBO_TITLE_RE.search(card.name):
+        if card.name and OVERSIZED_TITLE_RE.search(card.name):
             self._stats["skipped_jumbo"] += 1
-            log.info(f"  ⏭️  Skipping Jumbo card: {card.name}")
+            log.info(f"  ⏭️  Skipping oversized card: {card.name}")
             return None
 
         # Product code
@@ -641,7 +676,7 @@ class MYPScraper:
                 # R$4801 → margin fictícia de 638%).
                 foil_el = row.select_one("td.estoque-lista-nomeenfoil")
                 foil_txt = foil_el.get_text(strip=True) if foil_el else ""
-                if JUMBO_FOIL_RE.search(foil_txt):
+                if OVERSIZED_FOIL_RE.search(foil_txt):
                     jumbo_rows_seen += 1
                     continue
 
@@ -711,12 +746,15 @@ class MYPScraper:
         # (caso Flareon VMAX 018/203 Prize Pack: seller único listava como EN
         # carta sem print EN). Flag pra Validate Manually em vez de skip,
         # pra não suprimir deals legítimos de cards realmente raros.
-        if en_sellers <= SINGLE_EN_SELLER_RISK_THRESHOLD:
+        # v5.8.4 (2026-05-19): threshold agora configurável via CLI
+        # (--min-en-sellers). `en_sellers < self.min_en_sellers` = flag.
+        # Default 2 reproduz comportamento v5.8.3 (que era ≤1).
+        if en_sellers < self.min_en_sellers:
             card.single_en_seller_risk = True
             self._stats["single_en_seller_risks"] += 1
             log.warning(
-                f"  ⚠️ Single EN seller risk: {card.name or url} | "
-                f"apenas {en_sellers} seller EN-NM visível — "
+                f"  ⚠️ Low EN seller count: {card.name or url} | "
+                f"{en_sellers} seller(s) EN-NM visível (< {self.min_en_sellers}) — "
                 f"possível mislabeling de idioma. Validar manualmente."
             )
         if truncation_risk:
@@ -992,13 +1030,20 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
     ws1.title = "🔥 Deals"
     write_headers(ws1)
 
-    # v5.8.3 (2026-05-18): também exclui single_en_seller_risk de Deals.
-    # Esses cards (1 seller EN) têm risco de mislabeling de idioma — operador
-    # acha em "🚨 Validate Manually" pra inspeção antes de operar.
+    # v5.8.3 (2026-05-18): excluía single_en_seller_risk de Deals.
+    # v5.8.4 (2026-05-19): refinamento — single-seller SOZINHO mantém em
+    # Deals (com coluna visual `⚠️ 1 SELLER`). Só vira Validate-Manually se
+    # acompanhado de tcg_suspect OU en_truncation_risk (combinação eleva
+    # confiança de que é problema real, não só raridade legítima).
+    # Operador relatou que v5.8.3 esvaziou Deals em scans com cards
+    # genuinamente raros (chase cards de set pequeno).
+    def _combined_single_seller_risk(c) -> bool:
+        return c.single_en_seller_risk and (c.tcg_suspect or c.en_truncation_risk)
     deals = sorted(
         [c for c in cards
          if c.margin_pct and c.margin_pct >= threshold
-         and not c.tcg_suspect and not c.single_en_seller_risk],
+         and not c.tcg_suspect
+         and not _combined_single_seller_risk(c)],
         key=lambda x: x.margin_pct or 0, reverse=True,
     )
     for i, card in enumerate(deals, 2):
@@ -1119,6 +1164,13 @@ Exemplos:
                        help="Preço mínimo EN em R$ (default: 80)")
     parser.add_argument("--delay", type=float, default=1.5,
                        help="Delay entre requests em segundos (default: 1.5)")
+    parser.add_argument("--min-en-sellers", type=int,
+                       default=MIN_EN_SELLERS_FOR_DEALS_DEFAULT,
+                       help=f"Min EN-NM sellers for Deals inclusion (default: "
+                            f"{MIN_EN_SELLERS_FOR_DEALS_DEFAULT}; was hardcoded "
+                            f"in v5.8.3). Cards abaixo são flagged como "
+                            f"single_en_seller_risk e podem cair em Validate "
+                            f"Manually conforme outras flags.")
     parser.add_argument("--editions", nargs="+", type=str, default=None,
                        help="Filtrar por edições específicas (substring match). Ex: --editions \"Ascended Heroes\" \"Prismáticas\"")
     parser.add_argument("-o", "--output", type=str, default="",
@@ -1145,7 +1197,11 @@ Exemplos:
     timestamp = datetime.now().strftime('%Y%m%d_%H%M')
     output_path = args.output or f"myp_arbitrage_{timestamp}.xlsx"
 
-    scraper = MYPScraper(delay=args.delay)
+    scraper = MYPScraper(delay=args.delay, min_en_sellers=args.min_en_sellers)
+    log.info(
+        f"Config: threshold={args.threshold}%, min_price=R${args.min_price}, "
+        f"delay={args.delay}s, min_en_sellers={args.min_en_sellers}"
+    )
     cards = scraper.scan(max_editions=args.max_editions, max_products=args.max_products,
                          edition_filter=args.editions,
                          chunk_index=args.chunk_index, chunk_total=args.chunk_total)

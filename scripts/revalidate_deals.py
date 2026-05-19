@@ -46,34 +46,12 @@ log = logging.getLogger(__name__)
 SUSPECT_RATIO = TCG_SUSPECT_RATIO_THRESHOLD
 
 
-def parse_brl(text: str) -> float | None:
-    """v5.8.2: match scanner _parse_brl logic exactly (BR canonical + US
-    decimal leakage handling). Pre-fix this code already handled BR-only and
-    US-only via the `if "," in s` branch, but '30.000' (BR thousands without
-    decimal) and '1,500.00' (US with thousands) failed."""
-    if not text:
-        return None
-    m = re.search(r'[\d.,]+', text)
-    if not m:
-        return None
-    s = m.group(0)
-    has_comma = "," in s
-    has_dot = "." in s
-    if has_comma and has_dot:
-        if s.rfind(",") > s.rfind("."):
-            s = s.replace(".", "").replace(",", ".")
-        else:
-            s = s.replace(",", "")
-    elif has_comma:
-        s = s.replace(",", ".")
-    elif has_dot:
-        parts = s.split(".")
-        if len(parts) > 2 or len(parts[-1]) == 3:
-            s = s.replace(".", "")
-    try:
-        return float(s)
-    except ValueError:
-        return None
+def parse_brl(text) -> float | None:
+    """v5.8.4: DRY — delegate to MYPScraper._parse_brl (single source of
+    truth). Previously this script duplicated the parser; reviewer flagged
+    drift risk (v5.8.2 BR/US leak fix had to be reapplied here separately).
+    """
+    return MYPScraper._parse_brl(text)
 
 
 def revalidate_url(scraper: MYPScraper, url: str) -> dict:

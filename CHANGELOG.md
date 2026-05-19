@@ -1,5 +1,52 @@
 # Changelog
 
+## v5.8.4 — 2026-05-19 — Reviewer quick fixes (DRY, CLI, regex broader, refined filter)
+
+Round 1 dos pontos do code review pós-v5.8.3. Todos LOW RISK, sem mudar
+arquitetura.
+
+### Fix #1 — `_parse_brl` resiliente a None / non-str
+`_parse_brl(None)` antes lançava `AttributeError` no `.strip()`. Guard
+explícito no topo da função aceita None/int/float e retorna None.
+Defensivo contra refatorações futuras que possam passar `Optional[str]`
+do parser. Reviewer flagged regression risk em call sites tipo
+`row[idx]` (openpyxl pode emitir None pra células vazias).
+
+### Fix #2 — DRY `_parse_brl` (revalidate_deals)
+`scripts/revalidate_deals.py` duplicava o parser BR/US. v5.8.2 BR-thousands
+fix teve que ser reaplicado em DOIS lugares. Agora `parse_brl` no script
+delega pra `MYPScraper._parse_brl` (single source of truth).
+
+### Fix #3 — CLI flag `--min-en-sellers`
+Threshold de "single seller risk" agora é configurável. Default 2
+(reproduz comportamento v5.8.3 que checava `≤ 1`). `MYPScraper.__init__`
+aceita `min_en_sellers` arg; usa `en_sellers < self.min_en_sellers`
+(strict less-than). Operador pode `--min-en-sellers 3` pra cenário
+mais conservador.
+
+### Fix #4 — Regex `OVERSIZED_*` broader + `\b` consistency
+`JUMBO_FOIL_RE` (sem word boundary) e `JUMBO_TITLE_RE` (com `\b`) eram
+inconsistentes. Renomeados para `OVERSIZED_FOIL_RE` / `OVERSIZED_TITLE_RE`
+com regex broader cobrindo também `oversized`, `box topper`, `poster card`
+(variantes que MYP eventualmente lista). Aliases `JUMBO_*` mantidos como
+retrocompat (postprocess_v583_flags.py importa o nome antigo).
+
+### Fix #5 — Deals NÃO esvazia por single-seller sozinho
+v5.8.3 excluía agressivamente qualquer `single_en_seller_risk=True` de
+`🔥 Deals`. Operador relatou que isso esvaziou Deals em scans onde chase
+cards genuinamente raros tinham só 1 seller EN listando. v5.8.4 refina:
+single-seller SOZINHO permanece em Deals (com coluna visual `⚠️ 1 SELLER`).
+Só sai pra Validate Manually quando acompanhado de `tcg_suspect` OU
+`en_truncation_risk` (combinação eleva confiança de problema real).
+
+### Notes
+- Smoke test: `--editions "Black Bolt" --max-products 8` rodou clean.
+  Default `--min-en-sellers 2` flagou 4 single-seller risks (Zekrom ex 172,
+  Zekrom ex 166, Servine 088, Haxorus 147). XLSX gerado com 6 sheets
+  esperadas.
+- Synthetic test do filtro de deals: A (single-only) entra ✓, B (single+suspect)
+  sai ✓, C (single+truncation) sai ✓, D (clean) entra ✓.
+
 ## v5.8.3 — 2026-05-18 — Skip Jumbo + single-seller-EN risk surfacing
 
 Dois bugs reportados pelo operador no XLSX `myp_weekly_20260517_1519`:
