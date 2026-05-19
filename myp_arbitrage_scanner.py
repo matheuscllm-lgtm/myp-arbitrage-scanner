@@ -17,8 +17,8 @@ Requisitos:
     pip install cloudscraper beautifulsoup4 openpyxl lxml
 
 Autor: Matheus Chillemi / Claude
-Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4)
-Versão: v5.8.4
+Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.5)
+Versão: v5.8.5
 
 Changelog v5.1 (2026-05-12 — auditoria C/H/M, mesma metodologia do CT scanner):
   - C1: --threshold < 1.0 auto-converte com warning (UX guard contra trap
@@ -190,6 +190,11 @@ class CardData:
     # (caso Flareon VMAX 018/203 Prize Pack: 1 seller gvrgyn lista como EN mas
     # carta não tem print EN nessa edição). Sinaliza pra Validate Manually.
     single_en_seller_risk: bool = False
+    # v5.8.5 (2026-05-19): collector# > set_size = variant (SIR/HR/promo extra/
+    # special illustration rare). Frequente JP-only. Caso Darumaka 097/086, Mew
+    # ex 232/091, Charizard ex 234/091. Parse de (NNN/MMM) no card.name; quando
+    # numerator > denominator, flag oversized_collector_risk = True.
+    oversized_collector_risk: bool = False
     last_updated: str = ""
 
 
@@ -255,6 +260,9 @@ class MYPScraper:
             # v5.8.3 (2026-05-18): cards com apenas 1 seller EN visível —
             # risco de seller mislabeling (caso Flareon VMAX 018/203).
             "single_en_seller_risks": 0,
+            # v5.8.5 (2026-05-19): collector# > set_size (variant fora do
+            # numbered set, frequentemente JP-only). Caso Darumaka 097/086.
+            "oversized_collector_risks": 0,
         }
         # v5.4 H1: warn-once cache pra unknown language titles
         self._unknown_lang_seen: set[str] = set()
@@ -797,6 +805,22 @@ class MYPScraper:
                 num = int(card_num_match.group(1))
                 total = int(card_num_match.group(2))
                 is_supranumerary = num > total
+                # v5.8.5 (2026-05-19): mesma extração serve pra
+                # oversized_collector_risk. Quando numerator > denominator, o
+                # card é variant fora do set numerado (SIR/HR/promo extra/
+                # special illustration rare), frequentemente JP-only e com
+                # preço TCG inflado em USD. Casos: Darumaka 097/086 (Black
+                # Bolt SIR), Mew ex 232/091 (151 SIR), Charizard ex 234/091.
+                # Sinaliza pra triagem visual; combina com single_en_seller
+                # pra escalar pra Validate Manually.
+                if num > total:
+                    card.oversized_collector_risk = True
+                    self._stats["oversized_collector_risks"] += 1
+                    log.info(
+                        f"  ⚠️ Oversized collector#: {card.name} "
+                        f"({num}>{total}) — provável variant SIR/HR/promo. "
+                        f"Sinalizado pra triagem visual."
+                    )
             except (ValueError, TypeError):
                 is_supranumerary = False  # unparseable, default to safe (no alarm)
         else:
@@ -923,6 +947,7 @@ class MYPScraper:
         log.info(f"      EN truncation risks (T1): {self._stats['en_truncation_risks']}")
         log.info(f"      TCG suspects (H2 v5.8): {self._stats['tcg_suspects']}")
         log.info(f"      Single EN seller risks (v5.8.3): {self._stats['single_en_seller_risks']}")
+        log.info(f"      Oversized collector# risks (v5.8.5): {self._stats['oversized_collector_risks']}")
         log.info(f"      HTTP retries (M1): {self._stats['http_retries']}")
         log.info("═" * 60)
 
@@ -959,18 +984,24 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
     # Sem isso, o operador via Jirachi PR-SM_SM161 como deal #1 a 1400% mesmo
     # com TCG inflado 75x vs última venda real. Aggregate lê via dict-by-name,
     # então a ordem das colunas não quebra o pipeline.
+    # v5.8.5 (2026-05-19): nova coluna `⚠️ COLLECTOR#` depois de Single Seller.
+    # Sinaliza cards onde collector_number > set_size (variant SIR/HR/promo
+    # extra, frequentemente JP-only). Casos Darumaka 097/086, Mew ex 232/091.
+    # Aggregate lê via dict-by-name, então ordem não quebra o pipeline.
     headers = [
         "Card Name", "Edition", "Rarity",
         "MYP EN NM (R$)", "TCG Player (R$)", "MYP Last Sale (R$)",
         "Margin %", "Diff (R$)", "NM Sellers",
-        "⚠️ EN Trunc", "⚠️ TCG Suspect", "⚠️ Single Seller", "URL", "Updated",
+        "⚠️ EN Trunc", "⚠️ TCG Suspect", "⚠️ Single Seller", "⚠️ COLLECTOR#",
+        "URL", "Updated",
     ]
-    widths = [38, 32, 16, 16, 16, 17, 11, 13, 10, 11, 14, 14, 55, 16]
+    widths = [38, 32, 16, 16, 16, 17, 11, 13, 10, 11, 14, 14, 14, 55, 16]
     PRICE_COLS = {4, 5, 6, 8}       # MYP EN NM, TCG Player, Last Sale, Diff
     MARGIN_COL = 7
     EN_TRUNC_COL = 10
     TCG_SUSPECT_COL = 11
     SINGLE_SELLER_COL = 12
+    COLLECTOR_COL = 13
 
     def write_headers(ws):
         for col, h in enumerate(headers, 1):
@@ -988,11 +1019,12 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
         trunc_flag = "⚠️ MAYBE" if card.en_truncation_risk else ""
         suspect_flag = "🚨 SUSPECT" if card.tcg_suspect else ""
         single_flag = "⚠️ 1 SELLER" if card.single_en_seller_risk else ""
+        collector_flag = "⚠️ VARIANT" if card.oversized_collector_risk else ""
         vals = [
             card.name, card.edition, card.rarity,
             card.myp_lowest_en_nm, card.tcg_player_price, card.myp_last_sale_brl,
             card.margin_pct, diff, card.en_nm_sellers,
-            trunc_flag, suspect_flag, single_flag,
+            trunc_flag, suspect_flag, single_flag, collector_flag,
             card.product_url, card.last_updated,
         ]
         for col, v in enumerate(vals, 1):
@@ -1020,6 +1052,9 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
             if col == SINGLE_SELLER_COL and card.single_en_seller_risk:
                 c.fill = yellow_fill
                 c.alignment = Alignment(horizontal="center")
+            if col == COLLECTOR_COL and card.oversized_collector_risk:
+                c.fill = yellow_fill
+                c.alignment = Alignment(horizontal="center")
 
     # ── Sheet 1: Deals ──
     # v5.8 (2026-05-16): exclui cards com tcg_suspect (TCG declarado >10x última
@@ -1033,12 +1068,17 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
     # v5.8.3 (2026-05-18): excluía single_en_seller_risk de Deals.
     # v5.8.4 (2026-05-19): refinamento — single-seller SOZINHO mantém em
     # Deals (com coluna visual `⚠️ 1 SELLER`). Só vira Validate-Manually se
-    # acompanhado de tcg_suspect OU en_truncation_risk (combinação eleva
-    # confiança de que é problema real, não só raridade legítima).
-    # Operador relatou que v5.8.3 esvaziou Deals em scans com cards
-    # genuinamente raros (chase cards de set pequeno).
+    # acompanhado de tcg_suspect OU en_truncation_risk.
+    # v5.8.5 (2026-05-19): oversized_collector_risk segue mesma lógica:
+    # sozinho mantém em Deals (coluna `⚠️ COLLECTOR#`), combinado com
+    # single_en_seller_risk escala pra Validate Manually (ambos sinais
+    # complementares — variant + idioma duvidoso = JP-mislabeled-as-EN).
     def _combined_single_seller_risk(c) -> bool:
-        return c.single_en_seller_risk and (c.tcg_suspect or c.en_truncation_risk)
+        return c.single_en_seller_risk and (
+            c.tcg_suspect
+            or c.en_truncation_risk
+            or c.oversized_collector_risk
+        )
     deals = sorted(
         [c for c in cards
          if c.margin_pct and c.margin_pct >= threshold
@@ -1077,11 +1117,16 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
     # Inclui cards com qualquer flag de risco de detecção:
     #   - en_truncation_risk (2026-05-12 v5.3): seller table no cap sem EN visível
     #   - single_en_seller_risk (v5.8.3 2026-05-18): 1 seller EN → possível mislabeling
+    #   - v5.8.5 (2026-05-19): oversized_collector_risk SOZINHO permanece em Deals,
+    #     mas combinado com single_en_seller_risk aparece aqui (variant +
+    #     idioma duvidoso = JP-mislabeled-as-EN). Mantém escopo enxuto.
     ws_val = wb.create_sheet("🚨 Validate Manually")
     write_headers(ws_val)
     validate = sorted(
         [c for c in cards
-         if c.en_truncation_risk or c.single_en_seller_risk],
+         if c.en_truncation_risk
+         or c.single_en_seller_risk
+         or (c.oversized_collector_risk and c.single_en_seller_risk)],
         key=lambda x: x.margin_pct or -999, reverse=True,
     )
     for i, card in enumerate(validate, 2):

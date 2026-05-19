@@ -1,5 +1,37 @@
 # Changelog
 
+## v5.8.5 — 2026-05-19 — Source-direct cross-checks (Heurística #A oversized collector#)
+
+Próxima camada de filtragem após v5.8.4: detectar variants fora do set numerado
+sem precisar de network call.
+
+### Heurística #A — `oversized_collector_risk` (collector# > set_size)
+
+Cards com `(NNN/MMM)` onde `numerator > denominator` são variants SIR/HR/promo
+extra/special illustration rare (frequentemente JP-only com preço TCG inflado
+em USD). Casos do XLSX 2026-05-15 contaminado:
+
+- **Darumaka (097/086)** — SV Black Bolt SIR
+- **Cubchoo (109/086)** — SV Black Bolt SIR
+- **Mew ex (232/091)** — SV 151 SIR
+- **Charizard ex (234/091)** — SV 151 SIR
+
+Mudanças:
+- Novo campo `CardData.oversized_collector_risk: bool = False`
+- Parse `(NNN/MMM)` em `scrape_product` (reusa regex já presente pro
+  supranumerary check H3) → flag quando `num > total`
+- Counter `oversized_collector_risks` no `_stats`
+- Nova coluna XLSX `⚠️ COLLECTOR#` (fill amarelo, mostra "⚠️ VARIANT")
+- Aggregate preserva flag entre chunks (`bool(rec.get("⚠️ COLLECTOR#"))`)
+- Filtro `🔥 Deals`: oversized SOZINHO mantém em Deals (com flag visual);
+  combinado com `single_en_seller_risk` escala pra `🚨 Validate Manually`
+  (variant + idioma duvidoso = JP-mislabeled-as-EN)
+
+Synthetic test confirma:
+- Cubchoo/Mew ex (oversized only) → Deals ✓
+- Darumaka/Charizard ex (oversized+single) → Validate Manually ✓
+- Flareon VMAX (single only) → mantém em Deals (per v5.8.4) ✓
+
 ## v5.8.4 — 2026-05-19 — Reviewer quick fixes (DRY, CLI, regex broader, refined filter)
 
 Round 1 dos pontos do code review pós-v5.8.3. Todos LOW RISK, sem mudar

@@ -63,6 +63,9 @@ def card_from_row(headers: list[str], row: tuple) -> CardData | None:
     card.en_truncation_risk = bool(rec.get("⚠️ EN Trunc"))
     # v5.8.3 (2026-05-18): preservar flag de single-seller risk entre chunks
     card.single_en_seller_risk = bool(rec.get("⚠️ Single Seller"))
+    # v5.8.5 (2026-05-19): preservar flag de oversized-collector-risk entre
+    # chunks. Chunks antigos sem essa coluna retornam None → False.
+    card.oversized_collector_risk = bool(rec.get("⚠️ COLLECTOR#"))
     card.product_url = rec.get("URL") or ""
     card.last_updated = rec.get("Updated") or ""
     # margin_brl: derived
