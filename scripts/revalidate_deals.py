@@ -108,9 +108,11 @@ def revalidate(input_xlsx: Path, output_xlsx: Path, delay: float = 1.5):
 
     clean = []
     suspect = []
+    skipped_no_name = 0
 
     for i, row in enumerate(rows, 1):
         if not row or not row[name_idx]:
+            skipped_no_name += 1
             continue
         url = row[url_idx]
         name = row[name_idx]
@@ -139,6 +141,21 @@ def revalidate(input_xlsx: Path, output_xlsx: Path, delay: float = 1.5):
         time.sleep(delay)
 
     log.info(f"\n=== Resultado: {len(clean)} limpos | {len(suspect)} suspeitos ===\n")
+
+    # v5.8.6 bug #2: detect silent failure where 100% rows were skipped because
+    # Card Name was None (e.g. upstream wrote =HYPERLINK formulas instead of
+    # plain strings — see add_card_hyperlinks.py v5.8.6 bug #1 fix). Without
+    # this guard the script exits 0 with empty output and the operator only
+    # notices when they open the XLSX and find empty Deals sheet.
+    processed = len(clean) + len(suspect)
+    if processed == 0 and len(rows) > 0:
+        log.error(
+            f"REVALIDATE FAILED: 0/{len(rows)} rows processed "
+            f"(skipped_no_name={skipped_no_name}). Card Name likely None - "
+            f"check XLSX format (formula cells viewed with data_only=True "
+            f"return None; rerun add_card_hyperlinks.py if it predates v5.8.6)."
+        )
+        sys.exit(2)
 
     # Write output XLSX
     wb_out = Workbook()
