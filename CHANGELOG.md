@@ -1,5 +1,65 @@
 # Changelog
 
+## v5.8.6 — 2026-05-19 — Postprocess robustness (5 bugs in download pipeline)
+
+Sweep pós-scan v5.8.3 entregou XLSX usável mas com 5 bugs latentes no
+pipeline `scanner → add_card_hyperlinks → revalidate → cross_check`.
+Operador catalogou e aprovou batch. Cada bug = commit standalone.
+
+### Bug #1 + #4 — `add_card_hyperlinks.py` formula → native (`76e9b1f`)
+
+`scripts/add_card_hyperlinks.py` escrevia `=HYPERLINK("url","text")` como
+fórmula Excel. Downstream usa `load_workbook(data_only=True)`, que retorna
+None pra fórmula sem cache calc. Card Name=None quebrou revalidate +
+cross_check.
+
+Fix: `cell.value = display_name`, `cell.hyperlink = url` (openpyxl native).
+Excel ainda renderiza clicável; readers data_only veem string.
+
+### Bug #2 — `revalidate_deals.py` falha silenciosa (`6138741`)
+
+Quando 100% rows skipped (Card Name=None pra todas), script saía com
+"0 limpos | 0 suspeitos" + exit 0. Operador descobria só ao abrir XLSX
+vazio. Agora: log.error + `sys.exit(2)` + mensagem aponta causa provável
+(formula→None) e remediação.
+
+### Bug #3 — line buffering em scripts longos (`fa799bd`)
+
+`revalidate_deals.py` (5-30min em runs com 200+ deals) e
+`cross_check_myp_api.py` (idem em runs full) escondiam progresso até
+término pelo buffer 4KB padrão do Python. Fix: `sys.stdout.reconfigure
+(line_buffering=True)` + flush explícito em heartbeats.
+
+### Bug #5 — Margin number_format consistency (`e770632`)
+
+Scanner usava `'0.0%'`, revalidate não aplicava format nenhum → célula
+mostrava "0.48" (raw float) ou "48.3%" dependendo da origem. Header é
+"Margin %", semântica esperada é percentage com 2 decimais.
+
+Fix: `'0.00%'` no scanner + novo helper `_apply_data_formats` em
+revalidate aplica `0.00%` em colunas Margin + `#,##0.00` em colunas
+"(R$)" em todas as sheets de output.
+
+### Follow-up — Hyperlink preservation no revalidate (`8c49956`)
+
+Smoke do pipeline descobriu: revalidate lê com `values_only=True` e
+escreve via `ws.append(row)`, que **strip-a hyperlink metadata**. XLSX
+com hyperlinks injetados → revalidate → hyperlinks sumidos. Fix em
+`_apply_data_formats`: re-attach Card Name → URL quando URL é http
+válida e cell.value é string. Mesmo Font azul/sublinhado.
+
+### Smoke pipeline end-to-end
+
+```
+myp_weekly_20260518_1844.xlsx → cópia →
+add_card_hyperlinks (2320 hyperlinks native, 6 sheets) →
+revalidate (38/38 deals processed, Card Name lido como string) →
+cross_check (trim 5 deals, 5 API hits, sheet "❌ TCG API Mismatch" criada)
+```
+
+Streaming live: cross_check escreveu progress lines no log conforme
+processava (não buffer-hold) — bug #3 validado em produção.
+
 ## v5.8.5 — 2026-05-19 — Source-direct cross-checks (Heurística #A oversized collector#)
 
 Próxima camada de filtragem após v5.8.4: detectar variants fora do set numerado
