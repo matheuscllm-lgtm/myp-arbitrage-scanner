@@ -232,22 +232,37 @@ def _style_header(ws, headers, fill="4472C4"):
 def _apply_data_formats(ws, headers):
     """v5.8.6 bug #5: apply Excel number_format to columns whose header
     semantics imply a format (Margin → 0.00%, R$ prices → #,##0.00).
-
-    Without this the rebuilt XLSX showed raw 0.483 in the Margin cells
-    even though the upstream scanner stored a fraction. Operator opening
-    the file saw "0.48" instead of "48,30%" — inconsistent with header
-    "Margin %" and downstream merge/triage scripts that filter by margin.
+    v5.8.6 bug #1 follow-up: also re-attach Card Name hyperlinks using
+    the URL column, since `ws.append(values_only_row)` strips hyperlink
+    metadata. Without this, running revalidate on a hyperlinked XLSX
+    silently drops every click-link.
     """
+    from openpyxl.styles import Font
     margin_cols = [i + 1 for i, h in enumerate(headers)
                    if isinstance(h, str) and "margin" in h.lower()
                    and "%" in h]
     price_cols = [i + 1 for i, h in enumerate(headers)
                   if isinstance(h, str) and "(r$)" in h.lower()]
+    name_col = None
+    url_col = None
+    for i, h in enumerate(headers, 1):
+        if h == "Card Name":
+            name_col = i
+        elif h == "URL":
+            url_col = i
+    blue = Font(color="0563C1", underline="single", name="Arial", size=10)
     for r in range(2, ws.max_row + 1):
         for col in margin_cols:
             ws.cell(row=r, column=col).number_format = "0.00%"
         for col in price_cols:
             ws.cell(row=r, column=col).number_format = "#,##0.00"
+        if name_col and url_col:
+            url_val = ws.cell(row=r, column=url_col).value
+            name_cell = ws.cell(row=r, column=name_col)
+            if (isinstance(url_val, str) and url_val.startswith("http")
+                    and name_cell.value and not name_cell.hyperlink):
+                name_cell.hyperlink = url_val
+                name_cell.font = blue
 
 
 def main():
