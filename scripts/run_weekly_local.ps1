@@ -22,6 +22,27 @@ Set-Location $scannerDir
 "Output XLSX: $xlsxPath" | Tee-Object -FilePath $logPath -Append
 "" | Tee-Object -FilePath $logPath -Append
 
+# Auto-pull origin/main pra garantir scanner mais novo em producao.
+# Task Scheduler senao roda whatever esta no working tree mesmo com commits novos no remote.
+"[wrapper] Fetching origin/main..." | Tee-Object -FilePath $logPath -Append
+git fetch origin main --quiet 2>&1 | Tee-Object -FilePath $logPath -Append
+if ($LASTEXITCODE -ne 0) {
+    "[wrapper] WARN: git fetch failed (offline?) - continuing with working tree (may be stale)" | Tee-Object -FilePath $logPath -Append
+} else {
+    $behindCount = (git rev-list --count HEAD..origin/main 2>$null).Trim()
+    if ($behindCount -and ([int]$behindCount -gt 0)) {
+        "[wrapper] Behind origin/main by $behindCount commit(s) - pulling..." | Tee-Object -FilePath $logPath -Append
+        git pull --ff-only origin main 2>&1 | Tee-Object -FilePath $logPath -Append
+        if ($LASTEXITCODE -ne 0) {
+            "[wrapper] ERROR: git pull --ff-only failed (divergent local commits?) - aborting to avoid running stale code" | Tee-Object -FilePath $logPath -Append
+            exit 1
+        }
+    } else {
+        "[wrapper] Already up to date with origin/main" | Tee-Object -FilePath $logPath -Append
+    }
+}
+"" | Tee-Object -FilePath $logPath -Append
+
 # Rodar scanner — params idênticos ao GH Actions weekly default
 python myp_arbitrage_scanner.py `
     --threshold 25 `
