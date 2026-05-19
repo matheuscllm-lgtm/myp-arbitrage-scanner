@@ -55,6 +55,15 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     except Exception:
         pass
 
+# v5.8.6 bug #3: line buffering so the 5-30min scrape progress streams in
+# real time to the harness/operator (block buffering otherwise hides all
+# output until completion, making the script look "stuck").
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except Exception:
+    pass
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from openpyxl import load_workbook
@@ -262,6 +271,12 @@ def main() -> int:
     for i, t in enumerate(targets, 1):
         if i % 10 == 0 or i == 1:
             log.info(f"  [{i}/{len(targets)}] {t['name']}")
+            # v5.8.6 bug #3: explicit flush at heartbeats — log handler
+            # writes to stderr which usually flushes per record, but the
+            # `print` below in mismatch path uses stdout. Keep both
+            # streams honest.
+            sys.stdout.flush()
+            sys.stderr.flush()
 
         if not t.get("tcg_html_brl"):
             continue

@@ -27,6 +27,16 @@ if sys.stdout.encoding.lower() != "utf-8":
     except Exception:
         pass
 
+# v5.8.6 bug #3: line buffering so long-running scrape progress streams to
+# the harness/operator in real time instead of being held in a 4KB block
+# buffer until the script ends. Without this, runs that take 5-30min look
+# "stuck" with zero output.
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except Exception:
+    pass
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from openpyxl import load_workbook, Workbook
@@ -137,6 +147,16 @@ def revalidate(input_xlsx: Path, output_xlsx: Path, delay: float = 1.5):
             ratio_str = f"{result['ratio']:.1f}x" if result['ratio'] else "n/a"
             log.info(f"  [{i}/{len(rows)}] OK {name[:50]} (ratio={ratio_str})")
             clean.append(row)
+
+        # v5.8.6 bug #3: heartbeat every 50 rows so long runs (200+ deals,
+        # 1.5s delay each ~= 8min minimum) show progress in tools that
+        # buffer stdout beyond line granularity.
+        if i % 50 == 0:
+            print(
+                f"  ... progress: {i}/{len(rows)} processed "
+                f"({len(clean)} clean, {len(suspect)} suspect)",
+                flush=True,
+            )
 
         time.sleep(delay)
 
