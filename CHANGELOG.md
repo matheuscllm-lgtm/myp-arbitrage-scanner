@@ -1,5 +1,91 @@
 # Changelog
 
+## v5.8.7 — 2026-05-22 — T1 fallback paginado (resolve Psyduck 226/217)
+
+`truncation_risk` (T1, v5.3) já detectava corretamente quando a tabela "demais
+vendedores" batia cap (~20 rows) sem nenhum EN visível — mas só sinalizava o
+risco e seguia reportando o `lowest_en_seen` da tabela de lojistas, que pode
+ser MUITO maior que o real lowest escondido atrás do cap. Resultado:
+deals reais ficavam invisíveis e operador precisava abrir cada listing
+flagged à mão pra ver se valia.
+
+### Caso disparador
+
+Psyduck (226/217) ME: Ascended Heroes apareceu como T1 em **toda run desde
+14/05**:
+
+| Data | MYP reportado | TCG ref | Margem (falsa) |
+|---|---:|---:|---:|
+| 14/05 → 17/05 | R$399-400 | R$464-486 | borderline |
+| 22/05 (scan principais) | R$519,90 | R$481 | **-7% (não deal)** |
+
+Operador validou manualmente em 22/05 e descobriu **Deived1987 listando
+EN-NM a R$340** — escondido na página 4 do marketplace MYP. Margem real:
+**41,3%**. Lucro R$141/carta.
+
+### Mecânica
+
+MYP renderiza a tabela "demais vendedores" (`#lista-anuncio-demais-vendedores`)
+em páginas de ~20 sellers, paginadas via `?estoque-outros-page=N`. A tabela
+"lojistas certificados" (`#lista-anuncio-lojistas-certificados`) NÃO é
+paginada (cap estrutural ~15). Quando os primeiros 20 sellers do marketplace
+são todos PT/JP (ordem asc por preço), sellers EN ficam invisíveis sem
+fetch extra.
+
+### Implementação
+
+- **Refactor**: extraído `MYPScraper._parse_seller_table()` (logic per-row
+  antes inline em `scrape_product`) → permite reuso pelo fallback.
+- **Novo método** `_fetch_demais_pages_for_en(soup, product_url)`:
+  - Detecta paginação via `ul.pagination a[href*="estoque-outros-page="]`
+    em ancestor próximo do wrapper demais-vendedores.
+  - Itera pgs 2..min(max_page, `MAX_DEMAIS_PAGES_FALLBACK=5`).
+  - Para cada pg: fetch via `_get`, re-parse com `_parse_seller_table`,
+    coleta EN-NM prices extras.
+  - Retorna `(extra_en_prices, pages_fetched)`.
+- **Call site** em `scrape_product` (logo após T1 detection): se
+  `truncation_risk` E fallback retornar EN-NM, estende `en_prices`,
+  recalcula lowest, e LIMPA `truncation_risk = False` (resolvido).
+- **Stats novos**: `demais_pages_fetched` (HTTP requests gasto no fallback)
+  + `truncation_resolved_by_fallback` (cards salvos do limbo Validate).
+
+### Custo
+
+Pior caso = todos os ~17 T1 do weekly atual × 5 pgs × 1.5s delay = ~127s
+extras (~2min num scan de 75min). Cap `MAX_DEMAIS_PAGES_FALLBACK=5`
+limita runaway em produtos com 10+ pgs de marketplace.
+
+### Validação E2E
+
+```
+$ python3 /tmp/test_psyduck_fallback.py
+🔍 T1 fallback resolved: paginated marketplace (3 extra page(s)) →
+   lowest EN-NM R$340.00 (was R$519.90)
+
+myp_lowest_en_nm: R$340.00
+margin_pct: 41.3%
+en_truncation_risk: False
+demais_pages_fetched: 3
+truncation_resolved_by_fallback: 1
+```
+
+### Bumps
+
+- Header: v5.8.6 → v5.8.7
+- Constante nova: `MAX_DEMAIS_PAGES_FALLBACK = 5`
+
+### Limitações conhecidas
+
+- Tabela "lojistas certificados" NÃO é paginada → se TODA lojistas for
+  PT/JP E todo marketplace visível for PT/JP (T1 não dispara pq
+  `lowest_en_seen is None`), fallback NÃO ativa. Mitigar via fallback
+  unconditional quando ambas tabelas no cap sem EN, fica pra v5.8.8 se
+  observado em produção.
+- Fallback assume mesmo seletor (`table.table-striped.table-bordered`)
+  na resposta paginada — drift no template MYP pode quebrar silenciosamente.
+  Counter `demais_pages_fetched` permite cross-check com
+  `truncation_resolved_by_fallback` em audit posterior.
+
 ## v5.8.6 — 2026-05-19 — Postprocess robustness (5 bugs in download pipeline)
 
 Sweep pós-scan v5.8.3 entregou XLSX usável mas com 5 bugs latentes no

@@ -17,8 +17,8 @@ Requisitos:
     pip install cloudscraper beautifulsoup4 openpyxl lxml
 
 Autor: Matheus Chillemi / Claude
-Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6)
-Versão: v5.8.6
+Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-22 (v5.8.7)
+Versão: v5.8.7
 
 Changelog v5.1 (2026-05-12 — auditoria C/H/M, mesma metodologia do CT scanner):
   - C1: --threshold < 1.0 auto-converte com warning (UX guard contra trap
@@ -137,6 +137,11 @@ MIN_EN_SELLERS_FOR_DEALS_DEFAULT = 2  # < default = flagged (matches legacy 1≤
 # venda real R$19,99 (75x). Threshold 10x captura inflação grosseira sem
 # false-positive em cards com pouca liquidez (last sale antigo + alta).
 TCG_SUSPECT_RATIO_THRESHOLD = 10.0
+# v5.8.7 (2026-05-22): T1 fallback paginado. Quando truncation_risk dispara na
+# tabela "demais vendedores" (marketplace), MYP pagina via
+# ?estoque-outros-page=N. Cap em 5 páginas extras (até 100 sellers extras alem
+# da página 1) — caso Deived1987 Psyduck 226/217 R$340 escondido na pág 4.
+MAX_DEMAIS_PAGES_FALLBACK = 5
 # v5.4 H1: idiomas EN reconhecidos. Tudo fora dessa lista que parecer um title de
 # flag-icon (não vazio) é tratado como "unknown" e contado pra warn-once.
 KNOWN_LANGUAGES = {
@@ -263,6 +268,12 @@ class MYPScraper:
             # v5.8.5 (2026-05-19): collector# > set_size (variant fora do
             # numbered set, frequentemente JP-only). Caso Darumaka 097/086.
             "oversized_collector_risks": 0,
+            # v5.8.7 (2026-05-22): páginas extras da tabela "demais vendedores"
+            # buscadas quando T1 dispara (fallback paginado).
+            "demais_pages_fetched": 0,
+            # v5.8.7: T1 que foi resolvido — fallback achou EN-NM mais barato
+            # que o reportado inicialmente. Não conta como risk no Validate.
+            "truncation_resolved_by_fallback": 0,
         }
         # v5.4 H1: warn-once cache pra unknown language titles
         self._unknown_lang_seen: set[str] = set()
@@ -507,6 +518,151 @@ class MYPScraper:
         return product_urls
 
     # ── Step 3: Scrape product detail page (v2 — per-seller language) ─
+    def _parse_seller_table(self, table) -> dict:
+        """Parse uma seller table; retorna stats + EN-NM prices.
+
+        Extraído de scrape_product em v5.8.7 pra permitir reuso pelo fallback
+        paginado de "demais vendedores" (T1 resolution).
+        """
+        rows_in_table = 0
+        en_in_table = 0
+        max_price_in_table = 0.0
+        en_prices: list[float] = []
+        jumbo_skipped = 0
+        for row in table.find_all("tr"):
+            row_text = row.get_text()
+            if "R$" not in row_text:
+                continue
+            rows_in_table += 1
+
+            price_matches = re.findall(r'R\$\s*[\d.,]+', row_text)
+            row_price = None
+            if price_matches:
+                parsed = [self._parse_brl(p) for p in price_matches]
+                parsed = [p for p in parsed if p is not None and p > 0]
+                if parsed:
+                    row_price = min(parsed)
+                if len(price_matches) > 2:
+                    log.debug(
+                        f"  Row com {len(price_matches)} R$ matches "
+                        f"(esperado 1-2): {row_text[:120]}"
+                    )
+            if row_price and row_price > max_price_in_table:
+                max_price_in_table = row_price
+
+            lang = None
+            flag_el = row.select_one("span.flag-icon[title]")
+            if flag_el:
+                lang = flag_el.get("title", "").strip()
+            else:
+                for el in row.select("[title]"):
+                    title_val = el.get("title", "").strip()
+                    if title_val in KNOWN_LANGUAGES:
+                        lang = title_val
+                        break
+
+            if lang and lang not in KNOWN_LANGUAGES:
+                self._stats["skipped_unknown_lang_titles"] += 1
+                if lang not in self._unknown_lang_seen:
+                    self._unknown_lang_seen.add(lang)
+                    log.warning(
+                        f"  ⚠️ Idioma desconhecido detectado: '{lang}' "
+                        f"(não está em KNOWN_LANGUAGES). Pode ser drift de "
+                        f"título flag-icon do MYP. Adicionar à constante "
+                        f"se for mapeamento legítimo."
+                    )
+
+            if lang not in EN_LANGUAGES:
+                continue
+
+            foil_el = row.select_one("td.estoque-lista-nomeenfoil")
+            foil_txt = foil_el.get_text(strip=True) if foil_el else ""
+            if OVERSIZED_FOIL_RE.search(foil_txt):
+                jumbo_skipped += 1
+                continue
+
+            row_upper = row_text.upper()
+            is_nm = ("NM" in row_upper or "QUASE NOVA" in row_upper
+                     or "NEAR MINT" in row_upper)
+            if not is_nm:
+                continue
+
+            if row_price:
+                en_prices.append(row_price)
+                en_in_table += 1
+
+        return {
+            "rows": rows_in_table,
+            "en": en_in_table,
+            "max_price": max_price_in_table,
+            "en_prices": en_prices,
+            "jumbo_skipped": jumbo_skipped,
+        }
+
+    def _fetch_demais_pages_for_en(
+        self, soup: BeautifulSoup, product_url: str
+    ) -> tuple[list[float], int]:
+        """T1 fallback: pagina a tabela 'demais vendedores' procurando EN-NM
+        escondidos atrás do cap visível.
+
+        MYP renderiza marketplace em páginas de ~20 sellers; quando todos os
+        primeiros 20 são PT/JP, sellers EN ficam invisíveis sem este fetch
+        extra. Caso documentado: Deived1987 listou Psyduck 226/217 EN-NM a
+        R$340, mas estava na pág 4 do marketplace — scanner reportava R$520
+        (única EN visível em lojistas). Limite MAX_DEMAIS_PAGES_FALLBACK.
+
+        Retorna (preços EN-NM extras, num páginas adicionais fetchadas).
+        """
+        demais_wrapper = soup.select_one('#lista-anuncio-demais-vendedores')
+        if not demais_wrapper:
+            return [], 0
+
+        # Pagination vive num ancestor próximo (mesmo div.estoque-index).
+        pag_links: list = []
+        p = demais_wrapper
+        for _ in range(5):
+            p = p.parent
+            if p is None:
+                break
+            cand = p.select('ul.pagination a[href*="estoque-outros-page="]')
+            if cand:
+                pag_links = cand
+                break
+        if not pag_links:
+            return [], 0
+
+        page_nums: set[int] = set()
+        for a in pag_links:
+            m = re.search(r'estoque-outros-page=(\d+)', a.get('href', ''))
+            if m:
+                page_nums.add(int(m.group(1)))
+        if not page_nums:
+            return [], 0
+        max_page = min(max(page_nums), MAX_DEMAIS_PAGES_FALLBACK)
+
+        extra_en_prices: list[float] = []
+        pages_fetched = 0
+        # Strip query string do URL base e adiciona o param de paginação.
+        base_clean = product_url.split('?')[0]
+        for n in range(2, max_page + 1):
+            page_url = f"{base_clean}?estoque-outros-page={n}"
+            new_soup = self._get(page_url)
+            if new_soup is None:
+                break
+            pages_fetched += 1
+            new_wrapper = new_soup.select_one('#lista-anuncio-demais-vendedores')
+            if not new_wrapper:
+                continue
+            new_table = new_wrapper.select_one(
+                'table.table-striped.table-bordered'
+            )
+            if not new_table:
+                continue
+            stats = self._parse_seller_table(new_table)
+            if stats["en_prices"]:
+                extra_en_prices.extend(stats["en_prices"])
+        return extra_en_prices, pages_fetched
+
     def scrape_product(self, url: str, edition_name: str) -> Optional[CardData]:
         """Extract card data from product page, filtering sellers by language.
 
@@ -613,99 +769,18 @@ class MYPScraper:
 
         # Coleta estatísticas por tabela primeiro; decisão de truncation_risk
         # acontece depois quando temos lowest_en pra comparar.
+        # v5.8.7: parsing de cada tabela extraído pra _parse_seller_table.
         per_table_stats = []
         for table in seller_tables:
-            rows_in_table = 0
-            en_in_table = 0
-            max_price_in_table = 0.0  # maior preço VISÍVEL nesta tabela
-            for row in table.find_all("tr"):
-                row_text = row.get_text()
-                if "R$" not in row_text:
-                    continue
-                rows_in_table += 1
-
-                # Extrai preço (qualquer idioma) pra rastrear max visível.
-                # 2026-05-12 v5.3: row pode ter strikethrough promo
-                # ("R$ 275,00 R$ 220,00" — R$275 antigo riscado, R$220 ativo).
-                # v5.4 H2: usa min() em vez de [-1] — preço ativo é sempre
-                # o menor (promo); [-1] quebrava se MYP injetasse 3º R$
-                # (frete, "you save", etc). Min é defensivo a layout drift.
-                price_matches = re.findall(r'R\$\s*[\d.,]+', row_text)
-                row_price = None
-                if price_matches:
-                    parsed = [self._parse_brl(p) for p in price_matches]
-                    parsed = [p for p in parsed if p is not None and p > 0]
-                    if parsed:
-                        row_price = min(parsed)
-                    if len(price_matches) > 2:
-                        log.debug(
-                            f"  Row com {len(price_matches)} R$ matches "
-                            f"(esperado 1-2): {row_text[:120]}"
-                        )
-                if row_price and row_price > max_price_in_table:
-                    max_price_in_table = row_price
-
-                # Find language from flag-icon span (specific selector)
-                lang = None
-                flag_el = row.select_one("span.flag-icon[title]")
-                if flag_el:
-                    lang = flag_el.get("title", "").strip()
-                else:
-                    # Fallback: check any [title] that matches a known language
-                    for el in row.select("[title]"):
-                        title_val = el.get("title", "").strip()
-                        if title_val in KNOWN_LANGUAGES:
-                            lang = title_val
-                            break
-
-                # v5.4 H1: lang não-vazio mas fora do conhecido = drift potencial
-                # (ex.: MYP normalizar "Inglês" → "Ingles" sem acento, ou novo
-                # idioma adicionado). Counter + warn-once previne silent zero.
-                if lang and lang not in KNOWN_LANGUAGES:
-                    self._stats["skipped_unknown_lang_titles"] += 1
-                    if lang not in self._unknown_lang_seen:
-                        self._unknown_lang_seen.add(lang)
-                        log.warning(
-                            f"  ⚠️ Idioma desconhecido detectado: '{lang}' "
-                            f"(não está em KNOWN_LANGUAGES). Pode ser drift de "
-                            f"título flag-icon do MYP. Adicionar à constante "
-                            f"se for mapeamento legítimo."
-                        )
-
-                if lang not in EN_LANGUAGES:
-                    continue
-
-                # v5.8.3 (2026-05-18): skip rows com foil="Jumbo" (oversized).
-                # MYP agrupa standard + jumbo na mesma página de produto; a
-                # coluna `td.estoque-lista-nomeenfoil` indica a variante. TCG
-                # Player price refere-se à standard, então jumbo rows inflam
-                # `min(en_prices)` artificialmente (caso M-Rayquaza-EX 098/98
-                # XY 7: 5 sellers Jumbo a R$650 enquanto TCG standard era
-                # R$4801 → margin fictícia de 638%).
-                foil_el = row.select_one("td.estoque-lista-nomeenfoil")
-                foil_txt = foil_el.get_text(strip=True) if foil_el else ""
-                if OVERSIZED_FOIL_RE.search(foil_txt):
-                    jumbo_rows_seen += 1
-                    continue
-
-                # Filter: NM (Near Mint) only — skip Played, Damaged, etc.
-                row_upper = row_text.upper()
-                is_nm = ("NM" in row_upper or "QUASE NOVA" in row_upper
-                         or "NEAR MINT" in row_upper)
-                if not is_nm:
-                    continue
-
-                # EN + NM seller — preço já extraído acima
-                if row_price:
-                    en_prices.append(row_price)
-                    en_sellers += 1
-                    en_in_table += 1
-
+            ts = self._parse_seller_table(table)
             per_table_stats.append({
-                "rows": rows_in_table,
-                "en": en_in_table,
-                "max_price": max_price_in_table,
+                "rows": ts["rows"],
+                "en": ts["en"],
+                "max_price": ts["max_price"],
             })
+            en_prices.extend(ts["en_prices"])
+            en_sellers += ts["en"]
+            jumbo_rows_seen += ts["jumbo_skipped"]
 
         # Heurística de truncamento refinada (v5.3+): só dispara quando há
         # evidência de que listings escondidos PODEM ser mais baratos que o EN
@@ -725,6 +800,32 @@ class MYPScraper:
                         and ts["max_price"] < lowest_en_seen):
                     truncation_risk = True
                     break
+
+        # v5.8.7 (2026-05-22): fallback paginado pra T1.
+        # Quando truncation_risk dispara, tenta paginar a tabela "demais
+        # vendedores" (?estoque-outros-page=N) pra encontrar EN-NM escondidos
+        # atrás do cap. Resolve o caso Psyduck 226/217 onde Deived1987 listava
+        # EN-NM a R$340 mas o scanner reportava R$520 (única EN visível, em
+        # lojistas). Se o fallback achar EN-NM < lowest_en_seen, atualiza
+        # en_prices e limpa truncation_risk.
+        if truncation_risk:
+            extra_en, extra_pages = self._fetch_demais_pages_for_en(soup, url)
+            if extra_pages > 0:
+                self._stats["demais_pages_fetched"] += extra_pages
+            if extra_en:
+                prev_lowest = min(en_prices)
+                en_prices.extend(extra_en)
+                en_sellers += len(extra_en)
+                new_lowest = min(en_prices)
+                if new_lowest < prev_lowest:
+                    log.info(
+                        f"  🔍 T1 fallback resolved: paginated marketplace "
+                        f"({extra_pages} extra page(s)) → "
+                        f"lowest EN-NM R${new_lowest:.2f} "
+                        f"(was R${prev_lowest:.2f})"
+                    )
+                    self._stats["truncation_resolved_by_fallback"] += 1
+                    truncation_risk = False
 
         # v5.8.3: log se rows Jumbo foram filtradas
         if jumbo_rows_seen > 0:
@@ -945,6 +1046,8 @@ class MYPScraper:
         log.info(f"  ── Other diagnostics:")
         log.info(f"      Supranumerary warnings (H3): {self._stats['supranumerary_warnings']}")
         log.info(f"      EN truncation risks (T1): {self._stats['en_truncation_risks']}")
+        log.info(f"      T1 fallback pages fetched (v5.8.7): {self._stats['demais_pages_fetched']}")
+        log.info(f"      T1 resolved by fallback (v5.8.7): {self._stats['truncation_resolved_by_fallback']}")
         log.info(f"      TCG suspects (H2 v5.8): {self._stats['tcg_suspects']}")
         log.info(f"      Single EN seller risks (v5.8.3): {self._stats['single_en_seller_risks']}")
         log.info(f"      Oversized collector# risks (v5.8.5): {self._stats['oversized_collector_risks']}")
