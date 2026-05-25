@@ -260,8 +260,16 @@ def read_deals(xlsx_path: Path, include_validate: bool) -> list[dict]:
     return deals
 
 
-def render_markdown(rows: list[dict], xlsx_path: Path, fx: float, grading_cost: float) -> str:
+def render_markdown(
+    rows: list[dict], xlsx_path: Path, fx: float,
+    grading_cost: float, myp_freight_brl: float = 0.0,
+) -> str:
     today = datetime.now().strftime("%Y-%m-%d")
+    myp_freight_usd = myp_freight_brl / fx if myp_freight_brl else 0.0
+    freight_note = (
+        f"Frete MYP→comprador assumido **R${myp_freight_brl:.0f}/carta** "
+        f"(~US${myp_freight_usd:.2f}, ajustar via `--myp-freight-brl`). "
+    ) if myp_freight_brl else ""
     lines: list[str] = [
         f"# PriceCharting PSA Prices — {today}",
         "",
@@ -269,7 +277,8 @@ def render_markdown(rows: list[dict], xlsx_path: Path, fx: float, grading_cost: 
         f"Fonte: PriceCharting (cloudscraper bypassa anti-bot). "
         f"Médias = `info_box`; PSA9 eBay = mediana das vendas recentes filtradas por título `PSA 9`. "
         f"FX assumido **BRL/USD = {fx:.2f}** (ajustar via `--fx`). "
-        f"Custo grading+freight assumido **US${grading_cost:.0f}/carta** (ajustar via `--grading-cost`). "
+        f"Custo grading+freight US assumido **US${grading_cost:.0f}/carta** (ajustar via `--grading-cost`). "
+        f"{freight_note}"
         f"**Outros custos não incluídos:** eBay fees (~13%), tax — net realistic líquido ≈ valor da tabela × 0.87.",
         "",
         "## Preços por grade (USD)",
@@ -302,7 +311,7 @@ def render_markdown(rows: list[dict], xlsx_path: Path, fx: float, grading_cost: 
             mult9 = p9 / myp_usd
             mult10 = (p10 / myp_usd) if p10 else None
             profit9 = p9 - myp_usd
-            cost_base = myp_usd + grading_cost
+            cost_base = myp_usd + myp_freight_usd + grading_cost
             diff9 = p9 - cost_base
             diff10 = (p10 - cost_base) if p10 else None
             enriched.append({
@@ -398,6 +407,15 @@ def main():
         )
     )
     parser.add_argument(
+        "--myp-freight-brl", type=float, default=0.0,
+        help=(
+            "Frete MYP→comprador BRL por carta (default 0). Cards no MYP "
+            "frequentemente têm frete por listing (~R$15-30 normal, R$100+ "
+            "em insured/SEDEX pra cartas caras). Conferido manualmente pela "
+            "Psyduck 226/217 = R$100/carta — usar 100 pra cenário realista."
+        )
+    )
+    parser.add_argument(
         "--include-validate", action="store_true",
         help="Inclui também 🚨 Validate Manually (cards com flag)"
     )
@@ -439,7 +457,7 @@ def main():
         print(f"  PSA9=${p9} (eBay sales={n9}) | PSA10=${grades.get('psa10')}")
         rows.append({**deal, "slug": slug, "grades": grades, "sales": sales})
 
-    md = render_markdown(rows, args.xlsx, args.fx, args.grading_cost)
+    md = render_markdown(rows, args.xlsx, args.fx, args.grading_cost, args.myp_freight_brl)
     out_path.write_text(md, encoding="utf-8")
     print(f"\n✅ Saved: {out_path}")
     matched = sum(1 for r in rows if r["slug"])
