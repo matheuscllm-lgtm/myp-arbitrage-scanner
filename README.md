@@ -386,6 +386,50 @@ Sobra ~700 min/mês pra triggers manuais, smoke tests e re-runs em caso de falha
 
 ---
 
+## PSA price triage (workflow pós-scan)
+
+Após qualquer scan que gera deals, vale rodar o `scripts/scrape_pricecharting_psa.py`
+pra cruzar com PriceCharting e ver multiplos MYP raw → PSA 9 / PSA 10. Isso
+sinaliza quais deals MYP justificam grading (alto upside graded) vs. flip raw direto.
+
+```bash
+# Lê 🔥 Deals do xlsx, faz lookup no PriceCharting, gera markdown
+python3 scripts/scrape_pricecharting_psa.py results/scan-XXXX.xlsx
+
+# Output default: results/psa-prices-<today>.md
+# Customizar FX (default BRL/USD = 5.30) ou path:
+python3 scripts/scrape_pricecharting_psa.py results/scan-XXXX.xlsx --fx 5.45 -o /tmp/psa.md
+
+# Incluir também 🚨 Validate Manually (cards com flag SIR/T1):
+python3 scripts/scrape_pricecharting_psa.py results/scan-XXXX.xlsx --include-validate
+```
+
+**Tecnologia:** `cloudscraper` (mesma dep do scanner principal) bypassa o
+anti-bot do PriceCharting com fingerprint Firefox/Windows. Sem token API
+necessário — adapter HTML é gratuito. Slug disambiguation por tail-number
+do URL (`/game/.../<slug>-NNN`) evita pegar carta errada quando o search
+ranking do PriceCharting prioriza popularidade (caso Ascended Heroes onde
+quase tudo casa pro Mega Gengar 284 sem filtro).
+
+**Output:**
+- Tabela de preços (Ungraded, PSA 8/9/10, mediana eBay recente PSA 9)
+- Ranking de arbitragem MYP→PSA 9 ordenado por múltiplo
+- PSA 10 jackpot (cartas com >10x upside se entrar 10)
+- Top picks filtrados (mult ≥ 2.5x + N≥10 sales pra robustez)
+
+**Decisão final:** os top picks viram input pro `psa-arb analyze-live` do
+[PSA-Arbitrage-Scanner](https://github.com/matheuscllm-lgtm/psa-arbitrage-scanner)
+com pop counts manuais (psacard.com/pop) — daí sai a decisão determinística
+COMPRAR/NEGOCIAR/PEDIR_FOTOS com motor `Decimal` (FX spread, grading fees,
+freight, eBay fees).
+
+**Caveats:** preços PriceCharting são médias agregadas, podem estar voláteis
+em sets novos (ex.: ME: Ascended Heroes 2026 — pop pequena, flips iniciais
+inflam). Custos não incluídos: grading ($25-40), shipping BR↔US ($30-50),
+eBay fees (~13%), tax. Net realistic ≈ bruto × 0.65.
+
+---
+
 ## Heurísticas defensivas
 
 ### H3 — Supranumerário rarity mismatch
