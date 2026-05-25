@@ -260,7 +260,7 @@ def read_deals(xlsx_path: Path, include_validate: bool) -> list[dict]:
     return deals
 
 
-def render_markdown(rows: list[dict], xlsx_path: Path, fx: float) -> str:
+def render_markdown(rows: list[dict], xlsx_path: Path, fx: float, grading_cost: float) -> str:
     today = datetime.now().strftime("%Y-%m-%d")
     lines: list[str] = [
         f"# PriceCharting PSA Prices — {today}",
@@ -269,7 +269,8 @@ def render_markdown(rows: list[dict], xlsx_path: Path, fx: float) -> str:
         f"Fonte: PriceCharting (cloudscraper bypassa anti-bot). "
         f"Médias = `info_box`; PSA9 eBay = mediana das vendas recentes filtradas por título `PSA 9`. "
         f"FX assumido **BRL/USD = {fx:.2f}** (ajustar via `--fx`). "
-        f"**Custos não incluídos:** grading ($25-40), shipping BR↔US, fees, tax — net realistic ≈ bruto × 0.65.",
+        f"Custo grading+freight assumido **US${grading_cost:.0f}/carta** (ajustar via `--grading-cost`). "
+        f"**Outros custos não incluídos:** eBay fees (~13%), tax — net realistic líquido ≈ valor da tabela × 0.87.",
         "",
         "## Preços por grade (USD)",
         "",
@@ -298,65 +299,70 @@ def render_markdown(rows: list[dict], xlsx_path: Path, fx: float) -> str:
         )
         if p9 and row["myp_brl"]:
             myp_usd = row["myp_brl"] / fx
-            mult = p9 / myp_usd
-            profit = p9 - myp_usd
-            enriched.append({**row, "p9": p9, "p10": p10, "myp_usd": myp_usd, "mult": mult, "profit": profit})
+            mult9 = p9 / myp_usd
+            mult10 = (p10 / myp_usd) if p10 else None
+            profit9 = p9 - myp_usd
+            cost_base = myp_usd + grading_cost
+            diff9 = p9 - cost_base
+            diff10 = (p10 - cost_base) if p10 else None
+            enriched.append({
+                **row,
+                "p9": p9, "p10": p10,
+                "myp_usd": myp_usd,
+                "mult9": mult9, "mult10": mult10,
+                "profit9": profit9,
+                "diff9": diff9, "diff10": diff10,
+                "cost_base": cost_base,
+            })
 
-    # Ranking de arbitragem
+    # Ranking de arbitragem (PSA 9 e PSA 10 lado a lado, líquido após grading)
     lines.extend(
         [
             "",
-            "## Arbitragem MYP → PSA 9 (bruto, sem custos)",
+            f"## Arbitragem MYP → PSA (líquido após +US${grading_cost:.0f} grading/freight)",
             "",
-            "| Carta | MYP R$ | MYP US$ | PSA 9 US$ | Mult | Lucro bruto US$ |",
-            "|---|---:|---:|---:|---:|---:|",
+            "Diff = PSA grade − (MYP USD + grading). Sort por **Diff PSA 9** (piso conservador). "
+            "Diff PSA 10 é o jackpot upside se a carta entrar 10 em vez de 9.",
+            "",
+            "| Carta | MYP R$ | MYP US$ | +grading | PSA 9 US$ | Diff PSA 9 | PSA 10 US$ | Diff PSA 10 |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|",
         ]
     )
-    for r in sorted(enriched, key=lambda x: -x["mult"]):
-        marker = "**" if r["mult"] >= 2.5 else ""
+    def _fmt_diff(v: Optional[float], bold: bool = False) -> str:
+        if v is None:
+            return "—"
+        marker = "**" if bold else ""
+        sign = "+" if v >= 0 else "-"
+        return f"{marker}{sign}${abs(v):.2f}{marker}"
+
+    for r in sorted(enriched, key=lambda x: -x["diff9"]):
+        diff9_str = _fmt_diff(r["diff9"], bold=r["diff9"] > 0)
+        diff10_str = _fmt_diff(r["diff10"], bold=bool(r["diff10"]) and r["diff10"] > 0)
+        p10_str = f"${r['p10']:.2f}" if r["p10"] else "—"
         lines.append(
-            f"| {marker}{r['card_name']}{marker} | R${r['myp_brl']:.2f} | "
-            f"${r['myp_usd']:.2f} | ${r['p9']:.2f} | {marker}{r['mult']:.2f}x{marker} | ${r['profit']:.2f} |"
+            f"| {r['card_name']} | R${r['myp_brl']:.2f} | "
+            f"${r['myp_usd']:.2f} | ${r['cost_base']:.2f} | "
+            f"${r['p9']:.2f} | {diff9_str} | "
+            f"{p10_str} | {diff10_str} |"
         )
 
-    # PSA 10 jackpot
-    jackpot = [r for r in enriched if r["p10"]]
-    if jackpot:
-        lines.extend(
-            [
-                "",
-                "## PSA 10 jackpot (carta entrar 10)",
-                "",
-                "| Carta | PSA 10 US$ | Mult vs MYP raw |",
-                "|---|---:|---:|",
-            ]
-        )
-        for r in sorted(jackpot, key=lambda x: -(x["p10"] / x["myp_usd"])):
-            mult10 = r["p10"] / r["myp_usd"]
-            marker = "**" if mult10 >= 10 else ""
-            lines.append(f"| {marker}{r['card_name']}{marker} | ${r['p10']:.2f} | {marker}{mult10:.1f}x{marker} |")
-
+    # Top picks profit-positive: diff9 > 0
+    profitable = [r for r in enriched if r["diff9"] > 0]
     lines.extend(
         [
             "",
-            "## Top picks (Mult PSA 9 ≥ 2.5x, N≥10 sales)",
+            f"## Top picks net-positive (Diff PSA 9 > 0 com US${grading_cost:.0f} grading)",
             "",
         ]
     )
-    picks = [
-        r for r in enriched
-        if r["mult"] >= 2.5 and len(r["sales"].get(9, [])) >= 10
-    ]
-    if not picks:
-        lines.append("> Nenhum card passa filtro de robustez (sales N≥10 + mult≥2.5x).")
+    if not profitable:
+        lines.append("> Nenhum card cobre o custo de grading mesmo no piso PSA 9.")
     else:
-        for r in sorted(picks, key=lambda x: -x["mult"]):
+        for r in sorted(profitable, key=lambda x: -x["diff9"])[:10]:
+            p10_extra = f", PSA 10 jackpot +${r['diff10']:.2f}" if r["diff10"] and r["diff10"] > 0 else ""
             lines.append(
-                f"- **{r['card_name']}** — MYP R${r['myp_brl']:.2f} → PSA 9 US${r['p9']:.2f} "
-                f"({r['mult']:.2f}x, {len(r['sales'].get(9, []))} sales). "
-                f"PSA 10 US${r['p10']:.2f} ({r['p10']/r['myp_usd']:.1f}x raw)." if r["p10"] else
-                f"- **{r['card_name']}** — MYP R${r['myp_brl']:.2f} → PSA 9 US${r['p9']:.2f} "
-                f"({r['mult']:.2f}x, {len(r['sales'].get(9, []))} sales)."
+                f"- **{r['card_name']}** — MYP R${r['myp_brl']:.2f} → "
+                f"PSA 9 líquido **+${r['diff9']:.2f}**{p10_extra}"
             )
 
     lines.extend(
@@ -366,7 +372,7 @@ def render_markdown(rows: list[dict], xlsx_path: Path, fx: float) -> str:
             "",
             f"*Gerado em {datetime.now().strftime('%Y-%m-%d %H:%M')} UTC via `scripts/scrape_pricecharting_psa.py`. "
             f"Próximo passo: rodar `psa-arb analyze-live` nos top picks com pop counts manuais "
-            f"(psacard.com/pop) pra decisão final.*",
+            f"(psacard.com/pop) pra decisão final com P(PSA 10).*",
         ]
     )
     return "\n".join(lines) + "\n"
@@ -382,6 +388,14 @@ def main():
     parser.add_argument(
         "--fx", type=float, default=5.30,
         help="BRL/USD pra conversão (default 5.30)"
+    )
+    parser.add_argument(
+        "--grading-cost", type=float, default=40.0,
+        help=(
+            "Custo de grading+freight USD por carta pra coluna Diff (default 40). "
+            "Piso conservador BR→US: ~$25 PSA Value + ~$15 shipping ida+volta. "
+            "Realista pra Brasil ~$55-70 (PSA Regular + freight asseg.)."
+        )
     )
     parser.add_argument(
         "--include-validate", action="store_true",
@@ -425,7 +439,7 @@ def main():
         print(f"  PSA9=${p9} (eBay sales={n9}) | PSA10=${grades.get('psa10')}")
         rows.append({**deal, "slug": slug, "grades": grades, "sales": sales})
 
-    md = render_markdown(rows, args.xlsx, args.fx)
+    md = render_markdown(rows, args.xlsx, args.fx, args.grading_cost)
     out_path.write_text(md, encoding="utf-8")
     print(f"\n✅ Saved: {out_path}")
     matched = sum(1 for r in rows if r["slug"])

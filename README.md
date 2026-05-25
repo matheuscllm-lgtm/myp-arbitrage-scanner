@@ -400,6 +400,10 @@ python3 scripts/scrape_pricecharting_psa.py results/scan-XXXX.xlsx
 # Customizar FX (default BRL/USD = 5.30) ou path:
 python3 scripts/scrape_pricecharting_psa.py results/scan-XXXX.xlsx --fx 5.45 -o /tmp/psa.md
 
+# Custo grading+freight pra coluna Diff (default US$40 — piso conservador
+# BR→US: PSA Value $25 + shipping $15). Pra realismo Brasil use $60-70:
+python3 scripts/scrape_pricecharting_psa.py results/scan-XXXX.xlsx --grading-cost 60
+
 # Incluir também 🚨 Validate Manually (cards com flag SIR/T1):
 python3 scripts/scrape_pricecharting_psa.py results/scan-XXXX.xlsx --include-validate
 ```
@@ -413,9 +417,10 @@ quase tudo casa pro Mega Gengar 284 sem filtro).
 
 **Output:**
 - Tabela de preços (Ungraded, PSA 8/9/10, mediana eBay recente PSA 9)
-- Ranking de arbitragem MYP→PSA 9 ordenado por múltiplo
-- PSA 10 jackpot (cartas com >10x upside se entrar 10)
-- Top picks filtrados (mult ≥ 2.5x + N≥10 sales pra robustez)
+- Ranking de arbitragem MYP→PSA com PSA 9 e PSA 10 lado a lado, sort por
+  **Diff PSA 9** (piso conservador) — Diff PSA 10 mostra o jackpot upside
+  se a carta entrar 10 em vez de 9
+- Top picks net-positive (cartas onde PSA 9 cobre custo de grading)
 
 **Decisão final:** os top picks viram input pro `psa-arb analyze-live` do
 [PSA-Arbitrage-Scanner](https://github.com/matheuscllm-lgtm/psa-arbitrage-scanner)
