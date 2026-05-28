@@ -146,15 +146,32 @@ def edition_keyword(edition: str) -> str:
 
 
 class PriceChartingClient:
-    def __init__(self, delay: float = 1.0):
+    def __init__(self, delay: float = 1.0, verify_ssl: bool = True):
         self.scraper = cloudscraper.create_scraper(
             browser={"browser": "firefox", "platform": "windows", "desktop": True}
         )
+        self.verify_ssl = verify_ssl
+        if not verify_ssl:
+            # Workaround pra cert rotation com NotBefore futuro
+            # (observado 2026-05-26 quando PC rotacionou cert).
+            # Patch HTTPSAdapter pra ignorar hostname check + cert verify.
+            import ssl, urllib3
+            from requests.adapters import HTTPAdapter
+            from urllib3.poolmanager import PoolManager
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            class _UnverifiedAdapter(HTTPAdapter):
+                def init_poolmanager(self, *a, **kw):
+                    ctx = ssl.create_default_context()
+                    ctx.check_hostname = False
+                    ctx.verify_mode = ssl.CERT_NONE
+                    kw["ssl_context"] = ctx
+                    return super().init_poolmanager(*a, **kw)
+            self.scraper.mount("https://", _UnverifiedAdapter())
         self.delay = delay
 
     def _get(self, url: str):
         time.sleep(self.delay)
-        return self.scraper.get(url, timeout=30)
+        return self.scraper.get(url, timeout=30, verify=self.verify_ssl)
 
     def search_for_slug(self, query: str, want_number: str) -> Optional[str]:
         """Retorna slug `/game/...` cujo tail `-NNN` casa com want_number.
@@ -407,6 +424,15 @@ def main():
         )
     )
     parser.add_argument(
+        "--no-verify-ssl", action="store_true",
+        help=(
+            "Disable SSL cert verification (workaround pra cert rotation com "
+            "NotBefore futuro do PriceCharting). Use APENAS quando o fetch "
+            "falha com 'certificate is not yet valid' — não comprometemos "
+            "credenciais (scraping public, sem auth)."
+        )
+    )
+    parser.add_argument(
         "--myp-freight-brl", type=float, default=0.0,
         help=(
             "Frete MYP→comprador BRL por carta (default 0). Cards no MYP "
@@ -437,7 +463,7 @@ def main():
     if not deals:
         sys.exit("❌ nenhum deal pra lookup. (sheets vazias ou colunas faltando)")
 
-    client = PriceChartingClient(delay=args.delay)
+    client = PriceChartingClient(delay=args.delay, verify_ssl=not args.no_verify_ssl)
     rows = []
     for i, deal in enumerate(deals, 1):
         en_name, number = extract_name_and_number(deal["card_name"])
