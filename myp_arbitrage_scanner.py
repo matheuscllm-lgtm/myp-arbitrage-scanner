@@ -689,10 +689,17 @@ class MYPScraper:
                     continue
 
                 # Filter: NM (Near Mint) only — skip Played, Damaged, etc.
-                row_upper = row_text.upper()
-                is_nm = ("NM" in row_upper or "QUASE NOVA" in row_upper
-                         or "NEAR MINT" in row_upper)
-                if not is_nm:
+                # v5.8.7: lê a célula de condição DEDICADA
+                # (td.estoque-lista-qualidadenome, ex.: "NM - Quase nova",
+                # "SP - Pouco jogada") e casa o código EXATO antes do " - ".
+                # Antes era substring "NM" na linha inteira, que vazava não-NM
+                # quando "NM" aparecia em qualquer coluna (nick de vendedor,
+                # obs, etc). NM-only é invariante do scanner; sem célula de
+                # qualidade confirmável (drift de layout), a linha é pulada.
+                qual_el = row.select_one("td.estoque-lista-qualidadenome")
+                qual_txt = qual_el.get_text(" ", strip=True) if qual_el else ""
+                qual_code = qual_txt.split("-", 1)[0].strip().upper()
+                if qual_code != "NM":
                     continue
 
                 # EN + NM seller — preço já extraído acima
