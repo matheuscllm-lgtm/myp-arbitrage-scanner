@@ -17,10 +17,17 @@ from openpyxl import load_workbook
 from myp_arbitrage_scanner import (
     CardData,
     generate_xlsx,
+    tcg_search_url,
     TCG_SUSPECT_RATIO_THRESHOLD,
-    PT_CONDITION_MARKERS,
-    EN_CONDITION_MARKERS,
 )
+
+# NOTE (v5.8.8, 2026-05-29): PT_CONDITION_MARKERS / EN_CONDITION_MARKERS foram
+# REMOVIDOS do scanner no commit a4d2111 (a detecção de idioma migrou de
+# "substring na linha" pra leitura da célula dedicada td.estoque-lista-
+# qualidadenome). O test_v5_8_offline.py importava esses símbolos e estava
+# QUEBRADO em ImportError desde então (pré-existente, não introduzido aqui).
+# Os dois testes que dependiam deles (language markers disjoint + H1 language
+# logic) foram removidos por testarem lógica que não existe mais.
 
 
 def make_jirachi():
@@ -143,18 +150,117 @@ def test_xlsx_end_to_end():
     return True
 
 
-def test_threshold_constant():
-    """Threshold 10x é o que documentação especifica."""
-    assert TCG_SUSPECT_RATIO_THRESHOLD == 10.0, f"Threshold mudou: {TCG_SUSPECT_RATIO_THRESHOLD}"
+def test_tcg_search_url():
+    """v5.8.8: URL de busca TCGplayer remove o sufixo (NNN/MMM) e codifica."""
+    u = tcg_search_url("Rayquaza VMAX (111/203)")
+    assert u is not None
+    assert "tcgplayer.com" in u, f"domínio errado: {u}"
+    assert "Rayquaza" in u and "111" not in u, f"sufixo não removido: {u}"
+    # apóstrofo e espaço codificados
+    u2 = tcg_search_url("Team Aqua's Kyogre (003/95)")
+    assert "Kyogre" in u2 and "%27" in u2, f"encoding falhou: {u2}"
+    # promo sem (NNN/MMM) standard
+    u3 = tcg_search_url("Pikachu (PR-SM SM229)")
+    assert u3 is not None and "Pikachu" in u3 and "SM229" not in u3, f"promo: {u3}"
+    # nome vazio → None (não gera link de busca vazio)
+    assert tcg_search_url("") is None
+    assert tcg_search_url(None) is None
+    print(f"  tcg_search_url: 6 casos OK ✓")
     return True
 
 
-def test_language_markers_disjoint():
-    """PT e EN markers não devem se sobrepor — senão a heurística vira ambígua."""
-    pt_set = set(PT_CONDITION_MARKERS)
-    en_set = set(EN_CONDITION_MARKERS)
-    overlap = pt_set & en_set
-    assert not overlap, f"Markers sobrepõem: {overlap}"
+def test_price_cell_hyperlinks():
+    """v5.8.8: célula MYP EN NM linka pro produto MYP, TCG Player pra busca
+    TCGplayer. Valor (número) preservado, hyperlink + fonte azul/sublinhada.
+    Verifica nas 5 sheets de cards (não na Summary)."""
+    clean = make_clean_deal()       # entra em Deals + All + Top50
+    border = make_borderline_deal() # entra em Deals + All + Top50
+    jirachi = make_jirachi()        # suspect → TCG Suspect sheet
+    trunc = CardData(
+        name="Psyduck (053/198)",
+        edition="Scarlet & Violet",
+        product_url="https://mypcards.com/pokemon/produto/99999/psyduck",
+        myp_lowest_en_nm=300.0,
+        tcg_player_price=400.0,
+        myp_last_sale_brl=380.0,
+        margin_pct=0.30,
+        margin_brl=100.0,
+        en_nm_sellers=3,
+        en_truncation_risk=True,     # → Validate Manually
+        last_updated="2026-05-29 12:00",
+    )
+    cards = [clean, border, jirachi, trunc]
+
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        out = f.name
+    generate_xlsx(cards, out, threshold=0.25)
+    wb = load_workbook(out)
+
+    card_sheets = [
+        "🔥 Deals", "All EN Cards", "🏆 Top 50 Margin",
+        "🚨 Validate Manually", "🚨 TCG Suspect",
+    ]
+    checked = 0
+    for sname in card_sheets:
+        assert sname in wb.sheetnames, f"sheet ausente: {sname}"
+        ws = wb[sname]
+        hdr = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+        myp_col = hdr.index("MYP EN NM (R$)") + 1
+        tcg_col = hdr.index("TCG Player (R$)") + 1
+        rows_seen = 0
+        for r in range(2, ws.max_row + 1):
+            myp_cell = ws.cell(row=r, column=myp_col)
+            tcg_cell = ws.cell(row=r, column=tcg_col)
+            if myp_cell.value is None and tcg_cell.value is None:
+                continue
+            rows_seen += 1
+            # MYP price cell: número preservado + hyperlink mypcards
+            if myp_cell.value is not None:
+                assert isinstance(myp_cell.value, (int, float)), \
+                    f"{sname} r{r}: valor MYP não numérico: {myp_cell.value!r}"
+                assert myp_cell.hyperlink is not None, \
+                    f"{sname} r{r}: MYP price sem hyperlink"
+                assert "mypcards.com" in myp_cell.hyperlink.target, \
+                    f"{sname} r{r}: hyperlink MYP errado: {myp_cell.hyperlink.target}"
+                assert myp_cell.font.underline == "single", \
+                    f"{sname} r{r}: MYP price sem underline"
+            # TCG price cell: número preservado + hyperlink tcgplayer
+            if tcg_cell.value is not None:
+                assert isinstance(tcg_cell.value, (int, float)), \
+                    f"{sname} r{r}: valor TCG não numérico: {tcg_cell.value!r}"
+                assert tcg_cell.hyperlink is not None, \
+                    f"{sname} r{r}: TCG price sem hyperlink"
+                assert "tcgplayer.com" in tcg_cell.hyperlink.target, \
+                    f"{sname} r{r}: hyperlink TCG errado: {tcg_cell.hyperlink.target}"
+        assert rows_seen >= 1, f"{sname}: nenhuma row de card pra checar"
+        checked += rows_seen
+
+    # Card Name e URL NÃO devem ser quebrados: URL ainda string http, Card Name
+    # ainda o (NNN/MMM) intacto.
+    ws_all = wb["All EN Cards"]
+    hdr = [c.value for c in next(ws_all.iter_rows(min_row=1, max_row=1))]
+    name_col = hdr.index("Card Name") + 1
+    url_col = hdr.index("URL") + 1
+    # Localiza o Psyduck (053/198): tem o token (NNN/MMM) que NÃO pode quebrar.
+    psyduck_name = None
+    for r in range(2, ws_all.max_row + 1):
+        nv = ws_all.cell(row=r, column=name_col).value
+        uv = ws_all.cell(row=r, column=url_col).value
+        # URL não pode ter sido quebrada em nenhuma row
+        assert uv is None or str(uv).startswith("http"), f"URL quebrada r{r}: {uv!r}"
+        if nv and "Psyduck" in str(nv):
+            psyduck_name = nv
+    assert psyduck_name == "Psyduck (053/198)", \
+        f"Card Name (NNN/MMM) quebrado/alterado: {psyduck_name!r}"
+
+    Path(out).unlink()
+    print(f"  Hyperlinks de preço OK em {len(card_sheets)} sheets ({checked} células checadas) ✓")
+    return True
+
+
+def test_threshold_constant():
+    """Threshold 10x é o que documentação especifica."""
+    assert TCG_SUSPECT_RATIO_THRESHOLD == 10.0, f"Threshold mudou: {TCG_SUSPECT_RATIO_THRESHOLD}"
     return True
 
 
@@ -166,40 +272,13 @@ def test_jirachi_ratio_math():
     return True
 
 
-def test_h1_language_logic_simulation():
-    """
-    H1 fix: simula a lógica de detecção sem precisar do parser inteiro.
-
-    Caso Jirachi do scan real: row tem flag-icon='Inglês' mas condição
-    diz 'Quase Nova' (PT). H1 força lang=PT, ignorando flag polluído.
-    """
-    test_cases = [
-        # (row_text_lower, expected_lang_forced)
-        ("preço r$99,99 quase nova vendedor xyz", "Português"),  # PT marker → PT
-        ("price r$99.99 near mint seller xyz", "Inglês"),         # EN marker → EN
-        ("r$99,99 nm condition", None),                            # abreviado → cai no flag-icon
-    ]
-    for text, expected in test_cases:
-        has_pt = any(m in text for m in PT_CONDITION_MARKERS)
-        has_en = any(m in text for m in EN_CONDITION_MARKERS)
-        if has_pt and not has_en:
-            lang = "Português"
-        elif has_en and not has_pt:
-            lang = "Inglês"
-        else:
-            lang = None  # fallback to flag-icon (não testamos aqui)
-        assert lang == expected, f"H1 fail: text={text!r} → {lang}, esperado {expected}"
-    print(f"  H1 language-by-condition: {len(test_cases)} casos OK ✓")
-    return True
-
-
 def main():
     tests = [
         ("threshold constant", test_threshold_constant),
-        ("language markers disjoint", test_language_markers_disjoint),
         ("Jirachi ratio math", test_jirachi_ratio_math),
-        ("H1 language logic", test_h1_language_logic_simulation),
         ("XLSX end-to-end", test_xlsx_end_to_end),
+        ("tcg_search_url (v5.8.8)", test_tcg_search_url),
+        ("price cell hyperlinks (v5.8.8)", test_price_cell_hyperlinks),
     ]
     failed = 0
     for name, fn in tests:

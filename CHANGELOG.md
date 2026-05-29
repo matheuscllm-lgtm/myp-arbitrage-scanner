@@ -1,5 +1,56 @@
 # Changelog
 
+## v5.8.8 — 2026-05-29 — Hyperlinks nas células de preço (MYP + TCGplayer)
+
+As células de preço do XLSX viraram clicáveis pra conferência rápida na fonte,
+sem sair da planilha:
+
+1. **"MYP EN NM (R$)"** → hyperlink pra página do produto no MYP
+   (`card.product_url`). A coluna "URL" já trazia esse link em 100% das rows
+   (verificado no XLSX 2026-05-27: 0/88 vazias em Deals); a célula de preço
+   agora reusa o mesmo URL.
+2. **"TCG Player (R$)"** → hyperlink pra **busca** TCGplayer por nome
+   (`https://www.tcgplayer.com/search/pokemon/product?...&q=<nome>`).
+
+### Por que busca-por-nome e não link direto de produto
+
+Probe 2026-05-29: a página de produto MYP (HTML-scrape, cloudscraper) **não
+embute** `tcg_productId` nem qualquer link TCGplayer (0 hits). O
+`mypcards.com/api/v1` — que a memória `mypcards_api_discovery` registrava
+embutindo `tcg_productId` — retorna **404** hoje (surface instável desde
+2026-05-07). Wirar uma chamada de API por carta adicionaria um round-trip a
+mais por produto (estoura o floor ~7h do full inventory) sobre um endpoint
+que já não responde. Logo, o caminho barato e estável é busca por nome.
+`tcg_search_url(name)` remove o sufixo `(NNN/MMM)`/`(PR-...)` e url-encoda o
+nome limpo. Retorna `None` (não linka) quando o nome é vazio.
+
+### Implementação
+
+- Novo helper module-level `tcg_search_url()` + constante de estilo
+  `HYPERLINK_FONT` (Arial 10, `0563C1`, underline single — mesmo azul que
+  `add_card_hyperlinks.py` / `revalidate_deals.py` usam no Card Name).
+- `write_card_row` anexa `cell.hyperlink` nas colunas 4 (MYP) e 5 (TCG); o
+  valor exibido continua o número e o `number_format='#,##0.00'` é preservado.
+- Aplicado nas 5 sheets de cards: `🔥 Deals`, `All EN Cards`,
+  `🏆 Top 50 Margin`, `🚨 Validate Manually`, `🚨 TCG Suspect`. `Summary` não
+  tem essas colunas (não afetada).
+- **Não** mexe no Card Name (formato `(NNN/MMM)` intacto, load-bearing pro
+  merge) nem na coluna URL.
+
+### Teste
+
+`test_v5_8_offline.py`: 2 testes novos (`tcg_search_url` + round-trip de
+hyperlink nas 5 sheets, asserindo domínio mypcards na célula MYP e tcgplayer
+na célula TCG, valor numérico preservado, Card Name `(NNN/MMM)` intacto).
+Smoke test real (`--max-editions 1 --max-products 5`) confirmou links corretos
+em dados scrapeados ao vivo.
+
+**Fix colateral:** `test_v5_8_offline.py` estava **quebrado em ImportError
+desde o commit a4d2111** (importava `PT_CONDITION_MARKERS` /
+`EN_CONDITION_MARKERS`, removidos quando a detecção de idioma migrou pra
+célula dedicada). Os 2 testes que dependiam desses símbolos foram removidos
+(testavam lógica inexistente); a suíte volta a rodar verde (5/5).
+
 ## v5.8.7 — 2026-05-29 — Card Name cleanup (copy-paste + merge fix)
 
 O `<h1>` da página de produto MYP concatena, SEM separador, o título PT

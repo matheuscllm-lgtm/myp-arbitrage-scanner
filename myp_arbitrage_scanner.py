@@ -17,8 +17,8 @@ Requisitos:
     pip install cloudscraper beautifulsoup4 openpyxl lxml
 
 Autor: Matheus Chillemi / Claude
-Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7)
-Versão: v5.8.7
+Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.8)
+Versão: v5.8.8
 
 Changelog v5.1 (2026-05-12 — auditoria C/H/M, mesma metodologia do CT scanner):
   - C1: --threshold < 1.0 auto-converte com warning (UX guard contra trap
@@ -75,6 +75,7 @@ from datetime import datetime
 from dataclasses import dataclass
 from typing import Optional
 from pathlib import Path
+from urllib.parse import quote_plus
 
 logging.basicConfig(
     level=logging.INFO,
@@ -149,6 +150,30 @@ def clean_card_name(raw: str) -> str:
     raw = raw.strip()
     m = NAME_NNN_MMM_RE.match(raw)
     return m.group(1).strip() if m else raw
+
+
+# v5.8.8 (2026-05-29): TCGplayer search-by-name URL para hyperlink na célula
+# de preço "TCG Player (R$)". O scanner é HTML-scrape e a página de produto MYP
+# NÃO embute tcg_productId nem link TCGplayer (probe 2026-05-29: 0 hits);
+# o `mypcards.com/api/v1` que embutiria tcg_productId está 404 hoje (instável
+# desde 2026-05-07). Logo, NÃO há link DIRETO de produto barato/estável — o
+# fallback é busca por nome. Remove o sufixo "(NNN/MMM)"/"(PR-...)" pra busca
+# mais limpa (o número não ajuda na busca TCGplayer e atrapalha o match).
+_TCG_SEARCH_BASE = "https://www.tcgplayer.com/search/pokemon/product?productLineName=pokemon&q="
+
+
+def tcg_search_url(name: str) -> Optional[str]:
+    """URL de busca TCGplayer pelo nome da carta (sem o sufixo (NNN/MMM)).
+
+    Retorna None se o nome for vazio — evita gerar link de busca vazio."""
+    if not name or not isinstance(name, str):
+        return None
+    # Remove o token (...) final, igual ao que clean_card_name preserva no
+    # Card Name: aqui queremos o nome puro pra query de busca.
+    base = re.sub(r"\s*\([^)]*\)\s*$", "", name).strip()
+    if not base:
+        return None
+    return _TCG_SEARCH_BASE + quote_plus(base)
 # v5.8.3 (2026-05-18): Flareon VMAX (018/203) "Prize Pack Series" — observado
 # 1 seller único (`gvrgyn`) listando como Inglês quando a carta não tem print
 # EN nessa edição (mislabeling). Sem cross-check pokemontcg.io confiável, a
@@ -1022,6 +1047,10 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
     red_fill = PatternFill("solid", fgColor="FFC7CE")
     normal = Font(name="Arial", size=10)
     bold_green = Font(name="Arial", size=10, bold=True, color="006100")
+    # v5.8.8 (2026-05-29): célula de preço clicável. Mesmo azul/sublinhado que
+    # add_card_hyperlinks.py / revalidate_deals.py usam no Card Name (0563C1),
+    # mantido como Arial 10 pra casar o corpo das sheets de cards.
+    HYPERLINK_FONT = Font(name="Arial", size=10, color="0563C1", underline="single")
 
     # v5.8 (2026-05-16): 2 colunas novas pra surfaçar o sanity check H2:
     #   - "MYP Last Sale (R$)" entre TCG Player e Margin %
@@ -1042,6 +1071,8 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
     ]
     widths = [38, 32, 16, 16, 16, 17, 11, 13, 10, 11, 14, 14, 14, 55, 16]
     PRICE_COLS = {4, 5, 6, 8}       # MYP EN NM, TCG Player, Last Sale, Diff
+    MYP_PRICE_COL = 4               # v5.8.8: hyperlink → página produto MYP
+    TCG_PRICE_COL = 5               # v5.8.8: hyperlink → busca TCGplayer por nome
     MARGIN_COL = 7
     EN_TRUNC_COL = 10
     TCG_SUSPECT_COL = 11
@@ -1072,12 +1103,24 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
             trunc_flag, suspect_flag, single_flag, collector_flag,
             card.product_url, card.last_updated,
         ]
+        # v5.8.8: links das células de preço. MYP EN NM → página do produto
+        # (card.product_url, populado em 100% das rows verificadas no XLSX
+        # 2026-05-27). TCG Player → busca TCGplayer por nome (não há link
+        # direto de produto: HTML MYP não embute tcg_productId e a API está
+        # 404). Só aplica se o valor da célula existir (não linkar célula vazia).
+        tcg_link = tcg_search_url(card.name)
         for col, v in enumerate(vals, 1):
             c = ws.cell(row=row, column=col, value=v)
             c.font = normal
             c.border = border
             if col in PRICE_COLS:
                 c.number_format = '#,##0.00'
+            if col == MYP_PRICE_COL and v is not None and card.product_url:
+                c.hyperlink = card.product_url
+                c.font = HYPERLINK_FONT
+            if col == TCG_PRICE_COL and v is not None and tcg_link:
+                c.hyperlink = tcg_link
+                c.font = HYPERLINK_FONT
             if col == MARGIN_COL:
                 # v5.8.6 bug #5: standardize on 2-decimal % across the
                 # pipeline (revalidate_deals.py also uses "0.00%"). Header
