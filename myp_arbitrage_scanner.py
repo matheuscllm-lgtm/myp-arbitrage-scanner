@@ -17,8 +17,8 @@ Requisitos:
     pip install cloudscraper beautifulsoup4 openpyxl lxml
 
 Autor: Matheus Chillemi / Claude
-Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6)
-Versão: v5.8.6
+Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7)
+Versão: v5.8.7
 
 Changelog v5.1 (2026-05-12 — auditoria C/H/M, mesma metodologia do CT scanner):
   - C1: --threshold < 1.0 auto-converte com warning (UX guard contra trap
@@ -120,6 +120,35 @@ OVERSIZED_TITLE_RE = re.compile(
 # antigo. Manter até refactor downstream completo. NÃO criar novos usos.
 JUMBO_FOIL_RE = OVERSIZED_FOIL_RE
 JUMBO_TITLE_RE = OVERSIZED_TITLE_RE
+
+# v5.8.7 (2026-05-29): o <h1> da página de produto MYP concatena, sem
+# separador, o título PT "Nome (NNN/MMM)" seguido de uma cópia do nome EN.
+# `h1.get_text(strip=True)` colapsa isso em strings como
+# "Heatran-EX (109/116)Heatran-EX" ou "Kyogre da Equipe Aqua (003/95)Team
+# Aqua's Kyogre". No XLSX 2026-05-27 isso atingia 275/1190 rows (23%).
+# Dois problemas: (1) copy-paste sujo (operador cola o nome no MYP/TCGplayer
+# pra buscar a carta); (2) o `merge_myp_ct.py` casa cartas via
+# NUM_IN_NAME_RE = r"\(\s*(\d+)\s*/\s*(\d+)\s*\)\s*$" — ANCORADO no fim da
+# string. O lixo após "(NNN/MMM)" fazia o regex falhar → essas 275 linhas
+# eram silenciosamente descartadas do índice de cross-reference.
+#
+# Fix: quando o nome contém "(NNN/MMM)", trunca logo após o ")", preservando
+# EXATAMENTE o formato "(NNN/MMM)" que o merge depende. Promos "(PR-...)",
+# formatos "RCxx/RCyy", e nomes sem número ficam intocados (zero regressão).
+NAME_NNN_MMM_RE = re.compile(r"^(.*?\(\s*\d+\s*/\s*\d+\s*\))")
+
+
+def clean_card_name(raw: str) -> str:
+    """Trunca o título do <h1> logo após '(NNN/MMM)' quando presente,
+    removendo o nome EN duplicado que o MYP concatena sem separador.
+
+    Mantém intacto o formato '(NNN/MMM)' (load-bearing pro merge) e não
+    altera nomes que não casam o padrão (promos, RCxx, sem número)."""
+    if not isinstance(raw, str):
+        return ""
+    raw = raw.strip()
+    m = NAME_NNN_MMM_RE.match(raw)
+    return m.group(1).strip() if m else raw
 # v5.8.3 (2026-05-18): Flareon VMAX (018/203) "Prize Pack Series" — observado
 # 1 seller único (`gvrgyn`) listando como Inglês quando a carta não tem print
 # EN nessa edição (mislabeling). Sem cross-check pokemontcg.io confiável, a
@@ -545,10 +574,19 @@ class MYPScraper:
         # reflete preço da carta standard, gerando deals fictícios com margem
         # gigante (ex.: M-Rayquaza-EX 098/98 XY 7 Jumbo). Skip ANTES de fetch
         # de tabela de seller pra economizar processamento e evitar contaminação.
+        # v5.8.7: checa contra o nome RAW (antes do clean_card_name), pois o
+        # keyword "Jumbo"/"oversized" costuma vir DEPOIS do "(NNN/MMM)" — limpar
+        # primeiro removeria o keyword e burlaria o skip.
         if card.name and OVERSIZED_TITLE_RE.search(card.name):
             self._stats["skipped_jumbo"] += 1
             log.info(f"  ⏭️  Skipping oversized card: {card.name}")
             return None
+
+        # v5.8.7: remove o nome EN duplicado que o <h1> concatena após
+        # "(NNN/MMM)" (ex.: "Heatran-EX (109/116)Heatran-EX"). Copy-paste
+        # limpo + casa o NUM_IN_NAME_RE ancorado do merge_myp_ct.py. DEPOIS do
+        # skip de jumbo pra não engolir o keyword "Jumbo" trailing.
+        card.name = clean_card_name(card.name)
 
         # Product code
         page_text = soup.get_text()

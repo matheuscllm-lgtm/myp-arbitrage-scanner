@@ -1,5 +1,46 @@
 # Changelog
 
+## v5.8.7 — 2026-05-29 — Card Name cleanup (copy-paste + merge fix)
+
+O `<h1>` da página de produto MYP concatena, SEM separador, o título PT
+`"Nome (NNN/MMM)"` seguido de uma cópia do nome EN. `h1.get_text(strip=True)`
+colapsava isso em strings como `"Heatran-EX (109/116)Heatran-EX"` ou
+`"Kyogre da Equipe Aqua (003/95)Team Aqua's Kyogre"`. No XLSX 2026-05-27
+isso atingia **275 de 1190 rows (23%)**.
+
+Dois problemas resolvidos de uma vez:
+
+1. **Copy-paste sujo.** O operador cola o nome da carta no MYP/TCGplayer pra
+   buscar/validar. O nome EN duplicado colado no fim atrapalha a busca. Agora
+   o Card Name termina limpo em `"Heatran-EX (109/116)"`.
+2. **Merge silenciosamente quebrado.** `Scripts/merge_myp_ct.py` casa cartas
+   via `NUM_IN_NAME_RE = r"\(\s*(\d+)\s*/\s*(\d+)\s*\)\s*$"` — **ancorado no
+   fim da string**. O lixo após `(NNN/MMM)` fazia o regex falhar, e essas 275
+   linhas eram descartadas do índice de cross-reference (só 816/1190 = 69%
+   casavam). Com o nome limpo, todas as 1091 linhas que têm `(NNN/MMM)` voltam
+   a casar.
+
+### Fix — `clean_card_name` + truncate-at-paren (extração)
+
+Novo helper `clean_card_name(raw)` + regex `NAME_NNN_MMM_RE`: quando o nome
+contém `(NNN/MMM)`, trunca logo após o `)`, removendo o nome EN duplicado.
+
+- **Formato `(NNN/MMM)` PRESERVADO** — load-bearing pro merge. A limpeza só
+  remove texto *depois* do close-paren; o token que o merge ancora fica
+  intacto.
+- Promos `(PR-...)`, formatos `RCxx/RCyy`, e nomes sem número ficam
+  **intocados** (não casam o padrão digit/digit) — zero regressão.
+- Aplicado **após** o skip de Jumbo (v5.8.3), que checa o nome RAW: o keyword
+  "Jumbo"/"oversized" costuma vir DEPOIS do `(NNN/MMM)`; limpar antes do skip
+  removeria o keyword e burlaria a guarda. Ordem invertida pra preservar.
+- Não foi adicionada coluna nova: o Card Name já trazia name+número numa
+  célula só; o pedido (copy-paste-friendly) é atendido limpando o existente,
+  sem inflar o schema que o `myp_aggregate.py` lê via dict-by-name.
+
+Teste: unit em `clean_card_name` (6 casos garbage reais + 5 não-alvo +
+non-str) verificando round-trip contra o regex do merge; smoke real-scrape
+(1 edição / 8 produtos) confirmou 7/7 Card Names limpos e casando o merge.
+
 ## v5.8.6 — 2026-05-19 — Postprocess robustness (5 bugs in download pipeline)
 
 Sweep pós-scan v5.8.3 entregou XLSX usável mas com 5 bugs latentes no
