@@ -17,8 +17,8 @@ Requisitos:
     pip install cloudscraper beautifulsoup4 openpyxl lxml
 
 Autor: Matheus Chillemi / Claude
-Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.8)
-Versão: v5.8.8
+Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9)
+Versão: v5.8.9
 
 Changelog v5.1 (2026-05-12 — auditoria C/H/M, mesma metodologia do CT scanner):
   - C1: --threshold < 1.0 auto-converte com warning (UX guard contra trap
@@ -161,6 +161,67 @@ def clean_card_name(raw: str) -> str:
 # mais limpa (o número não ajuda na busca TCGplayer e atrapalha o match).
 _TCG_SEARCH_BASE = "https://www.tcgplayer.com/search/pokemon/product?productLineName=pokemon&q="
 
+# v5.8.9 (2026-05-29): mapa MYP edition substring → pokemontcg.io setcode pra
+# montar URL DIRETA de produto TCGplayer via redirect
+# `https://prices.pokemontcg.io/tcgplayer/{setcode}-{num}` (pokemontcg.io
+# resolve pra `tcgplayer.com/product/<id>` da carta exata, mesma mecânica que
+# o CardTrader scanner usa no `Link TCG`). Custo zero (string build).
+#
+# Mapa derivado de:
+#   - C:/Users/mathe/Scripts/merge_myp_ct.py CT_ALIAS_TO_MYP_SUBSTRING
+#     (MYP edition substring ↔ CT 3-letter alias)
+#   - CardTrader Scanner SET_ALIAS_TO_PTCG (CT alias ↔ pokemontcg.io setcode,
+#     SV+SWSH+ME eras, verificado 2026-05-19 contra pokemontcg.io /sets)
+#
+# Chain MYP substring → CT alias → ptcg setcode. Sets-base validados via
+# probe HTTP 2026-05-29 (all 25 setcodes returnam 200 no redirect base).
+# Vintage / promo / pre-SWSH NÃO mapeados — fallback de busca-por-nome cobre.
+#
+# Substrings usam forma EN ("Silver Tempest", "Evolving Skies"). Funciona
+# mesmo com o bilingual concat bug do MYP (ex "Sword & Shield 7: ...Evolving
+# Skies"): a porção EN está sempre presente no concat.
+MYP_EDITION_SUBSTR_TO_PTCG = {
+    # Scarlet & Violet era (longest-substring match prevention pra "SV09":
+    # listar substring específica em vez de "151"-ish ambiguidade)
+    "Scarlet & Violet: Destined Rivals": "sv10",
+    "SV09: Journey Together":            "sv9",
+    "Prismatic Evolutions":              "sv8pt5",
+    "Surging Sparks":                    "sv8",
+    "Stellar Crown":                     "sv7",
+    "Shrouded Fable":                    "sv6pt5",
+    "Twilight Masquerade":               "sv6",
+    "Temporal Forces":                   "sv5",
+    "Paldean Fates":                     "sv4pt5",
+    "Paradox Rift":                      "sv4",
+    "Obsidian Flames":                   "sv3",
+    "Pokémon 151":                       "sv3pt5",
+    "Paldea Evolved":                    "sv2",
+    # Mega Evolution era (commit 2026-05-19): pokemontcg.io ainda tem
+    # cobertura parcial pros ME sets (`me2pt5-274` 404 em 2026-05-29 mas
+    # `me2pt5-10` 200). Quando oversized_collector_risk=True, write_card_row
+    # CAI no fallback de busca (variant fora de range é o caso 404 típico).
+    "Mega Evolution: Phantasmal Flames": "me2",
+    "Ascended Heroes":                   "me2pt5",
+    "Mega Evolution":                    "me1",   # base ME (catch-all curto, longest-substr win pros específicos acima)
+    # Sword & Shield era
+    "Crown Zenith":                      "swsh12pt5",
+    "Silver Tempest":                    "swsh12",
+    "Lost Origin":                       "swsh11",
+    "Astral Radiance":                   "swsh10",
+    "Brilliant Stars":                   "swsh9",
+    "Fusion Strike":                     "swsh8",
+    "Evolving Skies":                    "swsh7",
+    "Pokémon GO":                        "pgo",
+    # Black Bolt / White Flare (zsv10pt5/rsv10pt5) propositalmente OMITIDOS:
+    # MYP titles podem ser "Escarlate e Violeta: Black Bolt" mas pokemontcg.io
+    # ainda tinha cobertura instável quando este mapa foi montado. Adicionar
+    # quando weekly probe confirmar 200 estável em base+oversized.
+}
+
+# Regex (NNN/MMM) — captura numerator e denominator. Reutilizado de
+# write_card_row L871. Definido aqui pra tcg_direct_url também.
+_COLLECTOR_NUM_RE = re.compile(r"\((\d+)\s*/\s*(\d+)\)")
+
 
 def tcg_search_url(name: str) -> Optional[str]:
     """URL de busca TCGplayer pelo nome da carta (sem o sufixo (NNN/MMM)).
@@ -174,6 +235,54 @@ def tcg_search_url(name: str) -> Optional[str]:
     if not base:
         return None
     return _TCG_SEARCH_BASE + quote_plus(base)
+
+
+def myp_edition_to_ptcg_setcode(edition: str) -> Optional[str]:
+    """MYP edition string → pokemontcg.io setcode (longest substring wins).
+
+    Returns None pra edition não mapeada (vintage/promo/Black Bolt/etc).
+    Case-insensitive. Tolera bilingual concat do MYP (ex "Sword & Shield 7:
+    ...Evolving Skies" contém EN substring).
+    """
+    if not isinstance(edition, str) or not edition:
+        return None
+    el = edition.lower()
+    hits = [(s, c) for s, c in MYP_EDITION_SUBSTR_TO_PTCG.items() if s.lower() in el]
+    if not hits:
+        return None
+    # Longest substring wins — evita "151" matching "1518" etc.
+    hits.sort(key=lambda t: -len(t[0]))
+    return hits[0][1]
+
+
+def tcg_direct_url(card_name: str, edition: str,
+                   oversized_collector_risk: bool = False) -> Optional[str]:
+    """URL DIRETA do produto TCGplayer via redirect pokemontcg.io.
+
+    Forma: `https://prices.pokemontcg.io/tcgplayer/{setcode}-{num}`.
+    pokemontcg.io devolve 302 → `tcgplayer.com/product/<id>` da carta exata.
+
+    Retorna None (caller deve cair no `tcg_search_url`) quando:
+      - edition não está em MYP_EDITION_SUBSTR_TO_PTCG;
+      - card_name não tem o token (NNN/MMM) parseável;
+      - oversized_collector_risk=True (numerator > set_size → variant SIR/HR
+        que pokemontcg.io frequentemente NÃO tem indexada → dead link).
+        Caso documentado: `me2pt5-274` (Mega Feraligatr ex 274/217) 404 em
+        2026-05-29. Sets-base mapeados sempre resolvem.
+    """
+    if oversized_collector_risk:
+        return None
+    setcode = myp_edition_to_ptcg_setcode(edition)
+    if not setcode:
+        return None
+    m = _COLLECTOR_NUM_RE.search(card_name or "")
+    if not m:
+        return None
+    # pokemontcg.io usa o number sem leading zeros (ex sv9-187 não sv9-0187,
+    # base6-13 não base6-013). Verificado contra Link TCG do CT handoff
+    # 2026-05-19.
+    num = m.group(1).lstrip("0") or "0"
+    return f"https://prices.pokemontcg.io/tcgplayer/{setcode}-{num}"
 # v5.8.3 (2026-05-18): Flareon VMAX (018/203) "Prize Pack Series" — observado
 # 1 seller único (`gvrgyn`) listando como Inglês quando a carta não tem print
 # EN nessa edição (mislabeling). Sem cross-check pokemontcg.io confiável, a
@@ -1105,10 +1214,20 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
         ]
         # v5.8.8: links das células de preço. MYP EN NM → página do produto
         # (card.product_url, populado em 100% das rows verificadas no XLSX
-        # 2026-05-27). TCG Player → busca TCGplayer por nome (não há link
-        # direto de produto: HTML MYP não embute tcg_productId e a API está
-        # 404). Só aplica se o valor da célula existir (não linkar célula vazia).
-        tcg_link = tcg_search_url(card.name)
+        # 2026-05-27). TCG Player → DIRETA via pokemontcg.io redirect quando
+        # MYP edition é mapeada + collector# está in-range; caso contrário,
+        # cai pra busca-por-nome (v5.8.8 original behavior).
+        # v5.8.9: tcg_direct_url tenta o redirect; None → fallback ao search.
+        # Cobertura honesta em scan vintage-heavy weekly 2026-05-27 ≈ 2% de
+        # rows pegam link direto; em daily-scan de SV moderno (8 substrings),
+        # cobertura é alta. Fallback de busca cobre o restante.
+        tcg_link = (
+            tcg_direct_url(
+                card.name, card.edition,
+                oversized_collector_risk=card.oversized_collector_risk,
+            )
+            or tcg_search_url(card.name)
+        )
         for col, v in enumerate(vals, 1):
             c = ws.cell(row=row, column=col, value=v)
             c.font = normal

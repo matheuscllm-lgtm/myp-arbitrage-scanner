@@ -18,6 +18,8 @@ from myp_arbitrage_scanner import (
     CardData,
     generate_xlsx,
     tcg_search_url,
+    tcg_direct_url,
+    myp_edition_to_ptcg_setcode,
     TCG_SUSPECT_RATIO_THRESHOLD,
 )
 
@@ -172,13 +174,20 @@ def test_tcg_search_url():
 def test_price_cell_hyperlinks():
     """v5.8.8: célula MYP EN NM linka pro produto MYP, TCG Player pra busca
     TCGplayer. Valor (número) preservado, hyperlink + fonte azul/sublinhada.
-    Verifica nas 5 sheets de cards (não na Summary)."""
+    Verifica nas 5 sheets de cards (não na Summary).
+
+    v5.8.9 (2026-05-29): TCG link agora pode ser DIRETO (pokemontcg.io
+    redirect) quando MYP edition mapeada + collector# in-range. Quando não,
+    cai no fallback de busca (tcgplayer.com/search). Asserção genérica
+    "tcgplayer.com in target" cobre ambos (search) E (product redirect
+    final) — domínio pokemontcg.io é checado no test_tcg_direct_url.
+    """
     clean = make_clean_deal()       # entra em Deals + All + Top50
     border = make_borderline_deal() # entra em Deals + All + Top50
     jirachi = make_jirachi()        # suspect → TCG Suspect sheet
     trunc = CardData(
         name="Psyduck (053/198)",
-        edition="Scarlet & Violet",
+        edition="Scarlet & Violet",   # NÃO mapeado → fallback search
         product_url="https://mypcards.com/pokemon/produto/99999/psyduck",
         myp_lowest_en_nm=300.0,
         tcg_player_price=400.0,
@@ -189,7 +198,22 @@ def test_price_cell_hyperlinks():
         en_truncation_risk=True,     # → Validate Manually
         last_updated="2026-05-29 12:00",
     )
-    cards = [clean, border, jirachi, trunc]
+    # v5.8.9: card cuja edition É mapeada → hyperlink DIRETO pokemontcg.io.
+    # Tef = Temporal Forces → sv5. Salamence ex (187/159) é oversized →
+    # fallback DEVE acontecer (oversized_collector_risk=True).
+    direct = CardData(
+        name="Iron Hands ex (070/162)",
+        edition="Temporal Forces",
+        product_url="https://mypcards.com/pokemon/produto/12345/iron-hands-ex",
+        myp_lowest_en_nm=120.0,
+        tcg_player_price=240.0,
+        myp_last_sale_brl=220.0,
+        margin_pct=1.00,
+        margin_brl=120.0,
+        en_nm_sellers=5,
+        last_updated="2026-05-29 12:00",
+    )
+    cards = [clean, border, jirachi, trunc, direct]
 
     with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
         out = f.name
@@ -224,14 +248,20 @@ def test_price_cell_hyperlinks():
                     f"{sname} r{r}: hyperlink MYP errado: {myp_cell.hyperlink.target}"
                 assert myp_cell.font.underline == "single", \
                     f"{sname} r{r}: MYP price sem underline"
-            # TCG price cell: número preservado + hyperlink tcgplayer
+            # TCG price cell: número preservado + hyperlink TCG.
+            # v5.8.9: aceita ambos os esquemas — direct (pokemontcg.io
+            # redirect → tcgplayer.com/product/<id>) ou fallback search
+            # (tcgplayer.com/search). Assertions específicas por caso
+            # estão no bloco abaixo.
             if tcg_cell.value is not None:
                 assert isinstance(tcg_cell.value, (int, float)), \
                     f"{sname} r{r}: valor TCG não numérico: {tcg_cell.value!r}"
                 assert tcg_cell.hyperlink is not None, \
                     f"{sname} r{r}: TCG price sem hyperlink"
-                assert "tcgplayer.com" in tcg_cell.hyperlink.target, \
-                    f"{sname} r{r}: hyperlink TCG errado: {tcg_cell.hyperlink.target}"
+                target = tcg_cell.hyperlink.target
+                ok = ("tcgplayer.com" in target
+                      or "prices.pokemontcg.io/tcgplayer/" in target)
+                assert ok, f"{sname} r{r}: hyperlink TCG errado: {target}"
         assert rows_seen >= 1, f"{sname}: nenhuma row de card pra checar"
         checked += rows_seen
 
@@ -253,8 +283,103 @@ def test_price_cell_hyperlinks():
     assert psyduck_name == "Psyduck (053/198)", \
         f"Card Name (NNN/MMM) quebrado/alterado: {psyduck_name!r}"
 
+    # v5.8.9: Iron Hands ex (Temporal Forces, 070/162, in-range) → DIRECT link
+    # `prices.pokemontcg.io/tcgplayer/sv5-70`. Psyduck (Scarlet & Violet — não
+    # mapeado) → fallback `tcgplayer.com/search`.
+    direct_link = None
+    psyduck_link = None
+    for r in range(2, ws_all.max_row + 1):
+        nv = ws_all.cell(row=r, column=name_col).value
+        tcg_cell = ws_all.cell(row=r, column=hdr.index("TCG Player (R$)") + 1)
+        if not nv or not tcg_cell.hyperlink:
+            continue
+        if "Iron Hands" in str(nv):
+            direct_link = tcg_cell.hyperlink.target
+        elif "Psyduck" in str(nv):
+            psyduck_link = tcg_cell.hyperlink.target
+    assert direct_link is not None, "Iron Hands sumiu de All EN Cards"
+    assert direct_link == "https://prices.pokemontcg.io/tcgplayer/sv5-70", \
+        f"Iron Hands não pegou direct link: {direct_link!r}"
+    assert psyduck_link is not None, "Psyduck sumiu de All EN Cards"
+    assert "tcgplayer.com/search" in psyduck_link, \
+        f"Psyduck (Scarlet & Violet, unmapped) não caiu no fallback: {psyduck_link!r}"
+
     Path(out).unlink()
     print(f"  Hyperlinks de preço OK em {len(card_sheets)} sheets ({checked} células checadas) ✓")
+    print(f"  Direct link (sv5-70) e fallback (search) confirmados ✓")
+    return True
+
+
+def test_myp_edition_to_setcode():
+    """v5.8.9: mapeamento MYP edition → pokemontcg.io setcode.
+
+    Cobre forma bilingual concat (MYP cola PT+EN) — substrings EN do mapa
+    casam mesmo dentro da concat. Cobre longest-substring win (evita "Mega
+    Evolution" overriding "Ascended Heroes").
+    """
+    # Direct match
+    assert myp_edition_to_ptcg_setcode("Temporal Forces") == "sv5"
+    assert myp_edition_to_ptcg_setcode("Stellar Crown") == "sv7"
+    # Bilingual concat (MYP common form)
+    assert myp_edition_to_ptcg_setcode(
+        "Espada e Escudo 7: Céus em EvoluçãoSword & Shield 7: Evolving Skies"
+    ) == "swsh7"
+    assert myp_edition_to_ptcg_setcode(
+        "Escarlate e Violeta: Amigos de JornadaSV09: Journey Together"
+    ) == "sv9"
+    # Longest-substring win: "Ascended Heroes" (mapped to me2pt5) beats
+    # "Mega Evolution" (mapped to me1) when both substrings present.
+    assert myp_edition_to_ptcg_setcode("ME: Ascended Heroes") == "me2pt5"
+    # Case-insensitive
+    assert myp_edition_to_ptcg_setcode("STELLAR CROWN") == "sv7"
+    # Unmapped (vintage / promo / SV base / Black Bolt etc) → None
+    assert myp_edition_to_ptcg_setcode("Diamond & Pearl") is None
+    assert myp_edition_to_ptcg_setcode("Scarlet & Violet") is None
+    assert myp_edition_to_ptcg_setcode("Sun & Moon Promos") is None
+    assert myp_edition_to_ptcg_setcode("Black & White 9: Plasma Freeze") is None
+    # Edge cases
+    assert myp_edition_to_ptcg_setcode("") is None
+    assert myp_edition_to_ptcg_setcode(None) is None
+    print(f"  Mapeamento edition→setcode: 11 casos OK ✓")
+    return True
+
+
+def test_tcg_direct_url():
+    """v5.8.9: monta URL DIRETA via redirect pokemontcg.io.
+
+    Forma: prices.pokemontcg.io/tcgplayer/{setcode}-{num}. Strip leading
+    zeros (verificado contra Link TCG do CT handoff: base6-13 não base6-013).
+    None em todos os casos onde caller deve cair no fallback.
+    """
+    # In-range, edition mapeada → direct
+    u = tcg_direct_url("Iron Hands ex (070/162)", "Temporal Forces")
+    assert u == "https://prices.pokemontcg.io/tcgplayer/sv5-70", f"got {u!r}"
+    # Leading zeros stripped (base6-13 style)
+    u = tcg_direct_url("Some Card (013/110)", "Evolving Skies")
+    assert u == "https://prices.pokemontcg.io/tcgplayer/swsh7-13", f"got {u!r}"
+    # Bilingual concat edition
+    u = tcg_direct_url(
+        "Regidrago V (184/195)",
+        "Espada e Escudo 12: Tempestade PrateadaSword & Shield 12: Silver Tempest",
+    )
+    assert u == "https://prices.pokemontcg.io/tcgplayer/swsh12-184", f"got {u!r}"
+    # Oversized (numerator > set_size) → None, caller fallback
+    # (Mega Feraligatr ex 274/217 — confirmado 404 em pokemontcg.io 2026-05-29)
+    u = tcg_direct_url("Mega Feraligatr ex (274/217)", "ME: Ascended Heroes",
+                       oversized_collector_risk=True)
+    assert u is None, f"oversized deve cair no fallback: {u!r}"
+    # Edition não mapeada → None
+    u = tcg_direct_url("Charizard (004/102)", "Base Set")
+    assert u is None
+    u = tcg_direct_url("Random (053/198)", "Scarlet & Violet")
+    assert u is None  # SV base NÃO está no mapa
+    # Sem (NNN/MMM) parseável → None (promo PR-SM_SM161 style)
+    u = tcg_direct_url("Jirachi PR-SM SM161", "Sol & Lua Promos")
+    assert u is None
+    # Edge: nome vazio
+    u = tcg_direct_url("", "Temporal Forces")
+    assert u is None
+    print(f"  tcg_direct_url: 8 casos OK ✓")
     return True
 
 
@@ -278,7 +403,9 @@ def main():
         ("Jirachi ratio math", test_jirachi_ratio_math),
         ("XLSX end-to-end", test_xlsx_end_to_end),
         ("tcg_search_url (v5.8.8)", test_tcg_search_url),
-        ("price cell hyperlinks (v5.8.8)", test_price_cell_hyperlinks),
+        ("price cell hyperlinks (v5.8.8/v5.8.9)", test_price_cell_hyperlinks),
+        ("myp_edition_to_ptcg_setcode (v5.8.9)", test_myp_edition_to_setcode),
+        ("tcg_direct_url (v5.8.9)", test_tcg_direct_url),
     ]
     failed = 0
     for name, fn in tests:
