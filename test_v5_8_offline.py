@@ -1,9 +1,11 @@
 """
-Offline regression test for v5.8 fix (Jirachi PR-SM_SM161 case).
+Offline regression tests do scanner (sem rede / sem CloudFlare).
 
-Sem rede / sem CloudFlare. Exercita a lógica determinística com fixtures
-sintéticas: TCG suspect filter + language-by-condition detection + XLSX
-end-to-end surfacing.
+Exercita a lógica determinística com fixtures sintéticas:
+  - _parse_brl: parsing BR/US de preço (regressão bug v5.8.2)
+  - _last_brl: extração do último R$ em texto multi-preço
+  - oversized/jumbo regex
+  - TCG suspect filter + XLSX end-to-end surfacing (caso Jirachi PR-SM_SM161)
 
 Run: python test_v5_8_offline.py
 Exit 0 = todos asserts passam, 1 = regressão.
@@ -16,10 +18,11 @@ from openpyxl import load_workbook
 
 from myp_arbitrage_scanner import (
     CardData,
+    MYPScraper,
     generate_xlsx,
     TCG_SUSPECT_RATIO_THRESHOLD,
-    PT_CONDITION_MARKERS,
-    EN_CONDITION_MARKERS,
+    OVERSIZED_TITLE_RE,
+    OVERSIZED_FOIL_RE,
 )
 
 
@@ -149,12 +152,55 @@ def test_threshold_constant():
     return True
 
 
-def test_language_markers_disjoint():
-    """PT e EN markers não devem se sobrepor — senão a heurística vira ambígua."""
-    pt_set = set(PT_CONDITION_MARKERS)
-    en_set = set(EN_CONDITION_MARKERS)
-    overlap = pt_set & en_set
-    assert not overlap, f"Markers sobrepõem: {overlap}"
+def test_parse_brl_formats():
+    """_parse_brl: BR canonical, US-decimal leak, milhares e edge cases.
+
+    Regressão do bug v5.8.2 ('30.00' lido como 3000.0). Esta é a função mais
+    propensa a erro do parser e antes tinha ZERO cobertura direta.
+    """
+    f = MYPScraper._parse_brl
+    cases = [
+        ("R$ 1.900,00", 1900.0),      # BR canonical (ponto-milhar, vírgula-decimal)
+        ("R$ 30,00", 30.0),           # BR só vírgula
+        ("R$ 30.00", 30.0),           # US-decimal leak (bug v5.8.2)
+        ("R$ 1,500.00", 1500.0),      # US milhares + decimal
+        ("R$ 30.000", 30000.0),       # BR milhares (sufixo 3 dígitos)
+        ("R$ 1.500.000", 1500000.0),  # BR milhares (multi-ponto)
+        ("1234.56", 1234.56),         # US decimal sem prefixo R$
+        ("R$ 0,00", None),            # zero → None (guard val > 0)
+        ("", None),
+        ("   ", None),
+        (None, None),                 # guard v5.8.4 (não-str)
+        ("sem preço", None),
+    ]
+    for text, expected in cases:
+        got = f(text)
+        assert got == expected, f"_parse_brl({text!r}) = {got}, esperado {expected}"
+    print(f"  _parse_brl: {len(cases)} casos OK ✓")
+    return True
+
+
+def test_last_brl():
+    """_last_brl extrai o ÚLTIMO R$ (caso multi-preço '.estat-tcg')."""
+    f = MYPScraper._last_brl
+    assert f("Last R$ 26,00 | Avg R$ 30,00") == 30.0, "deve pegar o último valor"
+    assert f("R$ 99,90") == 99.9
+    assert f("sem preço aqui") is None
+    assert f("") is None
+    assert f(None) is None
+    print(f"  _last_brl: extração do último valor OK ✓")
+    return True
+
+
+def test_oversized_regex():
+    """Filtros Jumbo/oversized: title (2ª camada) + foil (1ª camada)."""
+    assert OVERSIZED_TITLE_RE.search("Pikachu Jumbo (SWSH039)")
+    assert OVERSIZED_TITLE_RE.search("Charizard Oversized Promo")
+    assert OVERSIZED_TITLE_RE.search("Mewtwo Box Topper")
+    assert not OVERSIZED_TITLE_RE.search("Charizard ex 234/091"), "standard não deve casar"
+    assert OVERSIZED_FOIL_RE.search("Jumbo")
+    assert not OVERSIZED_FOIL_RE.search("Holo")
+    print(f"  oversized/jumbo regex OK ✓")
     return True
 
 
@@ -166,39 +212,13 @@ def test_jirachi_ratio_math():
     return True
 
 
-def test_h1_language_logic_simulation():
-    """
-    H1 fix: simula a lógica de detecção sem precisar do parser inteiro.
-
-    Caso Jirachi do scan real: row tem flag-icon='Inglês' mas condição
-    diz 'Quase Nova' (PT). H1 força lang=PT, ignorando flag polluído.
-    """
-    test_cases = [
-        # (row_text_lower, expected_lang_forced)
-        ("preço r$99,99 quase nova vendedor xyz", "Português"),  # PT marker → PT
-        ("price r$99.99 near mint seller xyz", "Inglês"),         # EN marker → EN
-        ("r$99,99 nm condition", None),                            # abreviado → cai no flag-icon
-    ]
-    for text, expected in test_cases:
-        has_pt = any(m in text for m in PT_CONDITION_MARKERS)
-        has_en = any(m in text for m in EN_CONDITION_MARKERS)
-        if has_pt and not has_en:
-            lang = "Português"
-        elif has_en and not has_pt:
-            lang = "Inglês"
-        else:
-            lang = None  # fallback to flag-icon (não testamos aqui)
-        assert lang == expected, f"H1 fail: text={text!r} → {lang}, esperado {expected}"
-    print(f"  H1 language-by-condition: {len(test_cases)} casos OK ✓")
-    return True
-
-
 def main():
     tests = [
         ("threshold constant", test_threshold_constant),
-        ("language markers disjoint", test_language_markers_disjoint),
+        ("parse_brl BR/US formats", test_parse_brl_formats),
+        ("_last_brl extraction", test_last_brl),
+        ("oversized/jumbo regex", test_oversized_regex),
         ("Jirachi ratio math", test_jirachi_ratio_math),
-        ("H1 language logic", test_h1_language_logic_simulation),
         ("XLSX end-to-end", test_xlsx_end_to_end),
     ]
     failed = 0
@@ -218,7 +238,7 @@ def main():
     if failed:
         print(f"❌ {failed}/{len(tests)} testes falharam")
         sys.exit(1)
-    print(f"✅ Todos os {len(tests)} testes passaram — fix v5.8 OK")
+    print(f"✅ Todos os {len(tests)} testes passaram — scanner OK")
     sys.exit(0)
 
 

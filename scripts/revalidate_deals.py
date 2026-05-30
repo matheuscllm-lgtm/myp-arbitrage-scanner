@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import re
 import sys
 import time
 from pathlib import Path
@@ -56,14 +55,6 @@ log = logging.getLogger(__name__)
 SUSPECT_RATIO = TCG_SUSPECT_RATIO_THRESHOLD
 
 
-def parse_brl(text) -> float | None:
-    """v5.8.4: DRY — delegate to MYPScraper._parse_brl (single source of
-    truth). Previously this script duplicated the parser; reviewer flagged
-    drift risk (v5.8.2 BR/US leak fix had to be reapplied here separately).
-    """
-    return MYPScraper._parse_brl(text)
-
-
 def revalidate_url(scraper: MYPScraper, url: str) -> dict:
     """Re-scrape URL e retorna {tcg_declared, last_sale, ratio, suspect}."""
     try:
@@ -72,19 +63,13 @@ def revalidate_url(scraper: MYPScraper, url: str) -> dict:
             return {"error": f"HTTP {r.status_code}"}
         soup = BeautifulSoup(r.text, "lxml")
 
-        tcg_decl = None
+        # _last_brl: single source of truth no scanner (mesmo idiom que
+        # scrape_product usa pra .estat-tcg / .estatistica-ultimo).
         tcg_el = soup.select_one(".estat-tcg")
-        if tcg_el:
-            matches = re.findall(r'R\$\s*[\d.,]+', tcg_el.get_text())
-            if matches:
-                tcg_decl = parse_brl(matches[-1])
+        tcg_decl = MYPScraper._last_brl(tcg_el.get_text()) if tcg_el else None
 
-        last_sale = None
         ls_el = soup.select_one(".estatistica-ultimo")
-        if ls_el:
-            matches = re.findall(r'R\$\s*[\d.,]+', ls_el.get_text())
-            if matches:
-                last_sale = parse_brl(matches[-1])
+        last_sale = MYPScraper._last_brl(ls_el.get_text()) if ls_el else None
 
         ratio = None
         suspect = False
