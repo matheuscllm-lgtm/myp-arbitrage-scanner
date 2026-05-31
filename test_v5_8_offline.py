@@ -46,6 +46,7 @@ def make_jirachi():
         margin_pct=14.0,
         margin_brl=1399.01,
         en_nm_sellers=1,
+        single_en_seller_risk=True,  # MYP-LOW-a 2026-05-30: coerência com scanner real (en_nm_sellers=1 < min default 2)
         last_updated="2026-05-16 19:30",
     )
 
