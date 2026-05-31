@@ -216,7 +216,8 @@ MYP_EDITION_SUBSTR_TO_PTCG = {
     "Brilliant Stars":                   "swsh9",
     "Fusion Strike":                     "swsh8",
     "Evolving Skies":                    "swsh7",
-    "Pokémon GO":                        "pgo",
+    # Special sets (não-numerados, fora das eras principais)
+    "Pokémon GO":                        "pgo",  # MYP-LOW-d 2026-05-30: special set SWSH-era, não numerado
     # Black Bolt / White Flare (zsv10pt5/rsv10pt5) propositalmente OMITIDOS:
     # MYP titles podem ser "Escarlate e Violeta: Black Bolt" mas pokemontcg.io
     # ainda tinha cobertura instável quando este mapa foi montado. Adicionar
