@@ -194,7 +194,12 @@ MYP_EDITION_SUBSTR_TO_PTCG = {
     "Paldean Fates":                     "sv4pt5",
     "Paradox Rift":                      "sv4",
     "Obsidian Flames":                   "sv3",
-    "Pokémon 151":                       "sv3pt5",
+    # v5.8.10 (2026-05-30, MYP-M2 fix): chave era "Pokémon 151" mas MYP emite
+    # 'Escarlate e Violeta: 151Scarlet & Violet—151' (sem "Pokémon"). Trocado
+    # pra "151" curto — nenhum outro set no mapa contém "151" como substring
+    # (auditado: Paldea Evolved, Paradox Rift, etc. — sem conflito). Longest-
+    # substring match ainda protegeria caso futuro set tipo "151ish" surja.
+    "151":                               "sv3pt5",
     "Paldea Evolved":                    "sv2",
     # Mega Evolution era (commit 2026-05-19): pokemontcg.io ainda tem
     # cobertura parcial pros ME sets (`me2pt5-274` 404 em 2026-05-29 mas
