@@ -17,8 +17,8 @@ Requisitos:
     pip install cloudscraper beautifulsoup4 openpyxl lxml
 
 Autor: Matheus Chillemi / Claude
-Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9)
-Versão: v5.8.9
+Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10)
+Versão: v5.8.10
 
 Changelog v5.1 (2026-05-12 — auditoria C/H/M, mesma metodologia do CT scanner):
   - C1: --threshold < 1.0 auto-converte com warning (UX guard contra trap
@@ -117,10 +117,10 @@ OVERSIZED_FOIL_RE = re.compile(
 OVERSIZED_TITLE_RE = re.compile(
     r"\b(jumbo|oversized|box\s?topper|poster\s?card)\b", re.IGNORECASE,
 )
-# Aliases retrocompat — `postprocess_v583_flags.py` ainda importa o nome
-# antigo. Manter até refactor downstream completo. NÃO criar novos usos.
-JUMBO_FOIL_RE = OVERSIZED_FOIL_RE
-JUMBO_TITLE_RE = OVERSIZED_TITLE_RE
+# Regex único pro padrão de preço BRL ('R$ 1.900,00'). Centralizado porque
+# estava duplicado em 5 call-sites (TCG price, última venda, row price + 2 no
+# revalidate_deals.py); drift no markup do MYP quebraria todos de uma vez.
+PRICE_RE = re.compile(r'R\$\s*[\d.,]+')
 
 # v5.8.7 (2026-05-29): o <h1> da página de produto MYP concatena, sem
 # separador, o título PT "Nome (NNN/MMM)" seguido de uma cópia do nome EN.
@@ -299,8 +299,7 @@ def tcg_direct_url(card_name: str, edition: str,
 # MIN_EN_SELLERS_FOR_DEALS` (strict less-than). Threshold pode ser elevado
 # pra cenários mais conservadores (ex.: --min-en-sellers 2 trata 1 OU 2
 # sellers como risco).
-SINGLE_EN_SELLER_RISK_THRESHOLD = 1  # legacy alias (≤ threshold = risk)
-MIN_EN_SELLERS_FOR_DEALS_DEFAULT = 2  # < default = flagged (matches legacy 1≤1)
+MIN_EN_SELLERS_FOR_DEALS_DEFAULT = 2  # < default = flagged (legacy era ≤1)
 # v5.8 H2 (2026-05-16): se TCG declarado >> última venda real, MYP infla o
 # preço de referência. Caso Jirachi PR-SM_SM161: declarava R$1499 vs última
 # venda real R$19,99 (75x). Threshold 10x captura inflação grosseira sem
@@ -375,11 +374,19 @@ class MYPScraper:
         self,
         delay: float = REQUEST_DELAY,
         min_en_sellers: int = MIN_EN_SELLERS_FOR_DEALS_DEFAULT,
+        threshold: float = MARGIN_THRESHOLD,
+        min_price: float = MIN_PRICE_BRL,
     ):
         # v5.8.4 (2026-05-19): threshold configurable via CLI. Card é flagged
         # quando `en_sellers < min_en_sellers`. Default 2 reproduz v5.8.3
-        # (que checava `en_sellers <= SINGLE_EN_SELLER_RISK_THRESHOLD=1`).
+        # (que checava `en_sellers <= 1`).
         self.min_en_sellers = min_en_sellers
+        # Config por-instância. Antes `threshold`/`min_price` eram globais
+        # reatribuídas no __main__ — frágil (vazava estado entre instâncias no
+        # mesmo processo, e era inconsistente com min_en_sellers). Defaults =
+        # constantes do módulo, então MYPScraper() sem args = comportamento legado.
+        self.margin_threshold = threshold
+        self.min_price = min_price
         if HAS_CLOUDSCRAPER:
             # 2026-05-17: Cloudflare passou a bloquear o fingerprint chrome/windows
             # do cloudscraper (HTTP 403 cf-mitigated: challenge). Firefox/windows
@@ -520,6 +527,19 @@ class MYPScraper:
             return val if val > 0 else None
         except (ValueError, TypeError):
             return None
+
+    @staticmethod
+    def _last_brl(text: Optional[str]) -> Optional[float]:
+        """Extrai o ÚLTIMO valor R$ de um texto e parseia via _parse_brl.
+
+        Centraliza o idiom `PRICE_RE.findall(...) + _parse_brl([-1])` que estava
+        duplicado em 5 call-sites. `.estat-tcg` às vezes traz multi-preço
+        ('Last R$ X | Avg R$ Y') e a referência EN é sempre o último valor.
+        """
+        if not text:
+            return None
+        matches = PRICE_RE.findall(text)
+        return MYPScraper._parse_brl(matches[-1]) if matches else None
 
     # ── Step 1: Get all editions ─────────────────────────────────────
     def get_all_editions(self) -> list[dict]:
@@ -740,9 +760,7 @@ class MYPScraper:
         # vez de falhar parse com texto multi-preço.
         tcg_el = soup.select_one(".estat-tcg")
         if tcg_el:
-            tcg_matches = re.findall(r'R\$\s*[\d.,]+', tcg_el.get_text())
-            if tcg_matches:
-                card.tcg_player_price = self._parse_brl(tcg_matches[-1])
+            card.tcg_player_price = self._last_brl(tcg_el.get_text())
 
         # If no TCG Player price, skip this product entirely
         if not card.tcg_player_price:
@@ -755,9 +773,7 @@ class MYPScraper:
         # Se TCG declarado >> última venda, provavelmente bug do MYP.
         last_sale_el = soup.select_one(".estatistica-ultimo")
         if last_sale_el:
-            ls_matches = re.findall(r'R\$\s*[\d.,]+', last_sale_el.get_text())
-            if ls_matches:
-                card.myp_last_sale_brl = self._parse_brl(ls_matches[-1])
+            card.myp_last_sale_brl = self._last_brl(last_sale_el.get_text())
 
         # Sanity check: ratio TCG declarado / última venda real
         if card.myp_last_sale_brl and card.myp_last_sale_brl > 0:
@@ -808,7 +824,7 @@ class MYPScraper:
                 # v5.4 H2: usa min() em vez de [-1] — preço ativo é sempre
                 # o menor (promo); [-1] quebrava se MYP injetasse 3º R$
                 # (frete, "you save", etc). Min é defensivo a layout drift.
-                price_matches = re.findall(r'R\$\s*[\d.,]+', row_text)
+                price_matches = PRICE_RE.findall(row_text)
                 row_price = None
                 if price_matches:
                     parsed = [self._parse_brl(p) for p in price_matches]
@@ -926,7 +942,7 @@ class MYPScraper:
 
         # Filter: minimum price threshold
         lowest_en = min(en_prices)
-        if lowest_en < MIN_PRICE_BRL:
+        if lowest_en < self.min_price:
             self._stats["skipped_low_price"] += 1
             return None
 
@@ -1033,8 +1049,8 @@ class MYPScraper:
              chunk_index: int = 0, chunk_total: int = 1) -> list[CardData]:
         log.info("═" * 60)
         log.info("  MYP Cards Arbitrage Scanner")
-        log.info(f"  Threshold: {MARGIN_THRESHOLD*100:.0f}% | Language: EN only | Condition: NM")
-        log.info(f"  Min price: R${MIN_PRICE_BRL:.0f}")
+        log.info(f"  Threshold: {self.margin_threshold*100:.0f}% | Language: EN only | Condition: NM")
+        log.info(f"  Min price: R${self.min_price:.0f}")
         if edition_filter:
             log.info(f"  Edition filter: {', '.join(edition_filter)}")
         if chunk_total > 1:
@@ -1098,7 +1114,7 @@ class MYPScraper:
                 card.edition_url = ed["url"]
                 self.cards.append(card)
 
-                if card.margin_pct is not None and card.margin_pct >= MARGIN_THRESHOLD:
+                if card.margin_pct is not None and card.margin_pct >= self.margin_threshold:
                     log.info(
                         f"  🔥 DEAL: {card.name} | "
                         f"EN NM lowest: R${card.myp_lowest_en_nm:,.2f} | "
@@ -1112,18 +1128,18 @@ class MYPScraper:
                     )
 
         # Summary
-        deals = [c for c in self.cards if c.margin_pct and c.margin_pct >= MARGIN_THRESHOLD]
+        deals = [c for c in self.cards if c.margin_pct and c.margin_pct >= self.margin_threshold]
         log.info("\n" + "═" * 60)
         log.info(f"  Pages fetched: {self._stats['pages_fetched']}")
         log.info(f"  Products scanned: {self._stats['products_scanned']}")
         log.info(f"  EN cards found: {self._stats['en_found']}")
         log.info(f"  Cards with prices: {len(self.cards)}")
-        log.info(f"  🔥 Deals (≥{MARGIN_THRESHOLD*100:.0f}%): {len(deals)}")
+        log.info(f"  🔥 Deals (≥{self.margin_threshold*100:.0f}%): {len(deals)}")
         # M5 fix: funnel stats pra auditoria
         log.info(f"  ── Skipped breakdown (M5):")
         log.info(f"      No TCG price: {self._stats['skipped_no_tcg_price']}")
         log.info(f"      No EN sellers: {self._stats['skipped_no_en_sellers']}")
-        log.info(f"      Low price (<R${MIN_PRICE_BRL:.0f}): {self._stats['skipped_low_price']}")
+        log.info(f"      Low price (<R${self.min_price:.0f}): {self._stats['skipped_low_price']}")
         log.info(f"      Unknown lang titles (v5.4 H1): {self._stats['skipped_unknown_lang_titles']}")
         log.info(f"      Jumbo cards (title, v5.8.3): {self._stats['skipped_jumbo']}")
         log.info(f"      Jumbo seller rows filtered (v5.8.3): {self._stats['jumbo_rows_filtered']}")
@@ -1454,12 +1470,14 @@ Exemplos:
         )
         args.threshold = args.threshold * 100
 
-    MARGIN_THRESHOLD = args.threshold / 100
-    MIN_PRICE_BRL = args.min_price
+    threshold_frac = args.threshold / 100
     timestamp = datetime.now().strftime('%Y%m%d_%H%M')
     output_path = args.output or f"myp_arbitrage_{timestamp}.xlsx"
 
-    scraper = MYPScraper(delay=args.delay, min_en_sellers=args.min_en_sellers)
+    scraper = MYPScraper(
+        delay=args.delay, min_en_sellers=args.min_en_sellers,
+        threshold=threshold_frac, min_price=args.min_price,
+    )
     log.info(
         f"Config: threshold={args.threshold}%, min_price=R${args.min_price}, "
         f"delay={args.delay}s, min_en_sellers={args.min_en_sellers}"
@@ -1518,5 +1536,5 @@ Exemplos:
         )
         _sys.exit(1)
 
-    generate_xlsx(cards, output_path, MARGIN_THRESHOLD)
+    generate_xlsx(cards, output_path, scraper.margin_threshold)
     print(f"\nDone! Open: {output_path}")
