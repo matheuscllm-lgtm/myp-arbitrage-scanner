@@ -397,6 +397,170 @@ def test_jirachi_ratio_math():
     return True
 
 
+# ── v5.9 (2026-06-03): marketplace pagination fix (truncation root cause) ──
+def _seller_row(lang_title, qual, price_brl, foil="Normal"):
+    """Uma <tr> de seller no formato MYP (flag-icon + células dedicadas)."""
+    return (
+        f'<tr>'
+        f'<td><span class="flag-icon" title="{lang_title}"></span></td>'
+        f'<td class="estoque-lista-qualidadenome">{qual}</td>'
+        f'<td class="estoque-lista-nomeenfoil">{foil}</td>'
+        f'<td>R$ {price_brl}</td>'
+        f'</tr>'
+    )
+
+
+def _marketplace_container(rows_html, pagination_html=""):
+    """Container #lista-anuncio-demais-vendedores (tabela marketplace + paginação)."""
+    return (
+        f'<div id="lista-anuncio-demais-vendedores">'
+        f'<table class="table-striped table-bordered"><tbody>{rows_html}</tbody></table>'
+        f'{pagination_html}'
+        f'</div>'
+    )
+
+
+def _make_psyduck_page1():
+    """Página 1: lojistas tem EN-NM mais caro (R$498); marketplace cheia de
+    PT/JP baratos (0 EN visível) com paginação até a página 3 — réplica fiel
+    do caso Psyduck 226/217 documentado no HANDOFF-TRUNCATION-2026-06-03 §2."""
+    # Tabela lojistas: 2 EN-NM (498, 520) → lowest EN page-1 = 498 (inflado).
+    lojistas = (
+        '<table class="table-striped table-bordered"><tbody>'
+        + _seller_row("Inglês", "NM - Quase nova", "498,00")
+        + _seller_row("Inglês", "NM - Quase nova", "520,00")
+        + '</tbody></table>'
+    )
+    # Marketplace page 1: 16 rows PT/JP NM, todas R$180–245 (< 498), 0 EN.
+    mkt_rows = ""
+    for i in range(16):
+        price = 180 + i * 4  # 180..240
+        lang = "Português" if i % 2 == 0 else "Japonês"
+        mkt_rows += _seller_row(lang, "NM - Quase nova", f"{price},00")
+    pagination = (
+        '<ul class="pagination">'
+        '<a href="?estoque-outros-page=2">2</a>'
+        '<a href="?estoque-outros-page=3">3</a>'
+        '</ul>'
+    )
+    marketplace = _marketplace_container(mkt_rows, pagination)
+    return (
+        '<html><body>'
+        '<h1>Psyduck (053/198)</h1>'
+        '<span class="estat-tcg">TCG Player: R$ 557,40</span>'
+        f'{lojistas}{marketplace}'
+        '</body></html>'
+    )
+
+
+def _make_psyduck_page2():
+    """Página 2 marketplace: 3 EN-NM, a mais barata R$398 (o TRUE lowest)."""
+    rows = (
+        _seller_row("Inglês", "NM - Quase nova", "398,00")
+        + _seller_row("Inglês", "NM - Quase nova", "410,00")
+        + _seller_row("Português", "NM - Quase nova", "405,00")
+    )
+    return f'<html><body>{_marketplace_container(rows)}</body></html>'
+
+
+def _make_psyduck_page3():
+    """Página 3 marketplace: EN-NM mais caros (450, 650) — não muda o min."""
+    rows = (
+        _seller_row("Inglês", "NM - Quase nova", "450,00")
+        + _seller_row("Inglês", "NM - Quase nova", "650,00")
+    )
+    return f'<html><body>{_marketplace_container(rows)}</body></html>'
+
+
+def test_marketplace_pagination():
+    """v5.9: scrape_product segue ?estoque-outros-page=N e acha o EN-NM oculto.
+
+    Caso Psyduck: page 1 reportaria R$498,70 (tabela lojistas) porque a
+    marketplace está cheia de PT/JP e os EN-NM caem na página 2. Com o fix,
+    lowest EN-NM = R$398 (página 2), margem vs TCG R$557,40 = +40%, e
+    truncation_risk é RESOLVIDO (False) porque a paginação foi seguida com
+    sucesso. Sem rede: monkeypatch de _get serve fixtures por URL.
+    """
+    from myp_arbitrage_scanner import MYPScraper
+
+    pages = {
+        "https://mypcards.com/pokemon/produto/310463/psyduck": _make_psyduck_page1(),
+        "https://mypcards.com/pokemon/produto/310463/psyduck?estoque-outros-page=2": _make_psyduck_page2(),
+        "https://mypcards.com/pokemon/produto/310463/psyduck?estoque-outros-page=3": _make_psyduck_page3(),
+    }
+    fetched = []
+
+    sc = MYPScraper(delay=0.0)
+
+    def fake_get(url, save_debug=False):
+        fetched.append(url)
+        html = pages.get(url)
+        return BeautifulSoup(html, "lxml") if html is not None else None
+
+    sc._get = fake_get
+    base = "https://mypcards.com/pokemon/produto/310463/psyduck"
+    card = sc.scrape_product(base, "Scarlet & Violet")
+
+    assert card is not None, "BUG: Psyduck retornou None (não deveria ser skipado)"
+    # O CORAÇÃO DO FIX: lowest EN-NM = 398, não 498.
+    assert card.myp_lowest_en_nm == 398.0, \
+        f"BUG truncation: lowest EN-NM={card.myp_lowest_en_nm} (esperado 398.0 da pág 2)"
+    # Margem vira deal real ≥25% (+40%).
+    assert abs(card.margin_pct - 0.4005) < 0.01, \
+        f"margem={card.margin_pct} (esperado ~0.40 / +40%)"
+    # Paginação seguida com sucesso → risco resolvido.
+    assert card.en_truncation_risk is False, \
+        "truncation_risk deveria ser resolvido (paginação seguiu sem falha)"
+    # Páginas 2 e 3 foram realmente buscadas.
+    assert sc._stats["seller_pages_followed"] == 2, \
+        f"esperado 2 páginas seguidas, got {sc._stats['seller_pages_followed']}"
+    assert sc._stats["seller_page_fetch_failures"] == 0
+    # EN sellers = lojistas(2) + pág2(2 EN) + pág3(2 EN) = 6.
+    assert card.en_nm_sellers == 6, f"en_nm_sellers={card.en_nm_sellers} (esperado 6)"
+    print(f"  Psyduck lowest EN-NM = R${card.myp_lowest_en_nm} "
+          f"(margem +{card.margin_pct*100:.0f}%), {sc._stats['seller_pages_followed']} págs seguidas ✓")
+    return True
+
+
+def test_pagination_gate_skips_untruncated():
+    """v5.9: produto SEM sinal de truncation NÃO pagina (controle de custo).
+
+    Página 1 com EN-NM visível e barato → gate não dispara → nenhum fetch de
+    ?estoque-outros-page mesmo que a paginação exista no HTML."""
+    from myp_arbitrage_scanner import MYPScraper
+
+    # Marketplace com EN-NM barato visível na página 1 (R$120) + paginação.
+    mkt_rows = (
+        _seller_row("Inglês", "NM - Quase nova", "120,00")
+        + _seller_row("Português", "NM - Quase nova", "130,00")
+    )
+    pagination = '<ul class="pagination"><a href="?estoque-outros-page=2">2</a></ul>'
+    html = (
+        '<html><body><h1>Cheap Card (010/100)</h1>'
+        '<span class="estat-tcg">TCG Player: R$ 300,00</span>'
+        + _marketplace_container(mkt_rows, pagination)
+        + '</body></html>'
+    )
+    fetched = []
+    sc = MYPScraper(delay=0.0)
+
+    def fake_get(url, save_debug=False):
+        fetched.append(url)
+        return BeautifulSoup(html, "lxml")
+
+    sc._get = fake_get
+    card = sc.scrape_product("https://mypcards.com/pokemon/produto/1/cheap", "x")
+    assert card is not None
+    assert card.myp_lowest_en_nm == 120.0
+    # NENHUMA página extra buscada — só a página 1.
+    assert sc._stats["seller_pages_followed"] == 0, \
+        f"gate falhou: paginou produto não-truncado ({sc._stats['seller_pages_followed']} págs)"
+    assert all("estoque-outros-page" not in u for u in fetched), \
+        f"buscou página extra indevidamente: {fetched}"
+    print(f"  Produto não-truncado: 0 páginas extras (gate de custo OK) ✓")
+    return True
+
+
 def main():
     tests = [
         ("threshold constant", test_threshold_constant),
@@ -406,6 +570,8 @@ def main():
         ("price cell hyperlinks (v5.8.8/v5.8.9)", test_price_cell_hyperlinks),
         ("myp_edition_to_ptcg_setcode (v5.8.9)", test_myp_edition_to_setcode),
         ("tcg_direct_url (v5.8.9)", test_tcg_direct_url),
+        ("marketplace pagination (v5.9)", test_marketplace_pagination),
+        ("pagination cost gate (v5.9)", test_pagination_gate_skips_untruncated),
     ]
     failed = 0
     for name, fn in tests:
@@ -424,7 +590,7 @@ def main():
     if failed:
         print(f"❌ {failed}/{len(tests)} testes falharam")
         sys.exit(1)
-    print(f"✅ Todos os {len(tests)} testes passaram — fix v5.8 OK")
+    print(f"✅ Todos os {len(tests)} testes passaram — fixes v5.8 + v5.9 OK")
     sys.exit(0)
 
 
