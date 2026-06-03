@@ -1,5 +1,20 @@
 # Janela de incerteza — EN truncation (ME: Ascended Heroes)
 
+> ## ⚠️ SUPERSEDED (2026-06-03, v5.9)
+>
+> Esta análise assumia que o truncation era **irresolvível** ("o EN-NM oculto
+> não existe no HTML nem na API"). **Isso foi REFUTADO.** O root cause real é
+> **paginação** da tabela marketplace via `?estoque-outros-page=N` — os EN-NM
+> mais baratos estão em páginas posteriores, sempre acessíveis. O fix v5.9
+> ([PR #13](https://github.com/matheuscllm-lgtm/myp-arbitrage-scanner/pull/13))
+> segue essas páginas e resolve o lowest EN-NM **automaticamente**.
+>
+> Os números reais (não mais "melhor caso" estimado) estão em
+> **[`manual-2026-06-03-revalidation.md`](manual-2026-06-03-revalidation.md)**.
+> O documento abaixo fica só como registro histórico do raciocínio pré-fix.
+> A "Metodologia" e o passo de "validar abrindo perfil de seller" **não são
+> mais necessários** — o scanner faz isso sozinho.
+
 *Gerado 2026-06-03 17:27 UTC — sem scrape adicional, a partir da resolução per-card de 2026-06-03.*
 
 ## Metodologia
