@@ -37,6 +37,71 @@ Validado end-to-end (scrape ao vivo) + 2 testes offline novos.
    página falha ou o cap de páginas é excedido (risco residual). Novos counters
    `seller_pages_followed` / `seller_page_fetch_failures` no summary.
 
+## v5.8.10 — 2026-06-01 — Code health: DRY no parsing, config por-instância, +cobertura
+
+Refactor **comportamento-preservante** (sem mudança na heurística de
+scraping/scoring). Valida via `test_v5_8_offline.py`.
+
+### DRY — regex de preço centralizado
+
+`re.findall(r'R\$\s*[\d.,]+', …)` estava duplicado em 5 call-sites (3 no
+scanner, 2 no `revalidate_deals.py`). Extraído pra constante `PRICE_RE` +
+staticmethod `MYPScraper._last_brl()`. Drift no markup do MYP agora muda 1 lugar.
+
+### Config por-instância (fim do estado global mutável)
+
+`threshold`/`min_price` eram globais (`MARGIN_THRESHOLD`/`MIN_PRICE_BRL`)
+reatribuídas no `__main__` — frágil (vazava estado entre instâncias) e
+inconsistente com `min_en_sellers` (já de instância). Agora são parâmetros
+de `MYPScraper.__init__` (default = constante do módulo). `MYPScraper()` sem
+args mantém o comportamento legado.
+
+### Código morto removido
+
+- `JUMBO_FOIL_RE`/`JUMBO_TITLE_RE`: aliases retrocompat de um
+  `postprocess_v583_flags.py` que não existe no repo. Zero consumidores.
+- `SINGLE_EN_SELLER_RISK_THRESHOLD`: legacy alias só citado em comentário.
+- `parse_brl` wrapper + `import re` em `revalidate_deals.py` (→ `_last_brl`).
+
+### Cobertura nova (funções puras antes sem teste direto)
+
+- `_parse_brl`: 12 casos BR/US (regressão do bug v5.8.2 `'30.00'`→3000.0).
+- `_last_brl`: extração do último R$ em texto multi-preço.
+- `OVERSIZED_TITLE_RE`/`OVERSIZED_FOIL_RE`: filtros jumbo/oversized.
+
+## v5.8.9 — 2026-05-29 — TCG link DIRETO via pokemontcg.io (com fallback search)
+
+A célula "TCG Player (R$)" passou a apontar pro **produto exato** no TCGplayer
+(quando o set é mapeável), em vez da busca-por-nome do v5.8.8. Mesma mecânica
+que o CardTrader scanner usa em `Link TCG`: a URL
+`https://prices.pokemontcg.io/tcgplayer/{setcode}-{num}` é um redirect oficial
+do pokemontcg.io pro produto TCGplayer exato — zero latência extra (string
+build), sem dependência da API morta `mypcards.com/api/v1`.
+
+**Mudanças:**
+1. `MYP_EDITION_SUBSTR_TO_PTCG` — mapa de 25 sets cobrindo SV / Mega Evolution
+   / SWSH eras. Substrings em forma EN ("Temporal Forces", "Stellar Crown") pra
+   tolerar o bilingual concat do MYP. Black Bolt / White Flare propositalmente
+   omitidos (cobertura pokemontcg.io instável quando este mapa foi montado;
+   adicionar quando weekly probe confirmar 200 estável em base+oversized).
+2. `myp_edition_to_ptcg_setcode(edition)` — longest-substring match (evita
+   ambiguidade tipo "151" engolindo outros). Case-insensitive.
+3. `tcg_direct_url(card_name, edition, oversized_collector_risk=False)` —
+   monta a URL ou retorna `None` quando: edition não mapeada, sem `(NNN/MMM)`
+   parseável, OU oversized_collector_risk=True (SIR/HR variant fora de range
+   → frequentemente 404 = link morto pior que busca).
+4. `write_card_row` integra: `tcg_direct_url(...) or tcg_search_url(...)` —
+   direto onde mapeia, fallback search no resto. Coverage honesta no XLSX de
+   produção 2026-05-27 (1190 cards): **20.9% direto** em "All EN Cards" e
+   **10.2% direto** em "🔥 Deals". Vintage/promo/pre-SWSH caem em search por
+   design (pokemontcg.io não cobre).
+5. 2 testes novos em `test_v5_8_offline.py`: `test_tcg_direct_url` (mapeamento
+   + None nos casos de fallback) e `test_price_cell_hyperlinks` expandido pra
+   aceitar ambos esquemas (search OR direct redirect).
+
+**Não muda:** formato `(NNN/MMM)` do Card Name (load-bearing pro merge), nem
+o hyperlink MYP EN NM (produto direto via `card.product_url`).
+
 ## v5.8.8 — 2026-05-29 — Hyperlinks nas células de preço (MYP + TCGplayer)
 
 As células de preço do XLSX viraram clicáveis pra conferência rápida na fonte,

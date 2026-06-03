@@ -16,11 +16,14 @@ from openpyxl import load_workbook
 
 from myp_arbitrage_scanner import (
     CardData,
+    MYPScraper,
     generate_xlsx,
     tcg_search_url,
     tcg_direct_url,
     myp_edition_to_ptcg_setcode,
     TCG_SUSPECT_RATIO_THRESHOLD,
+    OVERSIZED_TITLE_RE,
+    OVERSIZED_FOIL_RE,
 )
 
 # NOTE (v5.8.8, 2026-05-29): PT_CONDITION_MARKERS / EN_CONDITION_MARKERS foram
@@ -46,6 +49,7 @@ def make_jirachi():
         margin_pct=14.0,
         margin_brl=1399.01,
         en_nm_sellers=1,
+        single_en_seller_risk=True,  # MYP-LOW-a 2026-05-30: coerência com scanner real (en_nm_sellers=1 < min default 2)
         last_updated="2026-05-16 19:30",
     )
 
@@ -561,10 +565,65 @@ def test_pagination_gate_skips_untruncated():
     return True
 
 
+def test_parse_brl_formats():
+    """v5.8.10: _parse_brl — BR canonical, US-decimal leak, milhares, edge cases.
+
+    Regressão do bug v5.8.2 ('30.00' lido como 3000.0). É a função mais
+    propensa a erro do parser e não tinha cobertura direta.
+    """
+    f = MYPScraper._parse_brl
+    cases = [
+        ("R$ 1.900,00", 1900.0),      # BR canonical
+        ("R$ 30,00", 30.0),           # BR só vírgula
+        ("R$ 30.00", 30.0),           # US-decimal leak (bug v5.8.2)
+        ("R$ 1,500.00", 1500.0),      # US milhares + decimal
+        ("R$ 30.000", 30000.0),       # BR milhares (sufixo 3 dígitos)
+        ("R$ 1.500.000", 1500000.0),  # BR milhares (multi-ponto)
+        ("1234.56", 1234.56),         # US decimal sem prefixo
+        ("R$ 0,00", None),            # zero → None (guard val > 0)
+        ("", None),
+        ("   ", None),
+        (None, None),                 # guard v5.8.4 (não-str)
+        ("sem preço", None),
+    ]
+    for text, expected in cases:
+        got = f(text)
+        assert got == expected, f"_parse_brl({text!r}) = {got}, esperado {expected}"
+    print(f"  _parse_brl: {len(cases)} casos OK ✓")
+    return True
+
+
+def test_last_brl():
+    """v5.8.10: _last_brl extrai o ÚLTIMO R$ (caso multi-preço '.estat-tcg')."""
+    f = MYPScraper._last_brl
+    assert f("Last R$ 26,00 | Avg R$ 30,00") == 30.0, "deve pegar o último valor"
+    assert f("R$ 99,90") == 99.9
+    assert f("sem preço aqui") is None
+    assert f("") is None
+    assert f(None) is None
+    print(f"  _last_brl: extração do último valor OK ✓")
+    return True
+
+
+def test_oversized_regex():
+    """v5.8.10: filtros Jumbo/oversized — title (2ª camada) + foil (1ª camada)."""
+    assert OVERSIZED_TITLE_RE.search("Pikachu Jumbo (SWSH039)")
+    assert OVERSIZED_TITLE_RE.search("Charizard Oversized Promo")
+    assert OVERSIZED_TITLE_RE.search("Mewtwo Box Topper")
+    assert not OVERSIZED_TITLE_RE.search("Charizard ex 234/091"), "standard não deve casar"
+    assert OVERSIZED_FOIL_RE.search("Jumbo")
+    assert not OVERSIZED_FOIL_RE.search("Holo")
+    print(f"  oversized/jumbo regex OK ✓")
+    return True
+
+
 def main():
     tests = [
         ("threshold constant", test_threshold_constant),
         ("Jirachi ratio math", test_jirachi_ratio_math),
+        ("parse_brl BR/US formats (v5.8.10)", test_parse_brl_formats),
+        ("_last_brl extraction (v5.8.10)", test_last_brl),
+        ("oversized/jumbo regex (v5.8.10)", test_oversized_regex),
         ("XLSX end-to-end", test_xlsx_end_to_end),
         ("tcg_search_url (v5.8.8)", test_tcg_search_url),
         ("price cell hyperlinks (v5.8.8/v5.8.9)", test_price_cell_hyperlinks),
