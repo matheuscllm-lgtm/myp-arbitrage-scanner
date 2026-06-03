@@ -1,5 +1,42 @@
 # Changelog
 
+## v5.9 — 2026-06-03 — Truncation RESOLVIDO: paginação da tabela marketplace
+
+**Root cause achado.** A tabela "demais vendedores" (`#lista-anuncio-demais-vendedores`)
+é **paginada** via `?estoque-outros-page=N`, ordenada por preço crescente
+across-idiomas. O scanner só lia a **página 1**, então quando ela enchia de
+listings PT/JP baratos, os EN-NM mais baratos ficavam nas páginas 2+ e nunca
+eram vistos → o "lowest EN-NM" reportado vinha inflado da tabela de lojistas.
+
+Sessões anteriores marcaram isso como "irresolvível" (tinham testado só
+`?idioma=`, que o servidor ignora). A paginação real foi confirmada ao vivo.
+
+### Prova (Psyduck 226/217)
+
+| Fonte | Lowest EN-NM |
+|---|---|
+| Scanner antigo (só página 1) | R$498,70 (tabela lojistas) |
+| Página 2 marketplace | **R$398,00** ← EN-NM oculto |
+| **Resultado v5.9** | **R$398,00** → margem vs TCG R$557,40 pula de +12% → **+40%** |
+
+Validado end-to-end (scrape ao vivo) + 2 testes offline novos.
+
+### Implementação (`scrape_product`)
+
+1. Parsing de row extraído pra `_parse_seller_table()` (reusado em página 1 e
+   nas páginas paginadas; comportamento idêntico — NM-only exato, skip Jumbo,
+   flag-icon, promo `min()`, warn-once de idioma).
+2. `_max_seller_page(soup)` lê o maior `estoque-outros-page=N` dos hrefs.
+3. **Gate de custo:** só pagina quando a página 1 sinaliza truncation (alguma
+   tabela ≥15 rows, 0 EN visível, `max_price` < lowest EN). Produtos normais
+   não pagam o custo de requests extras.
+4. Segue páginas 2..min(max, `MAX_SELLER_PAGES`=10), parseando **só** o
+   container marketplace (lojistas não é recontada), single-session sequencial
+   respeitando `--delay` (CloudFlare: não paralelizar).
+5. `en_truncation_risk` re-significado: agora True **só** quando um fetch de
+   página falha ou o cap de páginas é excedido (risco residual). Novos counters
+   `seller_pages_followed` / `seller_page_fetch_failures` no summary.
+
 ## v5.8.10 — 2026-06-01 — Code health: DRY no parsing, config por-instância, +cobertura
 
 Refactor **comportamento-preservante** (sem mudança na heurística de

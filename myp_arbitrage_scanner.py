@@ -17,8 +17,8 @@ Requisitos:
     pip install cloudscraper beautifulsoup4 openpyxl lxml
 
 Autor: Matheus Chillemi / Claude
-Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10)
-Versão: v5.8.10
+Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9)
+Versão: v5.9
 
 Changelog v5.1 (2026-05-12 — auditoria C/H/M, mesma metodologia do CT scanner):
   - C1: --threshold < 1.0 auto-converte com warning (UX guard contra trap
@@ -93,6 +93,11 @@ MIN_PRICE_BRL = 80.0             # preço mínimo EN em R$ (ignora cartas barata
 REQUEST_DELAY = 1.5              # segundos entre requests
 MAX_PAGES_PER_EDITION = 30       # max páginas por edição
 MAX_EDITION_PAGES = 50           # v5.4 H4: cap em get_all_editions (evita infinite loop)
+# v5.9 (2026-06-03): a tabela marketplace (#lista-anuncio-demais-vendedores)
+# pagina via ?estoque-outros-page=N e ordena por preço crescente across-idiomas.
+# Quando a página 1 enche de PT/JP baratos, os EN-NM caem em páginas 2+. Cap de
+# páginas a seguir por produto (evita loop infinito + limita custo de scan).
+MAX_SELLER_PAGES = 10            # v5.9: max páginas da tabela marketplace por produto
 MIN_EDITIONS_EXPECTED = 200      # v5.4 C2: catalog scrape sanity floor (~326 esperado, alarme em <200)
 TIMEOUT = 20                     # timeout HTTP em segundos
 HTTP_MAX_RETRIES = 3             # M1 fix: retries em transient errors
@@ -439,6 +444,11 @@ class MYPScraper:
             # v5.8.5 (2026-05-19): collector# > set_size (variant fora do
             # numbered set, frequentemente JP-only). Caso Darumaka 097/086.
             "oversized_collector_risks": 0,
+            # v5.9 (2026-06-03): paginação da tabela marketplace seguida quando
+            # a página 1 sinaliza truncation (?estoque-outros-page=N). Conta
+            # páginas extras lidas com sucesso e falhas de fetch dessas páginas.
+            "seller_pages_followed": 0,
+            "seller_page_fetch_failures": 0,
         }
         # v5.4 H1: warn-once cache pra unknown language titles
         self._unknown_lang_seen: set[str] = set()
@@ -695,6 +705,137 @@ class MYPScraper:
 
         return product_urls
 
+    # ── Step 3 helper: parse ONE seller table element (EN-NM extraction) ─
+    def _parse_seller_table(self, table) -> dict:
+        """Parse a single seller-table element (or any node containing <tr>s).
+
+        Pure parsing, no network. Extracts EN+NM prices, counts rows, tracks
+        the max visible price (any language) for the truncation heuristic, and
+        skips Jumbo rows. Returns a dict:
+            {"rows", "en", "max_price", "en_prices": [...], "jumbo"}
+        Caller aggregates across page-1 tables AND marketplace pagination
+        (v5.9). Extracted from the inline loop so both paths share one parser.
+        """
+        rows_in_table = 0
+        en_in_table = 0
+        max_price_in_table = 0.0  # maior preço VISÍVEL nesta tabela
+        table_en_prices: list[float] = []
+        jumbo_count = 0
+        for row in table.find_all("tr"):
+            row_text = row.get_text()
+            if "R$" not in row_text:
+                continue
+            rows_in_table += 1
+
+            # Extrai preço (qualquer idioma) pra rastrear max visível.
+            # 2026-05-12 v5.3: row pode ter strikethrough promo
+            # ("R$ 275,00 R$ 220,00" — R$275 antigo riscado, R$220 ativo).
+            # v5.4 H2: usa min() em vez de [-1] — preço ativo é sempre
+            # o menor (promo); [-1] quebrava se MYP injetasse 3º R$
+            # (frete, "you save", etc). Min é defensivo a layout drift.
+            price_matches = PRICE_RE.findall(row_text)
+            row_price = None
+            if price_matches:
+                parsed = [self._parse_brl(p) for p in price_matches]
+                parsed = [p for p in parsed if p is not None and p > 0]
+                if parsed:
+                    row_price = min(parsed)
+                if len(price_matches) > 2:
+                    log.debug(
+                        f"  Row com {len(price_matches)} R$ matches "
+                        f"(esperado 1-2): {row_text[:120]}"
+                    )
+            if row_price and row_price > max_price_in_table:
+                max_price_in_table = row_price
+
+            # Find language from flag-icon span (specific selector)
+            lang = None
+            flag_el = row.select_one("span.flag-icon[title]")
+            if flag_el:
+                lang = flag_el.get("title", "").strip()
+            else:
+                # Fallback: check any [title] that matches a known language
+                for el in row.select("[title]"):
+                    title_val = el.get("title", "").strip()
+                    if title_val in KNOWN_LANGUAGES:
+                        lang = title_val
+                        break
+
+            # v5.4 H1: lang não-vazio mas fora do conhecido = drift potencial
+            # (ex.: MYP normalizar "Inglês" → "Ingles" sem acento, ou novo
+            # idioma adicionado). Counter + warn-once previne silent zero.
+            if lang and lang not in KNOWN_LANGUAGES:
+                self._stats["skipped_unknown_lang_titles"] += 1
+                if lang not in self._unknown_lang_seen:
+                    self._unknown_lang_seen.add(lang)
+                    log.warning(
+                        f"  ⚠️ Idioma desconhecido detectado: '{lang}' "
+                        f"(não está em KNOWN_LANGUAGES). Pode ser drift de "
+                        f"título flag-icon do MYP. Adicionar à constante "
+                        f"se for mapeamento legítimo."
+                    )
+
+            if lang not in EN_LANGUAGES:
+                continue
+
+            # v5.8.3 (2026-05-18): skip rows com foil="Jumbo" (oversized).
+            # MYP agrupa standard + jumbo na mesma página de produto; a
+            # coluna `td.estoque-lista-nomeenfoil` indica a variante. TCG
+            # Player price refere-se à standard, então jumbo rows inflam
+            # `min(en_prices)` artificialmente (caso M-Rayquaza-EX 098/98
+            # XY 7: 5 sellers Jumbo a R$650 enquanto TCG standard era
+            # R$4801 → margin fictícia de 638%).
+            foil_el = row.select_one("td.estoque-lista-nomeenfoil")
+            foil_txt = foil_el.get_text(strip=True) if foil_el else ""
+            if OVERSIZED_FOIL_RE.search(foil_txt):
+                jumbo_count += 1
+                continue
+
+            # Filter: NM (Near Mint) only — skip Played, Damaged, etc.
+            # v5.8.7: lê a célula de condição DEDICADA
+            # (td.estoque-lista-qualidadenome, ex.: "NM - Quase nova",
+            # "SP - Pouco jogada") e casa o código EXATO antes do " - ".
+            # Antes era substring "NM" na linha inteira, que vazava não-NM
+            # quando "NM" aparecia em qualquer coluna (nick de vendedor,
+            # obs, etc). NM-only é invariante do scanner; sem célula de
+            # qualidade confirmável (drift de layout), a linha é pulada.
+            qual_el = row.select_one("td.estoque-lista-qualidadenome")
+            qual_txt = qual_el.get_text(" ", strip=True) if qual_el else ""
+            qual_code = qual_txt.split("-", 1)[0].strip().upper()
+            if qual_code != "NM":
+                continue
+
+            # EN + NM seller — preço já extraído acima
+            if row_price:
+                table_en_prices.append(row_price)
+                en_in_table += 1
+
+        return {
+            "rows": rows_in_table,
+            "en": en_in_table,
+            "max_price": max_price_in_table,
+            "en_prices": table_en_prices,
+            "jumbo": jumbo_count,
+        }
+
+    # ── Step 3 helper: detect marketplace pagination on a product page ───
+    @staticmethod
+    def _max_seller_page(soup) -> int:
+        """Return the highest ?estoque-outros-page=N present in the page's
+        pagination links (1 if the marketplace table is not paginated).
+
+        v5.9: the marketplace table (#lista-anuncio-demais-vendedores) renders
+        a standard <ul class="pagination"> whose links carry the page query
+        param. We read N straight off the hrefs (more robust than regex on the
+        whole document, which could match the param inside JS/analytics blobs).
+        """
+        max_page = 1
+        for a in soup.select('a[href*="estoque-outros-page="]'):
+            m = re.search(r'estoque-outros-page=(\d+)', a.get("href", ""))
+            if m:
+                max_page = max(max_page, int(m.group(1)))
+        return max_page
+
     # ── Step 3: Scrape product detail page (v2 — per-seller language) ─
     def scrape_product(self, url: str, edition_name: str) -> Optional[CardData]:
         """Extract card data from product page, filtering sellers by language.
@@ -809,104 +950,15 @@ class MYPScraper:
         # acontece depois quando temos lowest_en pra comparar.
         per_table_stats = []
         for table in seller_tables:
-            rows_in_table = 0
-            en_in_table = 0
-            max_price_in_table = 0.0  # maior preço VISÍVEL nesta tabela
-            for row in table.find_all("tr"):
-                row_text = row.get_text()
-                if "R$" not in row_text:
-                    continue
-                rows_in_table += 1
-
-                # Extrai preço (qualquer idioma) pra rastrear max visível.
-                # 2026-05-12 v5.3: row pode ter strikethrough promo
-                # ("R$ 275,00 R$ 220,00" — R$275 antigo riscado, R$220 ativo).
-                # v5.4 H2: usa min() em vez de [-1] — preço ativo é sempre
-                # o menor (promo); [-1] quebrava se MYP injetasse 3º R$
-                # (frete, "you save", etc). Min é defensivo a layout drift.
-                price_matches = PRICE_RE.findall(row_text)
-                row_price = None
-                if price_matches:
-                    parsed = [self._parse_brl(p) for p in price_matches]
-                    parsed = [p for p in parsed if p is not None and p > 0]
-                    if parsed:
-                        row_price = min(parsed)
-                    if len(price_matches) > 2:
-                        log.debug(
-                            f"  Row com {len(price_matches)} R$ matches "
-                            f"(esperado 1-2): {row_text[:120]}"
-                        )
-                if row_price and row_price > max_price_in_table:
-                    max_price_in_table = row_price
-
-                # Find language from flag-icon span (specific selector)
-                lang = None
-                flag_el = row.select_one("span.flag-icon[title]")
-                if flag_el:
-                    lang = flag_el.get("title", "").strip()
-                else:
-                    # Fallback: check any [title] that matches a known language
-                    for el in row.select("[title]"):
-                        title_val = el.get("title", "").strip()
-                        if title_val in KNOWN_LANGUAGES:
-                            lang = title_val
-                            break
-
-                # v5.4 H1: lang não-vazio mas fora do conhecido = drift potencial
-                # (ex.: MYP normalizar "Inglês" → "Ingles" sem acento, ou novo
-                # idioma adicionado). Counter + warn-once previne silent zero.
-                if lang and lang not in KNOWN_LANGUAGES:
-                    self._stats["skipped_unknown_lang_titles"] += 1
-                    if lang not in self._unknown_lang_seen:
-                        self._unknown_lang_seen.add(lang)
-                        log.warning(
-                            f"  ⚠️ Idioma desconhecido detectado: '{lang}' "
-                            f"(não está em KNOWN_LANGUAGES). Pode ser drift de "
-                            f"título flag-icon do MYP. Adicionar à constante "
-                            f"se for mapeamento legítimo."
-                        )
-
-                if lang not in EN_LANGUAGES:
-                    continue
-
-                # v5.8.3 (2026-05-18): skip rows com foil="Jumbo" (oversized).
-                # MYP agrupa standard + jumbo na mesma página de produto; a
-                # coluna `td.estoque-lista-nomeenfoil` indica a variante. TCG
-                # Player price refere-se à standard, então jumbo rows inflam
-                # `min(en_prices)` artificialmente (caso M-Rayquaza-EX 098/98
-                # XY 7: 5 sellers Jumbo a R$650 enquanto TCG standard era
-                # R$4801 → margin fictícia de 638%).
-                foil_el = row.select_one("td.estoque-lista-nomeenfoil")
-                foil_txt = foil_el.get_text(strip=True) if foil_el else ""
-                if OVERSIZED_FOIL_RE.search(foil_txt):
-                    jumbo_rows_seen += 1
-                    continue
-
-                # Filter: NM (Near Mint) only — skip Played, Damaged, etc.
-                # v5.8.7: lê a célula de condição DEDICADA
-                # (td.estoque-lista-qualidadenome, ex.: "NM - Quase nova",
-                # "SP - Pouco jogada") e casa o código EXATO antes do " - ".
-                # Antes era substring "NM" na linha inteira, que vazava não-NM
-                # quando "NM" aparecia em qualquer coluna (nick de vendedor,
-                # obs, etc). NM-only é invariante do scanner; sem célula de
-                # qualidade confirmável (drift de layout), a linha é pulada.
-                qual_el = row.select_one("td.estoque-lista-qualidadenome")
-                qual_txt = qual_el.get_text(" ", strip=True) if qual_el else ""
-                qual_code = qual_txt.split("-", 1)[0].strip().upper()
-                if qual_code != "NM":
-                    continue
-
-                # EN + NM seller — preço já extraído acima
-                if row_price:
-                    en_prices.append(row_price)
-                    en_sellers += 1
-                    en_in_table += 1
-
+            st = self._parse_seller_table(table)
             per_table_stats.append({
-                "rows": rows_in_table,
-                "en": en_in_table,
-                "max_price": max_price_in_table,
+                "rows": st["rows"],
+                "en": st["en"],
+                "max_price": st["max_price"],
             })
+            en_prices.extend(st["en_prices"])
+            en_sellers += st["en"]
+            jumbo_rows_seen += st["jumbo"]
 
         # Heurística de truncamento refinada (v5.3+): só dispara quando há
         # evidência de que listings escondidos PODEM ser mais baratos que o EN
@@ -916,7 +968,13 @@ class MYPScraper:
         # exatamente o que aconteceu com bartsimpson R$300. Quando max visível
         # já é >= lowest_en reportado, hidden listings começam acima disso e
         # não podem ser EN mais barato → não flag.
-        truncation_risk = False
+        #
+        # v5.9 (2026-06-03): este sinal agora é o GATE de paginação, não o
+        # veredito final. Quando dispara, os listings "escondidos" NÃO são
+        # inacessíveis — estão nas páginas 2+ da tabela marketplace
+        # (?estoque-outros-page=N). Seguimos essas páginas abaixo e só então
+        # decidimos o truncation_risk final.
+        page1_truncation_gate = False
         lowest_en_seen = min(en_prices) if en_prices else None
         if lowest_en_seen is not None:
             for ts in per_table_stats:
@@ -924,8 +982,56 @@ class MYPScraper:
                         and ts["en"] == 0
                         and ts["max_price"] > 0
                         and ts["max_price"] < lowest_en_seen):
-                    truncation_risk = True
+                    page1_truncation_gate = True
                     break
+
+        # v5.9: seguir a paginação da tabela marketplace quando a página 1
+        # sinaliza truncation. Custo: cada produto truncado vira 1+N requests,
+        # então só paginamos sob o gate (não em todo produto). Single-session
+        # sequencial respeitando self.delay — NÃO paralelizar (CloudFlare 403).
+        truncation_risk = False
+        max_seller_page = self._max_seller_page(soup)
+        if page1_truncation_gate and max_seller_page >= 2:
+            pages_to_fetch = min(max_seller_page, MAX_SELLER_PAGES)
+            log.info(
+                f"  📄 Truncation gate: paginando marketplace de {card.name or url} "
+                f"(pág 2..{pages_to_fetch} de {max_seller_page})"
+            )
+            for pg in range(2, pages_to_fetch + 1):
+                page_url = f"{url}?estoque-outros-page={pg}"
+                page_soup = self._get(page_url)
+                if page_soup is None:
+                    # fetch falhou (rede/CF) → não conseguimos resolver: mantém
+                    # o sinal de risco pra validação manual.
+                    truncation_risk = True
+                    self._stats["seller_page_fetch_failures"] += 1
+                    log.warning(
+                        f"  ⚠️ Falha ao buscar página {pg} da marketplace "
+                        f"de {card.name or url} — EN-NM pode seguir truncado."
+                    )
+                    break
+                # Só a tabela marketplace pagina; a de lojistas não muda entre
+                # páginas, então parseamos APENAS o container marketplace pra não
+                # recontar lojistas (que apareceriam de novo no reload completo).
+                mkt = page_soup.select_one("#lista-anuncio-demais-vendedores")
+                if mkt is None:
+                    # sem container marketplace nesta página → fim natural
+                    break
+                pst = self._parse_seller_table(mkt)
+                en_prices.extend(pst["en_prices"])
+                en_sellers += pst["en"]
+                jumbo_rows_seen += pst["jumbo"]
+                self._stats["seller_pages_followed"] += 1
+            else:
+                # loop terminou sem break: se havia mais páginas além do cap,
+                # o resto fica não-lido → ainda há risco residual de truncation.
+                if max_seller_page > MAX_SELLER_PAGES:
+                    truncation_risk = True
+                    log.warning(
+                        f"  ⚠️ {card.name or url}: {max_seller_page} páginas de "
+                        f"marketplace > cap {MAX_SELLER_PAGES} — páginas extras "
+                        f"não lidas, EN-NM pode seguir truncado."
+                    )
 
         # v5.8.3: log se rows Jumbo foram filtradas
         if jumbo_rows_seen > 0:
@@ -970,9 +1076,9 @@ class MYPScraper:
             self._stats["en_truncation_risks"] += 1
             log.warning(
                 f"  🚨 EN truncation risk: {card.name} | "
-                f"alguma seller table está com ≥{TABLE_CAP_THRESHOLD} rows sem EN visível "
-                f"→ lowest EN-NM R${card.myp_lowest_en_nm:.2f} pode estar superestimado. "
-                f"Validar manualmente."
+                f"paginação da marketplace falhou ou excedeu cap "
+                f"({MAX_SELLER_PAGES} págs) → lowest EN-NM R${card.myp_lowest_en_nm:.2f} "
+                f"pode estar superestimado. Validar manualmente."
             )
 
         # ── Rarity ──
@@ -1149,6 +1255,8 @@ class MYPScraper:
         log.info(f"      TCG suspects (H2 v5.8): {self._stats['tcg_suspects']}")
         log.info(f"      Single EN seller risks (v5.8.3): {self._stats['single_en_seller_risks']}")
         log.info(f"      Oversized collector# risks (v5.8.5): {self._stats['oversized_collector_risks']}")
+        log.info(f"      Seller pages followed (v5.9 pagination): {self._stats['seller_pages_followed']}")
+        log.info(f"      Seller page fetch failures (v5.9): {self._stats['seller_page_fetch_failures']}")
         log.info(f"      HTTP retries (M1): {self._stats['http_retries']}")
         log.info("═" * 60)
 
