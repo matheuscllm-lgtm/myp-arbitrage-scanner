@@ -1,122 +1,138 @@
-# HANDOFF — Truncation (EN seller truncation) — 2026-06-03
+# HANDOFF — Truncation RESOLVIDO (root cause + fix) — 2026-06-03
 
-> **Para o Claude do terminal:** o operador quer rodar um **codex review** no código
-> (`myp_arbitrage_scanner.py`) com um objetivo específico: **resolver o EN truncation**
-> — o caso em que o MYP esconde um listing EN-NM mais barato e o scanner reporta um
-> preço EN superestimado. Este arquivo te dá o contexto pra o review ser cirúrgico,
-> e **principalmente** lista o que JÁ foi testado e descartado com evidência nesta
-> sessão, pra você não gastar o review re-investigando beco sem saída.
-
----
-
-## 1. O que é o truncation (resumo de 30s)
-
-A página de produto do MYP renderiza **2 seller tables** capadas (~15 lojistas + ~20
-marketplace), ordenadas por preço **across-idiomas** e cortadas **server-side**. Quando
-uma tabela enche de listings PT/JP baratos, um **EN-NM mais barato pode ficar numa
-"página 2" que não existe** no HTML nem na API. O scanner então reporta como "lowest
-EN-NM" um preço EN mais caro do que o real → falso negativo de deal.
-
-**Código relevante** (`myp_arbitrage_scanner.py`):
-- `TABLE_CAP_THRESHOLD = 15` — linha ~779
-- Lógica de detecção `truncation_risk` — linhas ~897-905 (dispara quando uma tabela
-  está no cap, com 0 EN visível, e `max_price_visivel < lowest_en_reportado`)
-- Campo `CardData.en_truncation_risk` — linha ~351
-- Hoje (2026-06-03) o scan de Ascended Heroes flagou **7 cards** com truncation.
+> **Para o Claude do terminal:** o operador quer que o scanner **encontre os preços
+> EN-NM mais baixos quando estão em páginas posteriores** da tabela de vendedores.
+> **Isto agora está diagnosticado e tem fix claro.** Rode o codex review em
+> `myp_arbitrage_scanner.py` mirando a implementação descrita em §3.
+>
+> ⚠️ **Correção de uma sessão anterior:** eu havia concluído que truncation era
+> "irresolvível". **Estava ERRADO.** Eu tinha testado `?idioma=` (que o servidor
+> ignora) mas **não tinha achado a paginação real da tabela de marketplace**. Achei
+> agora. O resto deste doc reflete a descoberta correta.
 
 ---
 
-## 2. ⛔ JÁ DESCARTADO COM EVIDÊNCIA (não repetir no review)
+## 1. Root cause (confirmado com evidência ao vivo)
 
-Investiguei estes caminhos NESTA sessão. Todos confirmados como **sem saída** —
-não proponha eles como "solução" sem trazer evidência nova que contradiga:
+A página de produto tem 2 tabelas de vendedores:
+- **Tabela 0 — lojistas** (`lista-anuncio-lojistas-certificados`)
+- **Tabela 1 — marketplace / demais vendedores** (`#lista-anuncio-demais-vendedores`)
 
-| Hipótese de solução | Testado | Resultado |
-|---|---|---|
-| **API oficial do MYP expõe listings per-idioma** | Li o `swagger.yaml` oficial cru (`MYPCards/mypcards-api`, atualizado 2026-06-01) | ❌ 5 endpoints, todos preço **agregado** (`min/avg/max`). grep por `offer\|listing\|seller\|idioma\|qualidade` = **0 matches**. Sem endpoint de offers. |
-| **Página chama AJAX "ver mais ofertas"** | Inspecionei o JS da página do produto | ❌ Único XHR é cookie-consent. `/preco/{id}/{slug}` referenciado → **404** ao chamar direto. |
-| **Dados completos embutidos no HTML (hidden rows)** | Contei `<tr>` no documento inteiro do Psyduck | ❌ Exatamente **40 rows** (cap 20+20). Flags no doc todo: **3 EN / 31 PT / 6 JP**. Nada escondido — corte é server-side antes do render. |
-| **Query param de idioma no servidor** | Testei `?idioma=Inglês`, `?lang=en`, `?lingua=ingles`, `ProdutoSearch[idioma]=Inglês` (6 variações) | ❌ TODAS retornam o mesmo set truncado (3 EN). Servidor **ignora** o param. |
-| **Outro repo no GitHub já resolveu** | Busquei todos os repos que tocam mypcards.com | ❌ `MtgDesktopCompanion` (scrape agregado), `webscraping-mypcards` (catálogo 2023), `myp-enhancer` (só UI), `mypcards-script` (vazio). Ninguém resolve. |
+A tabela marketplace é **paginada** e ordenada por preço crescente across-idiomas. O
+scanner hoje só lê a **página 1**. Quando a página 1 enche de listings PT/JP baratos,
+os EN-NM ficam nas **páginas 2, 3...** que o scanner nunca busca → ele cai no preço EN
+mais caro da tabela de lojistas e reporta um "lowest EN-NM" superestimado.
 
-**Conclusão da pesquisa:** a causa é **arquitetural no lado do MYP**. O preço do EN-NM
-mais barato **não sai do servidor deles** por nenhum canal que um scraper alcance
-(HTML ou API). Portanto **não existe fix de parser** que resolva — o scanner já está
-fazendo o certo ao *flaggar*; ele não pode inventar a row escondida.
+**A paginação existe e é trivial de seguir** — é um `<ul class="pagination">` padrão
+com query param:
 
-Artefatos da investigação (fora do repo, efêmeros): `/tmp/myp_swagger.yaml`,
-`/tmp/trunc_resolved.json`.
+```
+https://mypcards.com/pokemon/produto/310463/psyduck?estoque-outros-page=2
+https://mypcards.com/pokemon/produto/310463/psyduck?estoque-outros-page=3
+```
 
----
+O nº total de páginas sai do próprio HTML: `re.findall(r'estoque-outros-page=(\d+)', html)` → pega o `max()`.
 
-## 3. ✅ O ÚNICO VETOR QUE SOBROU (foco do review/trabalho futuro)
+## 2. Prova (Psyduck 226/217, caso documentado no README)
 
-**Scrape do PERFIL DO SELLER.** Quando a tabela cheia (marketplace) tem sellers PT/JP
-baratos, o MYP trunca a *exibição no produto* — MAS o **estoque do próprio seller é
-navegável no perfil dele**. Se um desses sellers tiver o mesmo card em EN-NM, esse é o
-preço real escondido.
+| Fonte | Lowest EN-NM |
+|---|---|
+| Scanner hoje (só página 1) | **R$498,70** (veio da tabela de lojistas) |
+| Página 1 marketplace | 0 EN-NM (só PT/JP, R$180–245) |
+| **Página 2 marketplace** | **R$398,00** ← 7 listings EN-NM, todas < R$498 |
+| Página 3 marketplace | R$450–650 |
+| **TRUE lowest EN-NM** | **R$398,00** |
 
-**Isto NÃO foi testado ainda** — é a tarefa de maior valor. Um codex review / prototype
-deveria mirar:
+**Impacto no deal:** margem vs TCG (R$557,40) pula de **+12% → +40%**. O Psyduck
+**vira um deal real ≥25%** que o scanner estava perdendo por completo. Isto é o caso
+"bartsimpson R$300 truncado" que o README §T1 descreve — confirmado como paginação,
+não como dado inacessível.
 
-1. Da página do produto, extrair os **handles dos sellers** das rows da tabela cheia
-   (hoje o parser joga as rows fora; precisa capturar o seller id/link).
-2. Para cada seller, abrir o perfil e procurar o **mesmo card (mesmo `product_code` /
-   collector#) em EN-NM** no estoque dele.
-3. Se achar EN-NM ≤ piso da janela (ver §4) → preço real recuperado, recalcula margem.
+## 3. ✅ FIX a implementar (foco do codex review)
 
-**Riscos/incógnitas a validar no review:**
-- O MYP expõe estoque do seller por URL navegável? (provável: tem página de seller,
-  mas não confirmei estrutura/paginação)
-- Custo: N sellers × M cards = muito request. Precisa de rate-limit + só rodar nos
-  cards já flagados (7, não o catálogo todo).
-- CloudFlare: este ambiente cloud toma **403 em IP de datacenter** com requests
-  concorrentes. Rodar **single-session, sequencial, com delay** (aprendido nesta
-  sessão — 2 cloudscrapers no mesmo IP = 403).
+Local: `myp_arbitrage_scanner.py`, função **`scrape_product`** (linha ~673) — o bloco
+que itera `seller_tables = soup.select("table.table-striped.table-bordered")` (~L781)
+e coleta `en_prices` (~L770-920).
 
----
+**Mudança:** depois de processar a página 1, **seguir a paginação da tabela marketplace**
+e acumular as rows EN-NM de todas as páginas antes de computar `lowest_en`.
 
-## 4. O que JÁ foi entregue nesta sessão (pra não refazer)
+Recipe sugerido:
+1. Após parsear a página 1, detectar `max_page = max(estoque-outros-page=N)` no HTML.
+   Se não houver paginação → comportamento atual (1 página).
+2. Para `pg in 2..max_page`: GET `f"{url}?estoque-outros-page={pg}"` (plain GET, **sem**
+   headers XHR — testei: header `X-PJAX` custom dá HTTP 500; **GET simples dá 200**).
+   - Opcional/otimização: `X-PJAX-Container: #pjax-estoque-outros` retorna fragmento de
+     124KB em vez de 418KB (mais leve), mas o GET simples também funciona.
+3. Parsear **só o container `#lista-anuncio-demais-vendedores`** nessas páginas (a tabela
+   de lojistas não pagina — não re-processar) e adicionar rows EN-NM a `en_prices`.
+4. `lowest_en = min(en_prices)` agora reflete todas as páginas.
+5. **Aposentar / re-significar a flag `en_truncation_risk`**: com paginação seguida, o
+   risco vira raro. Manter como sinal de "página de marketplace existe mas falhou fetch".
 
-- **Scan AH 2026-06-03** rodado (3 deals limpos: Mega Hawlucha 30%, Mega Feraligatr
-  25%, Zoroark ex do N 25%). XLSX é gitignored (efêmero).
-- **Resolução per-card dos 7 truncation flags** + sheet `🔎 Truncation Resolved` no XLSX.
-- **Análise da janela de incerteza** commitada em
-  `results/manual-2026-06-03-truncation-window.md` (no git). Quantifica, por card, o
-  **piso** (onde um EN-NM oculto poderia estar) e a **margem potencial** no melhor caso.
-  Prioriza os 7: **5 ALTA** (vale abrir perfil) / **2 BAIXA** (pular).
-  - Top alvos: **Psyduck** (+12% → até ~128% se EN-NM ~R$245) e
-    **Mega Dragonite ex 271/217** (0% → até ~122% se EN-NM ~R$135).
-- Aberto **PR #13 (draft)** com essa análise. PR #12 (daily scan + gitignore) já mergeado.
+**Guard-rails (reusar padrões já no código):**
+- Cap de páginas tipo `MAX_PAGES_PER_EDITION` (ver `get_edition_products` L630) pra não
+  loopar infinito. Sugiro `MAX_SELLER_PAGES = 10`.
+- `--delay` entre page-fetches (já existe). Cada produto vira 1+N requests — **isto
+  multiplica o tempo de scan**; só paginar quando a página 1 sinaliza truncation
+  (tabela marketplace cheia, EN-NM ausente/caro) pra não pagar o custo em todo produto.
+- **CloudFlare:** single-session sequencial. 2 cloudscrapers no mesmo IP = 403
+  (aprendido). Datacenter IP já é borderline; não paralelizar fetch de páginas.
 
----
+**Teste de regressão:** adicionar caso offline em `test_v5_8_offline.py` usando
+`/tmp/psyduck.html` (página 1) + um fixture de página 2 — assert que lowest EN-NM = 398,
+não 498,70. (Salve os HTMLs como fixtures em vez de depender de rede.)
 
-## 5. Comandos úteis
+## 4. ⛔ O que NÃO é o caminho (já descartado com evidência)
+
+Pra não desperdiçar o review:
+- **API oficial** (`MYPCards/mypcards-api`, swagger lido): só preço agregado, sem
+  endpoint de listings. Não serve.
+- **`?idioma=`/`?lang=`**: servidor ignora, retorna mesmo set. Não é esse o filtro.
+- **Endpoint `/preco/{id}`** sem prefixo de jogo → 404. (O certo seria
+  `/pokemon/preco/{id}/{slug}` mas é a página de histórico, não as listings.)
+- **Scrape de perfil de seller**: seria necessário SE não houvesse paginação. Como
+  **há** paginação (§1), esse vetor ficou **desnecessário** — não precisa mais.
+
+## 5. Estado entregue nesta sessão
+
+- Scan AH 2026-06-03 (3 deals limpos). Análise de janela em
+  `results/manual-2026-06-03-truncation-window.md` (no git, PR #13).
+  ⚠️ Aquela análise assumia truncation irresolvível; com o fix de §3 ela vira
+  **desnecessária** pros cards que o scanner passar a resolver sozinho.
+- Os 7 cards flagados hoje (re-validar com o fix): Psyduck, Mega Dragonite 271, Mega
+  Gengar ex, Mewtwo ex TR 281, Tangela da Érica, Grimmsnarl 287, Fezandipiti 288.
+
+## 6. Comandos
 
 ```bash
-# deps (ambiente vem sem elas)
 pip install -r requirements.txt
 export PYTHONIOENCODING=utf-8
 
-# scan só Ascended Heroes (~12 min)
-python myp_arbitrage_scanner.py --editions "Ascended Heroes" -o ah.xlsx
+# reproduzir a prova (Psyduck pág 2 tem EN-NM R$398):
+python3 -c "
+import cloudscraper, re
+s=cloudscraper.create_scraper(browser={'browser':'firefox','platform':'windows'})
+u='https://mypcards.com/pokemon/produto/310463/psyduck'
+s.get(u,timeout=30)
+h=s.get(u+'?estoque-outros-page=2',timeout=30).text
+from bs4 import BeautifulSoup
+c=BeautifulSoup(h,'lxml').select_one('#lista-anuncio-demais-vendedores')
+print([tr.get_text(' ',strip=True)[:60] for tr in c.find_all('tr') if 'Inglês' in tr.get_text() and 'R\$' in tr.get_text()][:3])
+"
 
-# os 7 cards flagados hoje (URLs pra prototipar seller-profile scrape):
-#   Psyduck            https://mypcards.com/pokemon/produto/310463/psyduck
-#   Mega Dragonite 271 https://mypcards.com/pokemon/produto/310508/mega-dragonite-ex
-#   Mega Gengar ex     https://mypcards.com/pokemon/produto/310506/mega-gengar-ex
-#   Mewtwo ex TR 281   https://mypcards.com/pokemon/produto/310518/mewtwo-ex-da-equipe-rocket
-#   Tangela da Érica   https://mypcards.com/pokemon/produto/310455/tangela-da-erica
-#   Grimmsnarl 287     https://mypcards.com/pokemon/produto/310524/grimmsnarl-ex-da-marine
-#   Fezandipiti 288    https://mypcards.com/pokemon/produto/310525/fezandipiti-ex
+# scan de 1 set pra testar o fix end-to-end:
+python myp_arbitrage_scanner.py --editions \"Ascended Heroes\" -o ah.xlsx
 ```
 
 ---
 
 ## TL;DR pro review
 
-Não há fix de parser pra truncation — confirmado que o dado não existe no HTML/API do
-MYP (§2, com evidência). **Não gaste o codex review tentando melhorar a detecção ou
-achar um endpoint mágico.** O único caminho real é **scrapear o perfil dos sellers**
-da tabela cheia pra achar o EN-NM escondido (§3) — esse vetor está **não-testado** e é
-onde o review/prototype agrega valor. Comece pelo Psyduck (maior upside, §4).
+Truncation **é resolvível** e o root cause está achado: a tabela de marketplace
+(`#lista-anuncio-demais-vendedores`) **pagina** via `?estoque-outros-page=N`, e o
+scanner só lê a página 1. **Fix:** em `scrape_product`, seguir as páginas posteriores
+da tabela marketplace e acumular EN-NM antes de `min()`. Prova: Psyduck real é **R$398**
+(página 2), não R$498 — vira deal de +40%. Custo: cada produto truncado vira 1+N
+requests; pagine só quando a página 1 sinalizar truncation. Guard-rails: cap de páginas,
+delay, single-session (CloudFlare). Fixture de teste: `/tmp/psyduck.html` + página 2.
