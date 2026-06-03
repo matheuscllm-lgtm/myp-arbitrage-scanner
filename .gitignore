@@ -17,6 +17,8 @@ ENV/
 *.xlsx.bak
 .debug/
 .myp_run_*.log
+scan_run.log
+.last_out
 logs/
 *.tmp
 chunk*.log
