@@ -33,7 +33,7 @@ o scanner.
 
 ```bash
 python myp_arbitrage_scanner.py --editions "Ascended Heroes" \
-  --threshold 25 --min-price 80 --delay 1.5 \
+  --threshold 25 --min-price 50 --delay 1.5 \
   -o results/<set>_<stamp>.xlsx
 ```
 

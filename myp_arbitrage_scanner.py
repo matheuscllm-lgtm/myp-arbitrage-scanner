@@ -89,7 +89,7 @@ log = logging.getLogger(__name__)
 # ══════════════════════════════════════════════════════════════════════
 BASE_URL = "https://mypcards.com"
 MARGIN_THRESHOLD = 0.25          # 25% margem mínima para alerta
-MIN_PRICE_BRL = 80.0             # preço mínimo EN em R$ (ignora cartas baratas)
+MIN_PRICE_BRL = 50.0             # piso padrão cross-scanner: "carta valiosa" = > R$50 (ignora cartas baratas)
 REQUEST_DELAY = 1.5              # segundos entre requests
 MAX_PAGES_PER_EDITION = 30       # max páginas por edição
 MAX_EDITION_PAGES = 50           # v5.4 H4: cap em get_all_editions (evita infinite loop)
@@ -1546,8 +1546,8 @@ Exemplos:
                        help="Limite de produtos por edição (0 = todos)")
     parser.add_argument("--threshold", type=float, default=25,
                        help="Margem mínima %% para alerta (default: 25)")
-    parser.add_argument("--min-price", type=float, default=80,
-                       help="Preço mínimo EN em R$ (default: 80)")
+    parser.add_argument("--min-price", type=float, default=50,
+                       help="Preço mínimo EN em R$ (default: 50)")
     parser.add_argument("--delay", type=float, default=1.5,
                        help="Delay entre requests em segundos (default: 1.5)")
     parser.add_argument("--min-en-sellers", type=int,
