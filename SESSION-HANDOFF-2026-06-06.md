@@ -9,6 +9,13 @@
 
 ---
 
+## ▶️ PRÓXIMO PASSO (faça isto primeiro)
+
+**Nada técnico está bloqueado** — o scan 2026-06-05 está concluído, commitado e
+pushado. A única pendência é **decisão do operador**: consolidar **PR #17 vs
+PR #18** (overlap — ver seção "⚠️ DECISÃO ABERTA" abaixo). Para rodar um **novo
+daily**, pular direto pra "🛠️ Como rodar NESTE ambiente".
+
 ## 🎯 TL;DR — estado atual
 
 - **Branch desta sessão:** `claude/laughing-clarke-CUWWF` → **PR #18 (draft)**.

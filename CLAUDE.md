@@ -3,6 +3,14 @@
 > Objetivo: "rodar o MYP scanner" tem **um caminho só**. Siga este arquivo e
 > evite re-descobrir coisas que já estão resolvidas no código.
 
+## ▶️ Retomar de onde paramos (leia primeiro)
+
+Ao retomar uma sessão, **leia antes de agir** o handoff mais recente: o arquivo
+`SESSION-HANDOFF-*.md` de data maior no nome (hoje:
+[`SESSION-HANDOFF-2026-06-06.md`](SESSION-HANDOFF-2026-06-06.md)). Ele diz **o
+que já foi feito, onde paramos e o próximo passo**. Depois use o resto deste
+arquivo pro "como rodar".
+
 ## Este é o repo canônico
 
 `matheuscllm-lgtm/myp-arbitrage-scanner` é a **fonte de verdade única** do MYP
