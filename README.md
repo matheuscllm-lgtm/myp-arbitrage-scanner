@@ -237,7 +237,7 @@ gh workflow run weekly-scan.yml --repo matheuscllm-lgtm/myp-arbitrage-scanner \
 |---|---|---|
 | `editions` | (9 substrings hot sets) | Substrings separadas por espaço; `"x y"` agrupa |
 | `threshold` | `25` | Percent integer |
-| `min_price` | `80` | BRL |
+| `min_price` | `50` | BRL (piso padrão cross-scanner: carta valiosa = > R$50) |
 | `delay` | `1.5` | Segundos entre requests |
 | `chunk_total` | `2` | Cap 1-20 |
 
@@ -246,7 +246,7 @@ gh workflow run weekly-scan.yml --repo matheuscllm-lgtm/myp-arbitrage-scanner \
 |---|---|---|
 | `editions` | (vazio = todas) | |
 | `threshold` | `25` | |
-| `min_price` | `80` | |
+| `min_price` | `50` | BRL (piso padrão: > R$50) |
 | `delay` | `1.5` | |
 | `chunk_total` | `6` | Cap 1-20 |
 
