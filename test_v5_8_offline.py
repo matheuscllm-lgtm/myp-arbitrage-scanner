@@ -561,7 +561,63 @@ def test_pagination_gate_skips_untruncated():
         f"gate falhou: paginou produto não-truncado ({sc._stats['seller_pages_followed']} págs)"
     assert all("estoque-outros-page" not in u for u in fetched), \
         f"buscou página extra indevidamente: {fetched}"
-    print(f"  Produto não-truncado: 0 páginas extras (gate de custo OK) ✓")
+    print(f"  Produto não-truncado: 0 páginas extras (truncation gate OK) ✓")
+    return True
+
+
+def test_pagination_cost_gate_low_tcg():
+    """v5.9.1: produto TRUNCADO mas com TCG < min_price NÃO pagina (cost gate).
+
+    Mesmo padrão de truncation do Psyduck (marketplace pág 1 cheia de PT/JP
+    baratos, 0 EN, paginação disponível) MAS com TCG R$50 < min_price R$80.
+    Como o card nunca pode virar deal, paginar pra resolver truncation é puro
+    desperdício — o cost gate pula a paginação e conta pagination_skipped_low_tcg.
+    Contraste com test_marketplace_pagination (TCG R$557 ⟹ ainda pagina)."""
+    from myp_arbitrage_scanner import MYPScraper
+
+    # Lojistas: 2 EN-NM (90, 95) ⟹ lowest EN visível pág-1 = 90 (≥ min_price).
+    lojistas = (
+        '<table class="table-striped table-bordered"><tbody>'
+        + _seller_row("Inglês", "NM - Quase nova", "90,00")
+        + _seller_row("Inglês", "NM - Quase nova", "95,00")
+        + '</tbody></table>'
+    )
+    # Marketplace pág 1: 16 PT/JP baratos (40..70 < 90, 0 EN) ⟹ truncation gate
+    # DISPARA. O cost gate é que deve barrar a paginação (TCG baixo).
+    mkt_rows = ""
+    for i in range(16):
+        price = 40 + i * 2
+        lang = "Português" if i % 2 == 0 else "Japonês"
+        mkt_rows += _seller_row(lang, "NM - Quase nova", f"{price},00")
+    pagination = '<ul class="pagination"><a href="?estoque-outros-page=2">2</a></ul>'
+    html = (
+        '<html><body><h1>Cheap Truncated (010/100)</h1>'
+        '<span class="estat-tcg">TCG Player: R$ 50,00</span>'
+        + lojistas
+        + _marketplace_container(mkt_rows, pagination)
+        + '</body></html>'
+    )
+    fetched = []
+    # min_price pinado em 80 (não depende do default global, que virou R$50
+    # no #20): card com TCG R$50 fica abaixo do piso ⟹ cost gate deve pular.
+    sc = MYPScraper(delay=0.0, min_price=80.0)
+
+    def fake_get(url, save_debug=False):
+        fetched.append(url)
+        return BeautifulSoup(html, "lxml")
+
+    sc._get = fake_get
+    card = sc.scrape_product("https://mypcards.com/pokemon/produto/2/cheaptrunc", "x")
+
+    assert card is not None, "card não deveria ser None (EN visível R$90 ≥ min_price)"
+    # O cost gate pulou a paginação APESAR do sinal de truncation.
+    assert sc._stats["seller_pages_followed"] == 0, \
+        f"cost gate falhou: paginou card TCG<min ({sc._stats['seller_pages_followed']} págs)"
+    assert sc._stats["pagination_skipped_low_tcg"] == 1, \
+        f"pagination_skipped_low_tcg={sc._stats['pagination_skipped_low_tcg']} (esperado 1)"
+    assert all("estoque-outros-page" not in u for u in fetched), \
+        f"buscou página extra indevidamente: {fetched}"
+    print(f"  Truncado + TCG R$50 < R$80: 0 págs, gate contou 1 (cost gate v5.9.1) ✓")
     return True
 
 
@@ -630,7 +686,8 @@ def main():
         ("myp_edition_to_ptcg_setcode (v5.8.9)", test_myp_edition_to_setcode),
         ("tcg_direct_url (v5.8.9)", test_tcg_direct_url),
         ("marketplace pagination (v5.9)", test_marketplace_pagination),
-        ("pagination cost gate (v5.9)", test_pagination_gate_skips_untruncated),
+        ("pagination truncation gate (v5.9)", test_pagination_gate_skips_untruncated),
+        ("pagination cost gate TCG<min (v5.9.1)", test_pagination_cost_gate_low_tcg),
     ]
     failed = 0
     for name, fn in tests:

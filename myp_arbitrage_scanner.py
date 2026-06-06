@@ -17,8 +17,8 @@ Requisitos:
     pip install cloudscraper beautifulsoup4 openpyxl lxml
 
 Autor: Matheus Chillemi / Claude
-Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10)
-Versão: v5.10
+Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10) | 2026-06-07 (v5.10.1)
+Versão: v5.10.1
 
 Changelog v5.1 (2026-05-12 — auditoria C/H/M, mesma metodologia do CT scanner):
   - C1: --threshold < 1.0 auto-converte com warning (UX guard contra trap
@@ -449,6 +449,9 @@ class MYPScraper:
             # páginas extras lidas com sucesso e falhas de fetch dessas páginas.
             "seller_pages_followed": 0,
             "seller_page_fetch_failures": 0,
+            # v5.10.1 (2026-06-07): cost gate — paginações puladas porque o card
+            # tem TCG < min_price (não pode virar deal, não vale o request).
+            "pagination_skipped_low_tcg": 0,
         }
         # v5.4 H1: warn-once cache pra unknown language titles
         self._unknown_lang_seen: set[str] = set()
@@ -991,7 +994,16 @@ class MYPScraper:
         # sequencial respeitando self.delay — NÃO paralelizar (CloudFlare 403).
         truncation_risk = False
         max_seller_page = self._max_seller_page(soup)
-        if page1_truncation_gate and max_seller_page >= 2:
+        # v5.10.1 (2026-06-07): cost gate. Um card só vira deal se MYP-EN ≥
+        # min_price E margem ≥ threshold ⟹ TCG ≥ (1+threshold)·min_price >
+        # min_price. Logo, se TCG < min_price o card NUNCA é deal e seria
+        # filtrado adiante de qualquer forma — paginar pra resolver truncation
+        # aqui é puro desperdício (medido: ~85% das paginações caíam em commons
+        # < R$80). Só paginamos quando o card ainda pode ser deal.
+        can_be_deal = (card.tcg_player_price or 0) >= self.min_price
+        if page1_truncation_gate and max_seller_page >= 2 and not can_be_deal:
+            self._stats["pagination_skipped_low_tcg"] += 1
+        elif page1_truncation_gate and max_seller_page >= 2:
             pages_to_fetch = min(max_seller_page, MAX_SELLER_PAGES)
             log.info(
                 f"  📄 Truncation gate: paginando marketplace de {card.name or url} "
@@ -1261,6 +1273,7 @@ class MYPScraper:
         log.info(f"      Oversized collector# risks (v5.8.5): {self._stats['oversized_collector_risks']}")
         log.info(f"      Seller pages followed (v5.9 pagination): {self._stats['seller_pages_followed']}")
         log.info(f"      Seller page fetch failures (v5.9): {self._stats['seller_page_fetch_failures']}")
+        log.info(f"      Pagination skipped (cost gate TCG<min, v5.10.1): {self._stats['pagination_skipped_low_tcg']}")
         log.info(f"      HTTP retries (M1): {self._stats['http_retries']}")
         log.info("═" * 60)
 

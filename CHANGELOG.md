@@ -1,5 +1,30 @@
 # Changelog
 
+## v5.10.1 — 2026-06-07 — Cost gate: não paginar cards que não podem ser deal
+
+A paginação de truncation da v5.9 gasta 1+N requests por card truncado. Medição
+no full scan: a **maioria** dos cards truncados eram commons baratos filtrados
+depois pelo `--min-price` — paginar pra "resolver" o preço deles era desperdício
+(~85% das paginações).
+
+**Gate:** um card só vira deal se MYP-EN ≥ `min_price` E margem ≥ `threshold`,
+logo `TCG ≥ (1+threshold)·min_price > min_price`. Se `TCG < min_price` o card
+**nunca** é deal. Então só paginamos sob o gate de truncation **quando**
+`card.tcg_player_price ≥ self.min_price` (per-instância — respeita `--min-price`,
+diferente do constante global da implementação paralela original).
+
+- Novo counter `pagination_skipped_low_tcg` no summary.
+- **Zero deals perdidos** — só pula cards que seriam filtrados de qualquer forma.
+- Validação: smoke ME04 ao vivo → 2 cards de valor (Cinccino ex, Frogadier) ainda
+  paginam, 2 commons baratos pulados pelo gate. Teste offline novo
+  `test_pagination_cost_gate_low_tcg` (truncado + TCG R$50 < R$80 ⟹ 0 páginas,
+  counter = 1). **13 testes offline ✓**.
+
+> Nota: rebaseado sobre o `main` v5.10 (PR #9). Re-versionado v5.9.1 → v5.10.1
+> pra não criar gap após o threshold default 30% (v5.10). Mudança ortogonal ao
+> threshold — só evita requests de paginação desperdiçados, não altera quais
+> cards viram deal.
+
 ## v5.10 — 2026-06-06 — Threshold default 30% margem BRUTA (política cross-scanner)
 
 Decisão do operador 2026-06-06 (vale para todos os scanners de TCG): usar
