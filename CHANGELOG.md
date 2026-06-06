@@ -1,5 +1,34 @@
 # Changelog
 
+## v5.10 — 2026-06-06 — Threshold default 30% margem BRUTA (política cross-scanner)
+
+Decisão do operador 2026-06-06 (vale para todos os scanners de TCG): usar
+**margem bruta de 30%** — só a diferença de preço entre produtos, **SEM taxa
+embutida** no cálculo. O operador calcula as taxas (frete, câmbio, comissões)
+por fora.
+
+### Mudanças
+
+1. **`--threshold` default 25 → 30** (percent integer; `30` = 30%). A
+   auto-conversão `<1.0` (warning + ×100) **continua funcionando** — convenção
+   permanece percent integer, oposta ao CardTrader scanner (fração).
+   - `MARGIN_THRESHOLD = 0.25 → 0.30`.
+2. **Workflows** `daily-scan.yml` / `weekly-scan.yml`: fallback de threshold
+   `'25' → '30'` (input default + `|| '30'`) pra bater com a política.
+3. **Margem confirmada BRUTA PURA** — auditado: o cálculo já era
+   `margin_brl = tcg_player_price − myp_lowest_en_nm` e
+   `margin_pct = margin_brl / myp_lowest_en_nm`. **Não havia** nenhuma
+   taxa/fee/markup/multiplicador embutido (diferente do CardTrader, que usa
+   `custo = preço × 1.06`). Nada foi removido — só documentado (docstring +
+   comentário no site do cálculo) que está conforme.
+4. **Piso de preço R$50 MANTIDO** — é filtro de relevância ("carta valiosa"),
+   não taxa; fora do cálculo de margem.
+
+### O que NÃO mudou
+
+- Stack HTTP (cloudscraper firefox), delay 1.5s, chunking, truncation/paginação
+  v5.9, NM-only, EN-only — tudo intacto. Refactor zero na heurística de scrape.
+
 ## v5.9 — 2026-06-03 — Truncation RESOLVIDO: paginação da tabela marketplace
 
 **Root cause achado.** A tabela "demais vendedores" (`#lista-anuncio-demais-vendedores`)
