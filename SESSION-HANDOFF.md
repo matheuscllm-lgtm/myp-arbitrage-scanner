@@ -1,10 +1,56 @@
-# SESSION HANDOFF — 2026-05-16 (consolidado)
+# SESSION-HANDOFF.md — handoff CANÔNICO (leia este)
 
-> **Consolidação de duas sessões paralelas em 2026-05-15/16:**
-> Sessão A (MYP Weekly Rescue) + Sessão B (EV Scanner v0.1 raw→graded).
-> Próxima sessão lê este arquivo + memories listadas abaixo + ativa = continue.
+> ⚠️ **Este é o ÚNICO handoff ativo do repo.** Nome fixo, a verdade mora no
+> `main`. Qualquer sessão (Claude num terminal/web) que for retomar lê **este**
+> arquivo. Não existe "qual handoff assumir" — é sempre este, no `main`.
+
+## 📏 Regra pra sessões paralelas (o motivo desta seção existir)
+
+Cada sessão web cria sua própria branch, então várias conversas rodam em
+paralelo. Pra não virar bagunça de handoffs divergentes:
+
+1. **Só há UM handoff ativo: este (`SESSION-HANDOFF.md`), no `main`.** NÃO crie
+   `SESSION-HANDOFF-<data>.md` por sessão — é exatamente isso que gera o
+   "não sei qual assumir".
+2. **A verdade é o `main`.** Branch/PR aberta = *proposta*, não estado oficial.
+3. Quem mergear pro `main` **atualiza este arquivo no mesmo PR**.
+4. Se duas branches editarem este arquivo, o merge **conflita de propósito** —
+   isso força consolidar em vez de divergir em silêncio.
+5. `HANDOFF-*-<data>.md` e a seção `🗄️ HISTÓRICO` abaixo são **arquivo morto**
+   (referência), não estado atual.
+
+## 🎯 Estado atual — 2026-06-06 (frente: MYP daily)
+
+- **Onde paramos:** scan **Daily Quick 2026-06-05 concluído** — 204 EN cards,
+  **31 deals ≥25%** (1 limpo: Alakazam 003 = 31.1%; 30 supranumerários; 3
+  TCG-suspect), 0 truncation. Markdown (`results/daily-2026-06-05.md` +
+  `latest-daily.md`) + fix **top-50** no `myp_summary.py` commitados na branch
+  `claude/laughing-clarke-CUWWF` (PR #18). `.xlsx` é gitignored (entregue ao
+  operador no chat).
+- **Como rodar / setup:** ver `CLAUDE.md` (caminho canônico). Rodar scan longo
+  em background; pedir o `.xlsx` no chat (container web é efêmero).
+- **PRÓXIMO PASSO:** **consolidar as PRs abertas** (sprawl) — tabela abaixo.
+  Nada técnico está bloqueado.
+
+### ⚠️ PRs abertas a consolidar (decisão do operador)
+
+| PR | Branch | Conteúdo | Sugestão |
+|---|---|---|---|
+| **#18** | `claude/laughing-clarke-CUWWF` | daily 06-05 + top-50 + esta regra/wiring | **mergear** (mais completa) |
+| #17 | `claude/epic-brahmagupta-212NZ` | daily 06-04 **+** 06-05 + top-50 | portar 06-04 p/ #18 e fechar, ou mergear esta no lugar |
+| #15 | `claude/myp-scanner-principal-sets-Ww4YI` | scan manual principal sets | fechar (superseded) |
+| #9 | `claude/kind-pascal-Pv0do` | **código v5.9.2** (fix truncation + cost gate + testes) | **mergear à parte** (é código, valor real) |
+| #7 | `claude/myp-scanner-frequent-deals-6p1Li` | scan manual 05-22 | fechar (antigo) |
+
+> Regra de ouro: **#9 é código** (melhora o scanner) → merge próprio. As demais
+> são resultados de scan redundantes → manter a melhor, fechar o resto.
 
 ---
+
+# 🗄️ HISTÓRICO — frente EV scanner / MYP weekly (2026-05-16)
+
+> Conteúdo abaixo é de sessões anteriores (EV scanner v0.1 + weekly rescue).
+> Pendências P0–P4 e lições ainda podem valer; o **estado atual** está no topo.
 
 ## ✅ Entregas realizadas
 

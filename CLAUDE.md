@@ -5,11 +5,12 @@
 
 ## ▶️ Retomar de onde paramos (leia primeiro)
 
-Ao retomar uma sessão, **leia antes de agir** o handoff mais recente: o arquivo
-`SESSION-HANDOFF-*.md` de data maior no nome (hoje:
-[`SESSION-HANDOFF-2026-06-06.md`](SESSION-HANDOFF-2026-06-06.md)). Ele diz **o
-que já foi feito, onde paramos e o próximo passo**. Depois use o resto deste
-arquivo pro "como rodar".
+Ao retomar, **leia antes de agir** o handoff canônico:
+[`SESSION-HANDOFF.md`](SESSION-HANDOFF.md). É o **único** handoff ativo (nome
+fixo, a verdade mora no `main`) — diz o que foi feito, onde paramos e o próximo
+passo. **Não crie um handoff datado por sessão** (`SESSION-HANDOFF-<data>.md`):
+atualize o `SESSION-HANDOFF.md` e deixe a verdade no `main` — branches/PRs são
+propostas. Depois use o resto deste arquivo pro "como rodar".
 
 ## Este é o repo canônico
 
