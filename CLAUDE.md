@@ -56,6 +56,12 @@ python myp_arbitrage_scanner.py --editions "Ascended Heroes" \
   embutido** no cálculo (diferente do CardTrader, que usa `custo = preço × 1.06`).
   O operador calcula frete/câmbio/comissão por fora. **Não** adicionar
   multiplicador de custo ao cálculo de margem.
+- **Preço TCG = TCGplayer REAL via pokemontcg.io (v5.11)**, convertido USD→BRL
+  com câmbio ao vivo. O campo `.estat-tcg` do MYP **não** é mais a fonte primária
+  (ele mapeava a carta errada em Black Bolt/White Flare base-086 → preço furado);
+  vira **fallback** só onde o pokemontcg.io não cobre. A conversão de moeda **não**
+  é taxa — é só pra comparar BRL com BRL. Defina `POKEMONTCG_API_KEY` (env) p/
+  evitar rate-limit em scans largos.
 - `--min-price 50` = piso de relevância ("carta valiosa" > R$50). É **filtro**,
   não taxa — fica fora do cálculo de margem.
 - Scan é **lento por design** (`--delay` × centenas de produtos × N edições →

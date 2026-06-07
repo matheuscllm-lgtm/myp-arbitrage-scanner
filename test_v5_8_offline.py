@@ -621,6 +621,89 @@ def test_pagination_cost_gate_low_tcg():
     return True
 
 
+def _real_price_page(card_h1, estat_tcg_brl, en_prices):
+    """Página simples: h1 com (NNN/MMM), .estat-tcg declarado, N sellers EN-NM."""
+    rows = "".join(_seller_row("Inglês", "NM - Quase nova", p) for p in en_prices)
+    return (
+        f'<html><body><h1>{card_h1}</h1>'
+        f'<span class="estat-tcg">TCG Player: R$ {estat_tcg_brl}</span>'
+        f'<table class="table-striped table-bordered"><tbody>{rows}</tbody></table>'
+        f'</body></html>'
+    )
+
+
+def test_real_tcg_overrides_estat():
+    """v5.11: preço real do pokemontcg.io SOBREPÕE o `.estat-tcg` inflado do MYP.
+
+    Réplica do Darumaka 097/086 (Black Bolt): MYP declara R$2.867 (.estat-tcg
+    mapeia a carta errada), mas o TCGplayer real é US$13,42. Com câmbio 5,0 o
+    TCG vira R$67,10 → o 'deal' fake de +2289% morre (margem negativa)."""
+    from myp_arbitrage_scanner import MYPScraper
+
+    html = _real_price_page("Darumaka (097/086)", "2.867,75", ["120,00", "130,00"])
+    sc = MYPScraper(delay=0.0, min_price=50.0)
+    sc.fx_usd_brl = 5.0                       # câmbio fixo (sem rede)
+    sc._fetch_ptcg_usd = lambda cid: 13.42    # mock pokemontcg.io (sem rede)
+    sc._get = lambda url, save_debug=False: BeautifulSoup(html, "lxml")
+
+    card = sc.scrape_product("https://mypcards.com/pokemon/produto/9/darumaka",
+                             "SV: Black Bolt")
+    assert card is not None
+    assert card.tcg_source == "pokemontcg.io", f"source={card.tcg_source}"
+    assert abs(card.tcg_real_usd - 13.42) < 0.001, card.tcg_real_usd
+    assert abs(card.tcg_player_price - 67.10) < 0.01, card.tcg_player_price
+    assert abs(card.myp_declared_tcg_brl - 2867.75) < 0.01, card.myp_declared_tcg_brl
+    # O deal fake morreu: TCG real R$67,10 < EN-NM R$120 ⟹ margem negativa.
+    assert card.margin_pct is not None and card.margin_pct < 0, card.margin_pct
+    assert sc._stats["tcg_from_real"] == 1
+    print("  Darumaka: .estat-tcg R$2867 → real US$13,42×5=R$67,10, deal fake morto ✓")
+    return True
+
+
+def test_fallback_to_estat_when_no_coverage():
+    """v5.11: sem cobertura no pokemontcg.io → mantém o `.estat-tcg` do MYP."""
+    from myp_arbitrage_scanner import MYPScraper
+
+    html = _real_price_page("Mega Gengar ex (269/217)", "437,95", ["300,00", "310,00"])
+    sc = MYPScraper(delay=0.0, min_price=50.0)
+    sc.fx_usd_brl = 5.0
+    sc._fetch_ptcg_usd = lambda cid: None     # me2pt5-269 sem preço (caso real)
+    sc._get = lambda url, save_debug=False: BeautifulSoup(html, "lxml")
+
+    card = sc.scrape_product("https://mypcards.com/pokemon/produto/9/gengar",
+                             "Ascended Heroes")
+    assert card is not None
+    assert card.tcg_source == "myp_estat", f"source={card.tcg_source}"
+    assert abs(card.tcg_player_price - 437.95) < 0.01, card.tcg_player_price
+    assert card.tcg_real_usd is None
+    assert sc._stats["tcg_from_myp_fallback"] == 1
+    print("  Mega Gengar: sem cobertura pokemontcg.io → fallback .estat-tcg R$437,95 ✓")
+    return True
+
+
+def test_no_fx_keeps_estat():
+    """v5.11: sem câmbio (fx None) → real-price desativado, usa `.estat-tcg`.
+    Garante que o caminho v5.11 é INERTE quando scan() não rodou (testes
+    offline / FX indisponível)."""
+    from myp_arbitrage_scanner import MYPScraper
+
+    called = []
+    html = _real_price_page("Pikachu ex (179/086)", "200,00", ["100,00", "110,00"])
+    sc = MYPScraper(delay=0.0, min_price=50.0)
+    # fx_usd_brl fica None (default). _fetch_ptcg_usd NÃO deve ser chamado.
+    sc._fetch_ptcg_usd = lambda cid: called.append(cid) or 9.99
+    sc._get = lambda url, save_debug=False: BeautifulSoup(html, "lxml")
+
+    card = sc.scrape_product("https://mypcards.com/pokemon/produto/9/pika",
+                             "SV: Black Bolt")
+    assert card is not None
+    assert card.tcg_source == "myp_estat", f"source={card.tcg_source}"
+    assert abs(card.tcg_player_price - 200.0) < 0.01, card.tcg_player_price
+    assert called == [], f"pokemontcg.io chamado sem câmbio: {called}"
+    print("  Sem câmbio: real-price inerte, usa .estat-tcg R$200 (sem chamar API) ✓")
+    return True
+
+
 def test_parse_brl_formats():
     """v5.8.10: _parse_brl — BR canonical, US-decimal leak, milhares, edge cases.
 
@@ -688,6 +771,9 @@ def main():
         ("marketplace pagination (v5.9)", test_marketplace_pagination),
         ("pagination truncation gate (v5.9)", test_pagination_gate_skips_untruncated),
         ("pagination cost gate TCG<min (v5.9.1)", test_pagination_cost_gate_low_tcg),
+        ("real TCG overrides .estat-tcg (v5.11)", test_real_tcg_overrides_estat),
+        ("fallback to .estat-tcg sem cobertura (v5.11)", test_fallback_to_estat_when_no_coverage),
+        ("sem câmbio mantém .estat-tcg (v5.11)", test_no_fx_keeps_estat),
     ]
     failed = 0
     for name, fn in tests:
