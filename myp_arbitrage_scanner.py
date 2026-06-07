@@ -17,8 +17,8 @@ Requisitos:
     pip install cloudscraper beautifulsoup4 openpyxl lxml
 
 Autor: Matheus Chillemi / Claude
-Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10) | 2026-06-07 (v5.10.1)
-Versão: v5.10.1
+Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10) | 2026-06-07 (v5.10.1 → v5.11)
+Versão: v5.11
 
 Changelog v5.1 (2026-05-12 — auditoria C/H/M, mesma metodologia do CT scanner):
   - C1: --threshold < 1.0 auto-converte com warning (UX guard contra trap
@@ -223,15 +223,58 @@ MYP_EDITION_SUBSTR_TO_PTCG = {
     "Evolving Skies":                    "swsh7",
     # Special sets (não-numerados, fora das eras principais)
     "Pokémon GO":                        "pgo",  # MYP-LOW-d 2026-05-30: special set SWSH-era, não numerado
-    # Black Bolt / White Flare (zsv10pt5/rsv10pt5) propositalmente OMITIDOS:
-    # MYP titles podem ser "Escarlate e Violeta: Black Bolt" mas pokemontcg.io
-    # ainda tinha cobertura instável quando este mapa foi montado. Adicionar
-    # quando weekly probe confirmar 200 estável em base+oversized.
+    # v5.11 (2026-06-07): Black Bolt / White Flare ADICIONADOS. Probe ao vivo
+    # confirmou cobertura pokemontcg.io estável base+oversized (zsv10pt5-1
+    # Snivy, zsv10pt5-97 Darumaka IR, zsv10pt5-172 Zekrom ex, rsv10pt5-102
+    # Lampent, rsv10pt5-168 Jellicent ex — todos 200 com preço TCGplayer real).
+    # Motivava o switch p/ preço real: o `.estat-tcg` do MYP nesses sets base-086
+    # mapeia a carta errada (Darumaka declarado R$2.867 vs real US$13,42).
+    "Black Bolt":                        "zsv10pt5",
+    "White Flare":                       "rsv10pt5",
 }
 
 # Regex (NNN/MMM) — captura numerator e denominator. Reutilizado de
 # write_card_row L871. Definido aqui pra tcg_direct_url também.
 _COLLECTOR_NUM_RE = re.compile(r"\((\d+)\s*/\s*(\d+)\)")
+
+# ══════════════════════════════════════════════════════════════════════
+# v5.11 (2026-06-07): PREÇO TCG REAL via pokemontcg.io + câmbio USD→BRL
+# ──────────────────────────────────────────────────────────────────────
+# Antes (≤v5.10.1) o "TCG R$" vinha do campo `.estat-tcg` da página MYP — um
+# número que o MYP declara. Em sets base-086 (Black Bolt/White Flare) e parte de
+# Destined Rivais esse campo mapeia a carta errada → preço furado (Darumaka
+# 097/086: MYP declarava R$2.867 vs TCGplayer real US$13,42). A partir da v5.11
+# o scanner busca o preço REAL do TCGplayer via pokemontcg.io (USD) e converte
+# pra BRL com câmbio ao vivo, com FALLBACK pro `.estat-tcg` do MYP onde o
+# pokemontcg.io não tem cobertura (ex.: alguns Mega — me2pt5-269 sem preço).
+# ══════════════════════════════════════════════════════════════════════
+PTCG_API_BASE = "https://api.pokemontcg.io/v2/cards/"
+# Câmbio: frankfurter.app (ECB, grátis, sem key); fallback open.er-api.com.
+_FX_SOURCES = (
+    ("frankfurter", "https://api.frankfurter.app/latest?from=USD&to=BRL",
+     lambda j: j.get("rates", {}).get("BRL")),
+    ("er-api", "https://open.er-api.com/v6/latest/USD",
+     lambda j: j.get("rates", {}).get("BRL")),
+)
+
+
+def fetch_usd_brl(session) -> Optional[float]:
+    """Cotação USD→BRL ao vivo (v5.11). Tenta frankfurter, depois er-api.
+
+    Retorna None se ambas falharem — o caller cai no `.estat-tcg` do MYP pra
+    a run inteira (sem câmbio não dá pra converter o preço real em USD)."""
+    for label, url, extract in _FX_SOURCES:
+        try:
+            r = session.get(url, timeout=15)
+            if r.status_code != 200:
+                continue
+            rate = extract(r.json())
+            if rate and float(rate) > 0:
+                log.info(f"  💱 Câmbio USD→BRL: {float(rate):.4f} (fonte: {label})")
+                return float(rate)
+        except Exception as e:  # noqa: BLE001
+            log.debug(f"FX {label} falhou: {e!r}")
+    return None
 
 
 def tcg_search_url(name: str) -> Optional[str]:
@@ -349,7 +392,13 @@ class CardData:
     condition: str = "NM"
     rarity: str = ""
     myp_lowest_en_nm: Optional[float] = None   # menor preço EN NM no MYP
-    tcg_player_price: Optional[float] = None    # preço referência TCG Player (EN)
+    tcg_player_price: Optional[float] = None    # preço TCG usado na margem (BRL)
+    # v5.11 (2026-06-07): proveniência do preço TCG. "pokemontcg.io" = preço
+    # real do TCGplayer (USD convertido p/ BRL); "myp_estat" = fallback no campo
+    # `.estat-tcg` declarado pelo MYP (usado onde o pokemontcg.io não cobre).
+    tcg_source: str = "myp_estat"
+    tcg_real_usd: Optional[float] = None         # preço real em USD (se via pokemontcg.io)
+    myp_declared_tcg_brl: Optional[float] = None # `.estat-tcg` cru do MYP (auditoria)
     # v5.8 H2 (2026-05-16): MYP às vezes reporta .estat-tcg inflado (caso
     # Jirachi PR-SM_SM161: MYP=R$1499 vs TCGPlayer real $26=R$132 = 11x off).
     # Capturar última venda real do MYP pra sanity check.
@@ -413,6 +462,12 @@ class MYPScraper:
             self.session.headers.update(HEADERS)
         self.delay = delay
         self.cards: list[CardData] = []
+        # v5.11 (2026-06-07): preço TCG real via pokemontcg.io + câmbio.
+        # fx_usd_brl é buscado uma vez no início de scan(); fica None em testes
+        # offline (scan() não roda) → real-price path inerte, usa `.estat-tcg`.
+        self.fx_usd_brl: Optional[float] = None
+        self.ptcg_api_key: Optional[str] = os.environ.get("POKEMONTCG_API_KEY") or None
+        self._ptcg_cache: dict[str, Optional[float]] = {}  # cid → preço USD (ou None)
         self._stats = {
             "pages_fetched": 0, "products_scanned": 0, "en_found": 0,
             # M5 fix: counters por motivo de skip (auditoria do funnel)
@@ -452,6 +507,9 @@ class MYPScraper:
             # v5.10.1 (2026-06-07): cost gate — paginações puladas porque o card
             # tem TCG < min_price (não pode virar deal, não vale o request).
             "pagination_skipped_low_tcg": 0,
+            # v5.11 (2026-06-07): proveniência do preço TCG na margem.
+            "tcg_from_real": 0,         # preço real do TCGplayer (pokemontcg.io)
+            "tcg_from_myp_fallback": 0, # fallback no `.estat-tcg` do MYP
         }
         # v5.4 H1: warn-once cache pra unknown language titles
         self._unknown_lang_seen: set[str] = set()
@@ -839,6 +897,71 @@ class MYPScraper:
                 max_page = max(max_page, int(m.group(1)))
         return max_page
 
+    # ── v5.11: preço TCG REAL via pokemontcg.io (USD) ──
+    def _fetch_ptcg_usd(self, cid: str) -> Optional[float]:
+        """Preço real TCGplayer (USD) de um card pelo id pokemontcg.io
+        (`{setcode}-{num}`). Pega o MENOR preço entre as variantes disponíveis
+        (`market`, senão `mid`) — conservador, não superestima a margem.
+
+        Retorna None se: card não existe (404), sem preço, ou erro de rede.
+        Caller trata None como 'sem cobertura' → fallback no `.estat-tcg`."""
+        headers = {"X-Api-Key": self.ptcg_api_key} if self.ptcg_api_key else {}
+        # Sem API key o pokemontcg.io throttle bursts (429). Backoff robusto
+        # pra NÃO cair silenciosamente no `.estat-tcg` furado por rate-limit —
+        # esse fallback mascararia o preço errado justamente nos cards que
+        # queremos corrigir. Definir POKEMONTCG_API_KEY elimina o throttle.
+        backoffs = (5, 15, 30)
+        for attempt in range(len(backoffs) + 1):
+            try:
+                r = self.session.get(PTCG_API_BASE + cid, headers=headers, timeout=20)
+            except Exception as e:  # noqa: BLE001
+                log.debug(f"pokemontcg.io {cid} falhou: {e!r}")
+                return None
+            if r.status_code == 429:
+                if attempt < len(backoffs):
+                    time.sleep(backoffs[attempt])
+                    continue
+                log.warning(f"  ⚠️ pokemontcg.io rate-limited em {cid} após retries "
+                            f"— fallback `.estat-tcg` (defina POKEMONTCG_API_KEY p/ evitar)")
+                return None
+            if r.status_code != 200:   # 404 = sem cobertura (fallback legítimo)
+                return None
+            try:
+                prices = ((r.json().get("data") or {}).get("tcgplayer") or {}).get("prices") or {}
+            except Exception:  # noqa: BLE001
+                return None
+            break
+        vals = []
+        for p in prices.values():
+            v = p.get("market") or p.get("mid")
+            if v and float(v) > 0:
+                vals.append(float(v))
+        return min(vals) if vals else None
+
+    def _real_tcg_brl(self, card_name: str, edition_name: str) -> Optional[float]:
+        """Preço TCG real em BRL (USD do pokemontcg.io × câmbio), com cache por
+        card id. Retorna None (→ fallback `.estat-tcg`) quando: sem câmbio,
+        edição não mapeada, sem (NNN/MMM) no nome, ou sem cobertura."""
+        if not self.fx_usd_brl:
+            return None
+        setcode = myp_edition_to_ptcg_setcode(edition_name)
+        if not setcode:
+            return None
+        m = _COLLECTOR_NUM_RE.search(card_name or "")
+        if not m:
+            return None
+        num = m.group(1).lstrip("0") or "0"
+        cid = f"{setcode}-{num}"
+        if cid in self._ptcg_cache:
+            usd = self._ptcg_cache[cid]
+        else:
+            usd = self._fetch_ptcg_usd(cid)
+            self._ptcg_cache[cid] = usd
+            time.sleep(self.delay)  # cortesia/rate-limit (só em cache miss)
+        if usd is None:
+            return None
+        return usd * self.fx_usd_brl
+
     # ── Step 3: Scrape product detail page (v2 — per-seller language) ─
     def scrape_product(self, url: str, edition_name: str) -> Optional[CardData]:
         """Extract card data from product page, filtering sellers by language.
@@ -904,9 +1027,13 @@ class MYPScraper:
         # vez de falhar parse com texto multi-preço.
         tcg_el = soup.select_one(".estat-tcg")
         if tcg_el:
-            card.tcg_player_price = self._last_brl(tcg_el.get_text())
+            card.myp_declared_tcg_brl = self._last_brl(tcg_el.get_text())
+        # v5.11: provisório = MYP declarado (.estat-tcg). É sobreposto pelo preço
+        # REAL do TCGplayer (pokemontcg.io) depois do parse de sellers, só pra
+        # candidatos ≥ min_price. O skip/suspect-check abaixo usam o declarado.
+        card.tcg_player_price = card.myp_declared_tcg_brl
 
-        # If no TCG Player price, skip this product entirely
+        # If no TCG Player price (MYP não declara), skip this product entirely
         if not card.tcg_player_price:
             self._stats["skipped_no_tcg_price"] += 1
             return None
@@ -1108,6 +1235,22 @@ class MYPScraper:
                 card.rarity = rarity
                 break
 
+        # ── v5.11: preço TCG REAL (pokemontcg.io) p/ candidatos ──
+        # Só busca o preço real pra cards que podem virar deal (EN-NM ≥ min_price)
+        # — limita as requisições ao pokemontcg.io aos relevantes. Onde houver
+        # cobertura, sobrepõe o `.estat-tcg` do MYP (que mapeia a carta errada em
+        # base-086 etc.); onde não houver, mantém o declarado (fallback).
+        if card.myp_lowest_en_nm and card.myp_lowest_en_nm >= self.min_price:
+            real_brl = self._real_tcg_brl(card.name, edition_name)
+            if real_brl is not None:
+                card.tcg_player_price = real_brl
+                card.tcg_real_usd = real_brl / self.fx_usd_brl
+                card.tcg_source = "pokemontcg.io"
+                self._stats["tcg_from_real"] += 1
+            else:
+                card.tcg_source = "myp_estat"
+                self._stats["tcg_from_myp_fallback"] += 1
+
         # ── Calculate margin: lowest EN NM on MYP vs TCG Player EN ──
         # MARGEM BRUTA PURA (política cross-scanner 2026-06-06): só diferença de
         # preço entre produtos, SEM taxa/fee/markup embutido. O operador calcula
@@ -1178,6 +1321,18 @@ class MYPScraper:
         if chunk_total > 1:
             log.info(f"  Chunk: {chunk_index}/{chunk_total} (interleaved)")
         log.info("═" * 60)
+
+        # v5.11: câmbio USD→BRL buscado UMA vez por run (preço real do TCGplayer
+        # vem em USD). Se falhar, fx_usd_brl=None → todos os cards caem no
+        # `.estat-tcg` do MYP (degrada pro comportamento ≤v5.10.1, com warning).
+        self.fx_usd_brl = fetch_usd_brl(self.session)
+        if self.fx_usd_brl:
+            src = "key" if self.ptcg_api_key else "sem key (rate-limit menor)"
+            log.info(f"  💲 Preço TCG real via pokemontcg.io ATIVO ({src}); "
+                     f"fallback `.estat-tcg` onde não houver cobertura.")
+        else:
+            log.warning("  ⚠️ Sem câmbio USD→BRL — usando `.estat-tcg` (MYP) pra "
+                        "todos os cards nesta run (preço real desativado).")
 
         editions = self.get_all_editions()
 
@@ -1274,6 +1429,8 @@ class MYPScraper:
         log.info(f"      Seller pages followed (v5.9 pagination): {self._stats['seller_pages_followed']}")
         log.info(f"      Seller page fetch failures (v5.9): {self._stats['seller_page_fetch_failures']}")
         log.info(f"      Pagination skipped (cost gate TCG<min, v5.10.1): {self._stats['pagination_skipped_low_tcg']}")
+        log.info(f"      TCG real via pokemontcg.io (v5.11): {self._stats['tcg_from_real']}")
+        log.info(f"      TCG fallback .estat-tcg MYP (v5.11): {self._stats['tcg_from_myp_fallback']}")
         log.info(f"      HTTP retries (M1): {self._stats['http_retries']}")
         log.info("═" * 60)
 

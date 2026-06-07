@@ -1,5 +1,52 @@
 # Changelog
 
+## v5.11 — 2026-06-07 — Preço TCG REAL via pokemontcg.io (fim do `.estat-tcg` furado)
+
+**Problema (decisão do operador 2026-06-07).** O "TCG R$" vinha do campo
+`.estat-tcg` que o **MYP declara** na página do produto. Em sets base-086
+(**Black Bolt / White Flare**) e parte de **Destined Rivals**, esse campo mapeia
+a carta errada → preço furado. Caso medido: Darumaka 097/086 — MYP declarava
+**R$2.867,75** vs TCGplayer **real US$13,42** (~R$73). Resultado: "deals" de
++2289% que eram puro artefato.
+
+**Mudança.** O scanner passa a buscar o **preço REAL do TCGplayer via
+`pokemontcg.io`** (USD) e converter pra BRL com **câmbio ao vivo**, com
+**FALLBACK** pro `.estat-tcg` do MYP onde o pokemontcg.io não tem cobertura.
+
+### Como funciona
+1. **Câmbio USD→BRL** buscado **uma vez por run** (`fetch_usd_brl`): frankfurter.app
+   (ECB), fallback open.er-api.com. Sem câmbio → real-price desativado na run
+   (cai pro `.estat-tcg`, com warning).
+2. **Preço real** (`_real_tcg_brl` / `_fetch_ptcg_usd`): resolve set via
+   `MYP_EDITION_SUBSTR_TO_PTCG` + número (NNN/MMM) → `pokemontcg.io/v2/cards/{setcode}-{num}`
+   → menor `market` (senão `mid`) entre as variantes (conservador, não infla a
+   margem). Cache por card id; `sleep(delay)` só em cache-miss; backoff robusto
+   em 429 (5/15/30s); suporta `POKEMONTCG_API_KEY` (env) p/ eliminar throttle.
+3. **Gate de custo:** preço real só é buscado pra **candidatos** (EN-NM ≥
+   `min_price`) — limita as requisições aos cards relevantes.
+4. **Híbrido:** onde houver cobertura, usa o real; senão mantém o `.estat-tcg`
+   (ex.: `me2pt5-269` Mega Gengar AH sem preço lá → fallback). Counters
+   `tcg_from_real` / `tcg_from_myp_fallback` no summary.
+
+### Sets adicionados ao mapa pokemontcg.io
+- **Black Bolt → `zsv10pt5`**, **White Flare → `rsv10pt5`** (estavam omitidos
+  esperando confirmar cobertura; probe ao vivo 2026-06-07 confirmou base+oversized).
+
+### Campos novos no CardData (auditoria)
+- `tcg_source` (`pokemontcg.io` | `myp_estat`), `tcg_real_usd`, `myp_declared_tcg_brl`.
+
+### Validação
+- **16 testes offline ✓** (3 novos: override real, fallback sem cobertura, inerte
+  sem câmbio). O caminho real-price é **inerte offline** (fx None sem `scan()`).
+- Smoke ao vivo (Black Bolt): câmbio 5,06 buscado, 5/7 cards com preço real
+  (Zekrom ex corrigido p/ R$2.634 real = 31,7%), 2 fallback.
+
+### Notas / limitações
+- A margem segue **bruta pura**; a conversão USD→BRL é só pra deixar os dois
+  preços na mesma moeda — não é fee.
+- **Sem `POKEMONTCG_API_KEY`**, scans grandes podem sofrer 429 e (após backoff)
+  cair no `.estat-tcg` de alguns cards. Recomendado definir a key p/ runs largos.
+
 ## v5.10.1 — 2026-06-07 — Cost gate: não paginar cards que não podem ser deal
 
 A paginação de truncation da v5.9 gasta 1+N requests por card truncado. Medição

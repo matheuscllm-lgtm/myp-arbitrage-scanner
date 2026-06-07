@@ -53,10 +53,20 @@ Em português simples: é só a **diferença de preço** entre o que a carta val
 fora (TCG Player, em US$ convertido) e o que custa o exemplar EN-NM mais barato
 no MYP (em R$), dividida pelo preço do MYP. Resultado em percent.
 
-**Sem nenhuma taxa embutida.** O cálculo NÃO aplica frete, câmbio, comissão,
-markup de revenda nem impostos. É **margem bruta, não líquida** — o operador
-calcula os custos reais por fora, caso a caso. (Isto é o oposto do scanner
-CardTrader, que embute `custo = preço × 1.06` no cálculo.)
+**Fonte do preço TCG (v5.11): TCGplayer REAL via `pokemontcg.io`**, convertido
+USD→BRL com câmbio ao vivo (frankfurter/ECB). Antes o scanner confiava no campo
+`.estat-tcg` que o próprio MYP declarava — mas em Black Bolt/White Flare (base
+086) e parte de Destined Rivals esse número mapeava a carta errada e inflava
+"deals" fantasmas (Darumaka 097/086: MYP dizia R$2.867 vs real US$13,42). Agora
+usa o preço real, com **fallback** pro `.estat-tcg` só onde o pokemontcg.io não
+cobre (ex.: alguns Mega). Defina `POKEMONTCG_API_KEY` (env) p/ evitar rate-limit
+em scans largos.
+
+**Sem nenhuma taxa embutida.** O cálculo NÃO aplica frete, comissão, markup de
+revenda nem impostos. A única conversão é o câmbio USD→BRL (pra comparar BRL com
+BRL) — **não** é fee. É **margem bruta, não líquida** — o operador calcula os
+custos reais por fora. (Oposto do scanner CardTrader, que embute `custo = preço
+× 1.06`.)
 
 **Threshold padrão = 30%** (margem bruta mínima pra um card virar "deal").
 
@@ -505,6 +515,8 @@ Ver `CHANGELOG.md` no repo. Marcos:
 - **v5.5.1** (2026-05-14): empty chunk legitimacy (exit 0 quando slicing deixa chunk vazio)
 - **v5.6** (2026-05-14): markdown summary auto-commit no `results/` folder
 - **v5.10** (2026-06-06): threshold default 25→30 (margem BRUTA, sem taxa embutida); política cross-scanner. Ver `CHANGELOG.md` pro histórico v5.7–v5.9.
+- **v5.10.1** (2026-06-07): cost gate — não pagina truncation de card com TCG < min_price.
+- **v5.11** (2026-06-07): preço TCG **real** via pokemontcg.io (USD→BRL câmbio ao vivo), fim do `.estat-tcg` furado em Black Bolt/White Flare; fallback híbrido onde não há cobertura.
 
 ---
 
