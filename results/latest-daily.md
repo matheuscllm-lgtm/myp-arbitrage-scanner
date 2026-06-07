@@ -4,14 +4,14 @@ date: 2026-06-07
 type: daily
 source: local scan
 ---
-> ⏳ **Run parcial em andamento** — 1/20 edições concluídas (última: ME: Ascended Heroes). Atualizado 2026-06-07 15:49 UTC. Mais edições serão adicionadas nos próximos checkpoints.
+> ⏳ **Run parcial em andamento** — 1/20 edições concluídas (última: ME: Ascended Heroes). Atualizado 2026-06-07 19:06 UTC. Mais edições serão adicionadas nos próximos checkpoints.
 
 
 # MYP Scan Daily Quick — 2026-06-07
 
-**Cards EN escaneados:** 27 | **Deals (≥25%):** 10 | **Limpos:** 0 | **🚨 TCG suspects:** 0 | **Truncation:** 0
+**Cards EN escaneados:** 35 | **Deals (≥30%):** 7 | **Limpos:** 0 | **🚨 TCG suspects:** 0 | **Truncation:** 0
 
-## 🟢 Top 15 deals limpos (sem flag SIR/HR/SAR)
+## 🟢 Top 50 deals limpos (sem flag SIR/HR/SAR)
 
 > Nenhum deal limpo nesta run.
 
@@ -34,4 +34,4 @@ source: local scan
 
 ---
 
-*Gerado em 2026-06-07 15:49 UTC via `myp_summary.py` (single source: XLSX consolidado).*
+*Gerado em 2026-06-07 19:06 UTC via `myp_summary.py` (single source: XLSX consolidado).*
