@@ -561,7 +561,146 @@ def test_pagination_gate_skips_untruncated():
         f"gate falhou: paginou produto não-truncado ({sc._stats['seller_pages_followed']} págs)"
     assert all("estoque-outros-page" not in u for u in fetched), \
         f"buscou página extra indevidamente: {fetched}"
-    print(f"  Produto não-truncado: 0 páginas extras (gate de custo OK) ✓")
+    print(f"  Produto não-truncado: 0 páginas extras (truncation gate OK) ✓")
+    return True
+
+
+def test_pagination_cost_gate_low_tcg():
+    """v5.9.1: produto TRUNCADO mas com TCG < min_price NÃO pagina (cost gate).
+
+    Mesmo padrão de truncation do Psyduck (marketplace pág 1 cheia de PT/JP
+    baratos, 0 EN, paginação disponível) MAS com TCG R$50 < min_price R$80.
+    Como o card nunca pode virar deal, paginar pra resolver truncation é puro
+    desperdício — o cost gate pula a paginação e conta pagination_skipped_low_tcg.
+    Contraste com test_marketplace_pagination (TCG R$557 ⟹ ainda pagina)."""
+    from myp_arbitrage_scanner import MYPScraper
+
+    # Lojistas: 2 EN-NM (90, 95) ⟹ lowest EN visível pág-1 = 90 (≥ min_price).
+    lojistas = (
+        '<table class="table-striped table-bordered"><tbody>'
+        + _seller_row("Inglês", "NM - Quase nova", "90,00")
+        + _seller_row("Inglês", "NM - Quase nova", "95,00")
+        + '</tbody></table>'
+    )
+    # Marketplace pág 1: 16 PT/JP baratos (40..70 < 90, 0 EN) ⟹ truncation gate
+    # DISPARA. O cost gate é que deve barrar a paginação (TCG baixo).
+    mkt_rows = ""
+    for i in range(16):
+        price = 40 + i * 2
+        lang = "Português" if i % 2 == 0 else "Japonês"
+        mkt_rows += _seller_row(lang, "NM - Quase nova", f"{price},00")
+    pagination = '<ul class="pagination"><a href="?estoque-outros-page=2">2</a></ul>'
+    html = (
+        '<html><body><h1>Cheap Truncated (010/100)</h1>'
+        '<span class="estat-tcg">TCG Player: R$ 50,00</span>'
+        + lojistas
+        + _marketplace_container(mkt_rows, pagination)
+        + '</body></html>'
+    )
+    fetched = []
+    # min_price pinado em 80 (não depende do default global, que virou R$50
+    # no #20): card com TCG R$50 fica abaixo do piso ⟹ cost gate deve pular.
+    sc = MYPScraper(delay=0.0, min_price=80.0)
+
+    def fake_get(url, save_debug=False):
+        fetched.append(url)
+        return BeautifulSoup(html, "lxml")
+
+    sc._get = fake_get
+    card = sc.scrape_product("https://mypcards.com/pokemon/produto/2/cheaptrunc", "x")
+
+    assert card is not None, "card não deveria ser None (EN visível R$90 ≥ min_price)"
+    # O cost gate pulou a paginação APESAR do sinal de truncation.
+    assert sc._stats["seller_pages_followed"] == 0, \
+        f"cost gate falhou: paginou card TCG<min ({sc._stats['seller_pages_followed']} págs)"
+    assert sc._stats["pagination_skipped_low_tcg"] == 1, \
+        f"pagination_skipped_low_tcg={sc._stats['pagination_skipped_low_tcg']} (esperado 1)"
+    assert all("estoque-outros-page" not in u for u in fetched), \
+        f"buscou página extra indevidamente: {fetched}"
+    print(f"  Truncado + TCG R$50 < R$80: 0 págs, gate contou 1 (cost gate v5.9.1) ✓")
+    return True
+
+
+def _real_price_page(card_h1, estat_tcg_brl, en_prices):
+    """Página simples: h1 com (NNN/MMM), .estat-tcg declarado, N sellers EN-NM."""
+    rows = "".join(_seller_row("Inglês", "NM - Quase nova", p) for p in en_prices)
+    return (
+        f'<html><body><h1>{card_h1}</h1>'
+        f'<span class="estat-tcg">TCG Player: R$ {estat_tcg_brl}</span>'
+        f'<table class="table-striped table-bordered"><tbody>{rows}</tbody></table>'
+        f'</body></html>'
+    )
+
+
+def test_real_tcg_overrides_estat():
+    """v5.11: preço real do pokemontcg.io SOBREPÕE o `.estat-tcg` inflado do MYP.
+
+    Réplica do Darumaka 097/086 (Black Bolt): MYP declara R$2.867 (.estat-tcg
+    mapeia a carta errada), mas o TCGplayer real é US$13,42. Com câmbio 5,0 o
+    TCG vira R$67,10 → o 'deal' fake de +2289% morre (margem negativa)."""
+    from myp_arbitrage_scanner import MYPScraper
+
+    html = _real_price_page("Darumaka (097/086)", "2.867,75", ["120,00", "130,00"])
+    sc = MYPScraper(delay=0.0, min_price=50.0)
+    sc.fx_usd_brl = 5.0                       # câmbio fixo (sem rede)
+    sc._fetch_ptcg_usd = lambda cid: 13.42    # mock pokemontcg.io (sem rede)
+    sc._get = lambda url, save_debug=False: BeautifulSoup(html, "lxml")
+
+    card = sc.scrape_product("https://mypcards.com/pokemon/produto/9/darumaka",
+                             "SV: Black Bolt")
+    assert card is not None
+    assert card.tcg_source == "pokemontcg.io", f"source={card.tcg_source}"
+    assert abs(card.tcg_real_usd - 13.42) < 0.001, card.tcg_real_usd
+    assert abs(card.tcg_player_price - 67.10) < 0.01, card.tcg_player_price
+    assert abs(card.myp_declared_tcg_brl - 2867.75) < 0.01, card.myp_declared_tcg_brl
+    # O deal fake morreu: TCG real R$67,10 < EN-NM R$120 ⟹ margem negativa.
+    assert card.margin_pct is not None and card.margin_pct < 0, card.margin_pct
+    assert sc._stats["tcg_from_real"] == 1
+    print("  Darumaka: .estat-tcg R$2867 → real US$13,42×5=R$67,10, deal fake morto ✓")
+    return True
+
+
+def test_fallback_to_estat_when_no_coverage():
+    """v5.11: sem cobertura no pokemontcg.io → mantém o `.estat-tcg` do MYP."""
+    from myp_arbitrage_scanner import MYPScraper
+
+    html = _real_price_page("Mega Gengar ex (269/217)", "437,95", ["300,00", "310,00"])
+    sc = MYPScraper(delay=0.0, min_price=50.0)
+    sc.fx_usd_brl = 5.0
+    sc._fetch_ptcg_usd = lambda cid: None     # me2pt5-269 sem preço (caso real)
+    sc._get = lambda url, save_debug=False: BeautifulSoup(html, "lxml")
+
+    card = sc.scrape_product("https://mypcards.com/pokemon/produto/9/gengar",
+                             "Ascended Heroes")
+    assert card is not None
+    assert card.tcg_source == "myp_estat", f"source={card.tcg_source}"
+    assert abs(card.tcg_player_price - 437.95) < 0.01, card.tcg_player_price
+    assert card.tcg_real_usd is None
+    assert sc._stats["tcg_from_myp_fallback"] == 1
+    print("  Mega Gengar: sem cobertura pokemontcg.io → fallback .estat-tcg R$437,95 ✓")
+    return True
+
+
+def test_no_fx_keeps_estat():
+    """v5.11: sem câmbio (fx None) → real-price desativado, usa `.estat-tcg`.
+    Garante que o caminho v5.11 é INERTE quando scan() não rodou (testes
+    offline / FX indisponível)."""
+    from myp_arbitrage_scanner import MYPScraper
+
+    called = []
+    html = _real_price_page("Pikachu ex (179/086)", "200,00", ["100,00", "110,00"])
+    sc = MYPScraper(delay=0.0, min_price=50.0)
+    # fx_usd_brl fica None (default). _fetch_ptcg_usd NÃO deve ser chamado.
+    sc._fetch_ptcg_usd = lambda cid: called.append(cid) or 9.99
+    sc._get = lambda url, save_debug=False: BeautifulSoup(html, "lxml")
+
+    card = sc.scrape_product("https://mypcards.com/pokemon/produto/9/pika",
+                             "SV: Black Bolt")
+    assert card is not None
+    assert card.tcg_source == "myp_estat", f"source={card.tcg_source}"
+    assert abs(card.tcg_player_price - 200.0) < 0.01, card.tcg_player_price
+    assert called == [], f"pokemontcg.io chamado sem câmbio: {called}"
+    print("  Sem câmbio: real-price inerte, usa .estat-tcg R$200 (sem chamar API) ✓")
     return True
 
 
@@ -630,7 +769,11 @@ def main():
         ("myp_edition_to_ptcg_setcode (v5.8.9)", test_myp_edition_to_setcode),
         ("tcg_direct_url (v5.8.9)", test_tcg_direct_url),
         ("marketplace pagination (v5.9)", test_marketplace_pagination),
-        ("pagination cost gate (v5.9)", test_pagination_gate_skips_untruncated),
+        ("pagination truncation gate (v5.9)", test_pagination_gate_skips_untruncated),
+        ("pagination cost gate TCG<min (v5.9.1)", test_pagination_cost_gate_low_tcg),
+        ("real TCG overrides .estat-tcg (v5.11)", test_real_tcg_overrides_estat),
+        ("fallback to .estat-tcg sem cobertura (v5.11)", test_fallback_to_estat_when_no_coverage),
+        ("sem câmbio mantém .estat-tcg (v5.11)", test_no_fx_keeps_estat),
     ]
     failed = 0
     for name, fn in tests:

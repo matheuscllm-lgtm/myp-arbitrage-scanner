@@ -1,5 +1,106 @@
 # Changelog
 
+## v5.11 — 2026-06-07 — Preço TCG REAL via pokemontcg.io (fim do `.estat-tcg` furado)
+
+**Problema (decisão do operador 2026-06-07).** O "TCG R$" vinha do campo
+`.estat-tcg` que o **MYP declara** na página do produto. Em sets base-086
+(**Black Bolt / White Flare**) e parte de **Destined Rivals**, esse campo mapeia
+a carta errada → preço furado. Caso medido: Darumaka 097/086 — MYP declarava
+**R$2.867,75** vs TCGplayer **real US$13,42** (~R$73). Resultado: "deals" de
++2289% que eram puro artefato.
+
+**Mudança.** O scanner passa a buscar o **preço REAL do TCGplayer via
+`pokemontcg.io`** (USD) e converter pra BRL com **câmbio ao vivo**, com
+**FALLBACK** pro `.estat-tcg` do MYP onde o pokemontcg.io não tem cobertura.
+
+### Como funciona
+1. **Câmbio USD→BRL** buscado **uma vez por run** (`fetch_usd_brl`): frankfurter.app
+   (ECB), fallback open.er-api.com. Sem câmbio → real-price desativado na run
+   (cai pro `.estat-tcg`, com warning).
+2. **Preço real** (`_real_tcg_brl` / `_fetch_ptcg_usd`): resolve set via
+   `MYP_EDITION_SUBSTR_TO_PTCG` + número (NNN/MMM) → `pokemontcg.io/v2/cards/{setcode}-{num}`
+   → menor `market` (senão `mid`) entre as variantes (conservador, não infla a
+   margem). Cache por card id; `sleep(delay)` só em cache-miss; backoff robusto
+   em 429 (5/15/30s); suporta `POKEMONTCG_API_KEY` (env) p/ eliminar throttle.
+3. **Gate de custo:** preço real só é buscado pra **candidatos** (EN-NM ≥
+   `min_price`) — limita as requisições aos cards relevantes.
+4. **Híbrido:** onde houver cobertura, usa o real; senão mantém o `.estat-tcg`
+   (ex.: `me2pt5-269` Mega Gengar AH sem preço lá → fallback). Counters
+   `tcg_from_real` / `tcg_from_myp_fallback` no summary.
+
+### Sets adicionados ao mapa pokemontcg.io
+- **Black Bolt → `zsv10pt5`**, **White Flare → `rsv10pt5`** (estavam omitidos
+  esperando confirmar cobertura; probe ao vivo 2026-06-07 confirmou base+oversized).
+
+### Campos novos no CardData (auditoria)
+- `tcg_source` (`pokemontcg.io` | `myp_estat`), `tcg_real_usd`, `myp_declared_tcg_brl`.
+
+### Validação
+- **16 testes offline ✓** (3 novos: override real, fallback sem cobertura, inerte
+  sem câmbio). O caminho real-price é **inerte offline** (fx None sem `scan()`).
+- Smoke ao vivo (Black Bolt): câmbio 5,06 buscado, 5/7 cards com preço real
+  (Zekrom ex corrigido p/ R$2.634 real = 31,7%), 2 fallback.
+
+### Notas / limitações
+- A margem segue **bruta pura**; a conversão USD→BRL é só pra deixar os dois
+  preços na mesma moeda — não é fee.
+- **Sem `POKEMONTCG_API_KEY`**, scans grandes podem sofrer 429 e (após backoff)
+  cair no `.estat-tcg` de alguns cards. Recomendado definir a key p/ runs largos.
+
+## v5.10.1 — 2026-06-07 — Cost gate: não paginar cards que não podem ser deal
+
+A paginação de truncation da v5.9 gasta 1+N requests por card truncado. Medição
+no full scan: a **maioria** dos cards truncados eram commons baratos filtrados
+depois pelo `--min-price` — paginar pra "resolver" o preço deles era desperdício
+(~85% das paginações).
+
+**Gate:** um card só vira deal se MYP-EN ≥ `min_price` E margem ≥ `threshold`,
+logo `TCG ≥ (1+threshold)·min_price > min_price`. Se `TCG < min_price` o card
+**nunca** é deal. Então só paginamos sob o gate de truncation **quando**
+`card.tcg_player_price ≥ self.min_price` (per-instância — respeita `--min-price`,
+diferente do constante global da implementação paralela original).
+
+- Novo counter `pagination_skipped_low_tcg` no summary.
+- **Zero deals perdidos** — só pula cards que seriam filtrados de qualquer forma.
+- Validação: smoke ME04 ao vivo → 2 cards de valor (Cinccino ex, Frogadier) ainda
+  paginam, 2 commons baratos pulados pelo gate. Teste offline novo
+  `test_pagination_cost_gate_low_tcg` (truncado + TCG R$50 < R$80 ⟹ 0 páginas,
+  counter = 1). **13 testes offline ✓**.
+
+> Nota: rebaseado sobre o `main` v5.10 (PR #9). Re-versionado v5.9.1 → v5.10.1
+> pra não criar gap após o threshold default 30% (v5.10). Mudança ortogonal ao
+> threshold — só evita requests de paginação desperdiçados, não altera quais
+> cards viram deal.
+
+## v5.10 — 2026-06-06 — Threshold default 30% margem BRUTA (política cross-scanner)
+
+Decisão do operador 2026-06-06 (vale para todos os scanners de TCG): usar
+**margem bruta de 30%** — só a diferença de preço entre produtos, **SEM taxa
+embutida** no cálculo. O operador calcula as taxas (frete, câmbio, comissões)
+por fora.
+
+### Mudanças
+
+1. **`--threshold` default 25 → 30** (percent integer; `30` = 30%). A
+   auto-conversão `<1.0` (warning + ×100) **continua funcionando** — convenção
+   permanece percent integer, oposta ao CardTrader scanner (fração).
+   - `MARGIN_THRESHOLD = 0.25 → 0.30`.
+2. **Workflows** `daily-scan.yml` / `weekly-scan.yml`: fallback de threshold
+   `'25' → '30'` (input default + `|| '30'`) pra bater com a política.
+3. **Margem confirmada BRUTA PURA** — auditado: o cálculo já era
+   `margin_brl = tcg_player_price − myp_lowest_en_nm` e
+   `margin_pct = margin_brl / myp_lowest_en_nm`. **Não havia** nenhuma
+   taxa/fee/markup/multiplicador embutido (diferente do CardTrader, que usa
+   `custo = preço × 1.06`). Nada foi removido — só documentado (docstring +
+   comentário no site do cálculo) que está conforme.
+4. **Piso de preço R$50 MANTIDO** — é filtro de relevância ("carta valiosa"),
+   não taxa; fora do cálculo de margem.
+
+### O que NÃO mudou
+
+- Stack HTTP (cloudscraper firefox), delay 1.5s, chunking, truncation/paginação
+  v5.9, NM-only, EN-only — tudo intacto. Refactor zero na heurística de scrape.
+
 ## v5.9 — 2026-06-03 — Truncation RESOLVIDO: paginação da tabela marketplace
 
 **Root cause achado.** A tabela "demais vendedores" (`#lista-anuncio-demais-vendedores`)

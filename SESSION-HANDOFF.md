@@ -1,10 +1,99 @@
-# SESSION HANDOFF — 2026-05-16 (consolidado)
+# SESSION-HANDOFF.md — handoff CANÔNICO (leia este)
 
-> **Consolidação de duas sessões paralelas em 2026-05-15/16:**
-> Sessão A (MYP Weekly Rescue) + Sessão B (EV Scanner v0.1 raw→graded).
-> Próxima sessão lê este arquivo + memories listadas abaixo + ativa = continue.
+> ⚠️ **Este é o ÚNICO handoff ativo do repo.** Nome fixo, a verdade mora no
+> `main`. Qualquer sessão (Claude num terminal/web) que for retomar lê **este**
+> arquivo. Não existe "qual handoff assumir" — é sempre este, no `main`.
+
+## 📏 Regra pra sessões paralelas (o motivo desta seção existir)
+
+Cada sessão web cria sua própria branch, então várias conversas rodam em
+paralelo. Pra não virar bagunça de handoffs divergentes:
+
+1. **Só há UM handoff ativo: este (`SESSION-HANDOFF.md`), no `main`.** NÃO crie
+   `SESSION-HANDOFF-<data>.md` por sessão — é exatamente isso que gera o
+   "não sei qual assumir".
+2. **A verdade é o `main`.** Branch/PR aberta = *proposta*, não estado oficial.
+3. Quem mergear pro `main` **atualiza este arquivo no mesmo PR**.
+4. Se duas branches editarem este arquivo, o merge **conflita de propósito** —
+   isso força consolidar em vez de divergir em silêncio.
+5. `HANDOFF-*-<data>.md` e a seção `🗄️ HISTÓRICO` abaixo são **arquivo morto**
+   (referência), não estado atual.
+
+## ▶️ PRÓXIMO PASSO (faça isto primeiro)
+
+Nada técnico bloqueado. Faltam **2 ações do operador** (merge manual — `main` é gateado):
+
+1. **Mergear PR #18** → leva este handoff + a regra anti-sprawl + o wiring do
+   `CLAUDE.md` pro `main`. **Só depois disso** uma sessão nova aberta no `main`
+   acha este arquivo sozinha.
+2. **Revisar/mergear PR #9** → cost gate v5.9.1 (scan mais rápido). É código,
+   pronto pra revisão.
+
+## 🧭 Meta / o que o projeto faz
+
+MYP Arbitrage Scanner: compara preço de singles Pokémon **EN-NM** no
+**mypcards.com** (Brasil) vs **TCG Player**, e lista cards onde MYP < TCG por
+margem **≥25%** (arbitragem). Roda scans (daily/weekly), gera resumo markdown em
+`results/`. O operador revisa os deals e opera os **limpos** — os
+supranumerários (`card_num > set_total`) e TCG-suspect são quase sempre artefato
+(`.estat-tcg` inflado), **validar manual antes de comprar**.
+
+- Scanner canônico: `myp_arbitrage_scanner.py` (v5.9 no `main`). Como rodar: `CLAUDE.md`.
+- Resumo: `myp_summary.py`. `.xlsx` é **gitignored** (só markdown entra no repo).
+
+## 📋 Contexto desta sessão (2026-06-06)
+
+Rodamos no **Claude Code web** (container efêmero, não o PC local). Descobertas:
+- **O scanner roda na web sem CF 403** — a memória antiga dizia "datacenter IP =
+  403"; **não vale mais** (scan de 3.124 produtos, 0 falhas, fingerprint firefox
+  pega 200). Dá pra rodar scan real aqui.
+- Daily Quick = **~2h41** single-session. Rodar em background; pedir o `.xlsx` no chat.
+- **Sprawl:** cada sessão web cria 1 branch → tinha **5 PRs abertas** quase todas
+  com scans redundantes + handoffs duplicados. Consolidado (ver PRs abaixo).
+
+## ✅ Alterações desta sessão
+
+1. **Scan Daily Quick 2026-06-05** (20 edições) → `results/daily-2026-06-05.md`. [#18]
+2. **Fix top-50** no `myp_summary.py`: mostrava só top-15/10 e escondia deals →
+   agora mostra todos. [#18]
+3. **Portado** `results/daily-2026-06-04.md` da antiga #17. [#18]
+4. **Handoff canônico** (este arquivo) + **regra anti-sprawl** + `CLAUDE.md`
+   aponta pra ele. [#18]
+5. **Cost gate v5.9.1** (PR #9 reescrita): não paginar truncation quando
+   `TCG < min_price` (~85% menos requests, scan mais rápido). 13 testes offline
+   ✓, smoke ao vivo ✓. [#9]
+6. **Consolidação:** fechadas #7, #15, #17 (redundantes), com motivo em cada.
+
+## 🔧 Correções feitas
+
+- **Summary truncava deals** → top-50 em todas as categorias.
+- **Ambiguidade de handoff** (vários por sessão) → 1 só canônico + regra.
+- **PR #9 era reimplementação paralela** (core já no `main` via #13) → resetada
+  pro `main` + só o cost gate único portado (sem rebase conflituoso). Usa
+  `self.min_price` (per-instância) em vez do constante global.
+- **Teste mal nomeado** ("cost gate" que testava o truncation gate) → relabel +
+  teste de cost gate real adicionado.
+
+## 📦 Resultado do scan 2026-06-05
+
+204 EN cards · **31 deals ≥25%** (1 limpo: **Alakazam 003 = 31.1%**; 30
+supranumerários; 3 TCG-suspect) · 0 truncation · 3.970 pages / 3.124 products /
+702 seller-pages paginadas (0 falhas). Daily 06-04: 205 EN, 31 deals.
+
+## 🗂️ Estado das PRs (pós-consolidação)
+
+| PR | Status | Conteúdo |
+|---|---|---|
+| **#18** | open, **Ready** | daily 06-04/06-05 + top-50 + handoff canônico + regra |
+| **#9** | open, **draft** | cost gate v5.9.1 (código, pra revisar) |
+| #7 / #15 / #17 | 🔒 fechadas | redundantes (06-04 portado p/ #18 antes de fechar) |
 
 ---
+
+# 🗄️ HISTÓRICO — frente EV scanner / MYP weekly (2026-05-16)
+
+> Conteúdo abaixo é de sessões anteriores (EV scanner v0.1 + weekly rescue).
+> Pendências P0–P4 e lições ainda podem valer; o **estado atual** está no topo.
 
 ## ✅ Entregas realizadas
 

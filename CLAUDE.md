@@ -3,13 +3,22 @@
 > Objetivo: "rodar o MYP scanner" tem **um caminho só**. Siga este arquivo e
 > evite re-descobrir coisas que já estão resolvidas no código.
 
+## ▶️ Retomar de onde paramos (leia primeiro)
+
+Ao retomar, **leia antes de agir** o handoff canônico:
+[`SESSION-HANDOFF.md`](SESSION-HANDOFF.md). É o **único** handoff ativo (nome
+fixo, a verdade mora no `main`) — diz o que foi feito, onde paramos e o próximo
+passo. **Não crie um handoff datado por sessão** (`SESSION-HANDOFF-<data>.md`):
+atualize o `SESSION-HANDOFF.md` e deixe a verdade no `main` — branches/PRs são
+propostas. Depois use o resto deste arquivo pro "como rodar".
+
 ## Este é o repo canônico
 
 `matheuscllm-lgtm/myp-arbitrage-scanner` é a **fonte de verdade única** do MYP
 scanner (extraído do antigo monorepo `tcg-arbitrage-scanners` em 2026-05-13).
 Se você encontrar um `myp_arbitrage_scanner.py` em qualquer outro lugar
 (`tcg-arbitrage-scanners`, `Scripts/`, cópia em Drive/Obsidian), é **STALE
-pré-extração** — não rode. Confira o cabeçalho: `Versão: v5.9` (ou superior).
+pré-extração** — não rode. Confira o cabeçalho: `Versão: v5.10` (ou superior).
 
 ## Setup (env novo)
 
@@ -33,14 +42,28 @@ o scanner.
 
 ```bash
 python myp_arbitrage_scanner.py --editions "Ascended Heroes" \
-  --threshold 25 --min-price 50 --delay 1.5 \
+  --threshold 30 --min-price 50 --delay 1.5 \
   -o results/<set>_<stamp>.xlsx
 ```
 
 - `--editions` = **substring** do título da edição MYP (ex.: `"Ascended Heroes"`
   casa `"ME: Ascended Heroes"`; `Mega` casa todos os ME0x). Não são aliases.
-- `--threshold` é **percent integer** (`25` = 25%; valor <1.0 auto-converte com
-  warning). Convenção oposta à do CardTrader scanner (lá é fração).
+- `--threshold` é **percent integer** (`30` = 30%; valor <1.0 auto-converte com
+  warning). Convenção oposta à do CardTrader scanner (lá é fração). Default
+  **30** desde v5.10.
+- **Margem é BRUTA pura** (política cross-scanner 2026-06-06): o número reportado
+  é só `(preço_alvo TCG − preço_BR) / preço_BR`, **SEM nenhuma taxa/fee/markup
+  embutido** no cálculo (diferente do CardTrader, que usa `custo = preço × 1.06`).
+  O operador calcula frete/câmbio/comissão por fora. **Não** adicionar
+  multiplicador de custo ao cálculo de margem.
+- **Preço TCG = TCGplayer REAL via pokemontcg.io (v5.11)**, convertido USD→BRL
+  com câmbio ao vivo. O campo `.estat-tcg` do MYP **não** é mais a fonte primária
+  (ele mapeava a carta errada em Black Bolt/White Flare base-086 → preço furado);
+  vira **fallback** só onde o pokemontcg.io não cobre. A conversão de moeda **não**
+  é taxa — é só pra comparar BRL com BRL. Defina `POKEMONTCG_API_KEY` (env) p/
+  evitar rate-limit em scans largos.
+- `--min-price 50` = piso de relevância ("carta valiosa" > R$50). É **filtro**,
+  não taxa — fica fora do cálculo de margem.
 - Scan é **lento por design** (`--delay` × centenas de produtos × N edições →
   pode passar de 1h em scan largo). Para runs longos, rode detached/background.
 - Single-session sequencial. **Não paralelize fetches no mesmo IP** (a v5.9 segue
@@ -58,3 +81,15 @@ python myp_arbitrage_scanner.py --editions "Ascended Heroes" \
 
 Existe um scanner irmão de **CardTrader** (repo `card-trader-scanner`, usa
 `.venv`, `--max-expansions`, threshold **fracionário**). É outro projeto.
+
+---
+
+## 📤 Entrega de resultados — tabela na plataforma, NUNCA arquivo
+
+**Regra dura (operador, 2026-06-06). Vale para TODOS os scanners (CardTrader / MYP / Liga / sealed / PSA).**
+
+O resultado de um scan é entregue ao operador **como tabela no chat do Claude Code** — no **terminal ou no app**. **NÃO** entregar como arquivo `.xlsx`/`.csv` para download por padrão.
+
+- O scanner/postprocess **pode escrever** uma planilha local como subproduto de trabalho (gitignored) — tudo bem. O ponto é a **ENTREGA**: ela é a tabela na plataforma, não um anexo de arquivo.
+- Gerar/anexar arquivo **só quando o operador pedir explicitamente** (ex.: "me manda o XLSX pra importar em lote"). Sem pedido = sem arquivo.
+- A tabela traz **todos** os deals (não amostra curada) + as colunas relevantes da fonte.

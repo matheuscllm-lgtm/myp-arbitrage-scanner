@@ -45,11 +45,30 @@ GitHub renderiza markdown nativo — abre direto no celular ou desktop.
 5. Output: xlsx com 5 sheets + markdown summary
 ```
 
-**Margem calculada:**
+**Margem calculada (BRUTA, política cross-scanner 2026-06-06):**
 ```
 margem% = (TCG_player_price - MYP_lowest_EN_NM) / MYP_lowest_EN_NM
 ```
-Não inclui: frete, taxas, markup de revenda, impostos. **Bruta, não líquida.**
+Em português simples: é só a **diferença de preço** entre o que a carta vale lá
+fora (TCG Player, em US$ convertido) e o que custa o exemplar EN-NM mais barato
+no MYP (em R$), dividida pelo preço do MYP. Resultado em percent.
+
+**Fonte do preço TCG (v5.11): TCGplayer REAL via `pokemontcg.io`**, convertido
+USD→BRL com câmbio ao vivo (frankfurter/ECB). Antes o scanner confiava no campo
+`.estat-tcg` que o próprio MYP declarava — mas em Black Bolt/White Flare (base
+086) e parte de Destined Rivals esse número mapeava a carta errada e inflava
+"deals" fantasmas (Darumaka 097/086: MYP dizia R$2.867 vs real US$13,42). Agora
+usa o preço real, com **fallback** pro `.estat-tcg` só onde o pokemontcg.io não
+cobre (ex.: alguns Mega). Defina `POKEMONTCG_API_KEY` (env) p/ evitar rate-limit
+em scans largos.
+
+**Sem nenhuma taxa embutida.** O cálculo NÃO aplica frete, comissão, markup de
+revenda nem impostos. A única conversão é o câmbio USD→BRL (pra comparar BRL com
+BRL) — **não** é fee. É **margem bruta, não líquida** — o operador calcula os
+custos reais por fora. (Oposto do scanner CardTrader, que embute `custo = preço
+× 1.06`.)
+
+**Threshold padrão = 30%** (margem bruta mínima pra um card virar "deal").
 
 ---
 
@@ -101,7 +120,7 @@ export PYTHONIOENCODING=utf-8
 ### Comandos comuns
 
 ```bash
-# Scan completo (todas edições, threshold 25%, ~7h)
+# Scan completo (todas edições, threshold 30%, ~7h)
 python myp_arbitrage_scanner.py
 
 # Scan rápido pra teste (3 edições, ~5min)
@@ -135,8 +154,8 @@ Se sai com erro, ver `.debug/debug_1.html` (página da catálogo de edições) p
 | Flag | Default | Descrição |
 |---|---|---|
 | `--editions <substr>...` | (todas) | Substring match contra título da edição MYP. Ex.: `--editions Mega Ascended "Black Bolt"` |
-| `--threshold <int>` | 25 | Margem mínima % pra alerta (`< 1.0` auto-converte com warning — convenção oposta do CT scanner) |
-| `--min-price <float>` | 80 | Preço mínimo EN-NM em R$ pra incluir |
+| `--threshold <int>` | 30 | Margem BRUTA mínima % pra alerta (`< 1.0` auto-converte com warning — convenção oposta do CT scanner; sem taxa embutida) |
+| `--min-price <float>` | 50 | Preço mínimo EN-NM em R$ pra incluir (filtro de relevância, não taxa) |
 | `--delay <float>` | 1.5 | Segundos entre requests (aumentar se site instável) |
 | `--max-editions <int>` | 0 | Limita número de edições processadas (debug; 0 = sem limite) |
 | `--max-products <int>` | 0 | Limita produtos por edição (debug; 0 = sem limite) |
@@ -236,7 +255,7 @@ gh workflow run weekly-scan.yml --repo matheuscllm-lgtm/myp-arbitrage-scanner \
 | Input | Default | Notas |
 |---|---|---|
 | `editions` | (9 substrings hot sets) | Substrings separadas por espaço; `"x y"` agrupa |
-| `threshold` | `25` | Percent integer |
+| `threshold` | `30` | Percent integer (margem bruta, sem taxa embutida) |
 | `min_price` | `50` | BRL (piso padrão cross-scanner: carta valiosa = > R$50) |
 | `delay` | `1.5` | Segundos entre requests |
 | `chunk_total` | `2` | Cap 1-20 |
@@ -245,7 +264,7 @@ gh workflow run weekly-scan.yml --repo matheuscllm-lgtm/myp-arbitrage-scanner \
 | Input | Default | Notas |
 |---|---|---|
 | `editions` | (vazio = todas) | |
-| `threshold` | `25` | |
+| `threshold` | `30` | Percent integer (margem bruta, sem taxa embutida) |
 | `min_price` | `50` | BRL (piso padrão: > R$50) |
 | `delay` | `1.5` | |
 | `chunk_total` | `6` | Cap 1-20 |
@@ -478,7 +497,7 @@ A MYP tem REST API em `https://mypcards.com/api/v1` (descoberta 2026-05-07, sem 
 
 - **Truncamento de sellers**: MYP não expõe paginação per-language no rendered HTML. Cards com flag T1 indicam onde isso provavelmente acontece, mas o scanner não lista os sellers truncados — validação manual via perfil de seller é necessária.
 - **Tempo de scan**: ~16 produtos/min com delay 1.5s. 2.000+ produtos = ~2h. Catálogo total ~16k produtos = ~7h (motivo do matrix job).
-- **Margem bruta, não líquida**: frete + taxas + impostos não aplicados. Pra arbitragem real, descontar manualmente.
+- **Margem bruta, não líquida**: frete + taxas + impostos não aplicados (política cross-scanner 2026-06-06). O cálculo é só a diferença de preço; o operador desconta os custos reais por fora. Threshold padrão 30%.
 - **Reproducibilidade**: depende de listings ativos no momento do scan. Snapshots variam entre runs.
 
 ---
@@ -495,6 +514,9 @@ Ver `CHANGELOG.md` no repo. Marcos:
 - **v5.5** (2026-05-14): matrix job + aggregation (resolve timeouts de 5h+)
 - **v5.5.1** (2026-05-14): empty chunk legitimacy (exit 0 quando slicing deixa chunk vazio)
 - **v5.6** (2026-05-14): markdown summary auto-commit no `results/` folder
+- **v5.10** (2026-06-06): threshold default 25→30 (margem BRUTA, sem taxa embutida); política cross-scanner. Ver `CHANGELOG.md` pro histórico v5.7–v5.9.
+- **v5.10.1** (2026-06-07): cost gate — não pagina truncation de card com TCG < min_price.
+- **v5.11** (2026-06-07): preço TCG **real** via pokemontcg.io (USD→BRL câmbio ao vivo), fim do `.estat-tcg` furado em Black Bolt/White Flare; fallback híbrido onde não há cobertura.
 
 ---
 

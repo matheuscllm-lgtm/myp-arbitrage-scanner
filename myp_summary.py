@@ -145,15 +145,15 @@ def main() -> int:
         lines.append(f"**Artifact XLSX:** [`myp-{args.type}-consolidated-{args.run_id}`](https://github.com/{args.repo}/actions/runs/{args.run_id})")
         lines.append("")
 
-    # ── Top 15 deals limpos ──
-    lines.append("## 🟢 Top 15 deals limpos (sem flag SIR/HR/SAR)")
+    # ── Top 50 deals limpos ──
+    lines.append("## 🟢 Top 50 deals limpos (sem flag SIR/HR/SAR)")
     lines.append("")
     if not deals_clean:
         lines.append("> Nenhum deal limpo nesta run.")
     else:
         lines.append("| # | Carta | Edição | MYP R$ | TCG R$ | Margem | Lucro R$ |")
         lines.append("|---|---|---|---:|---:|---:|---:|")
-        for i, c in enumerate(deals_clean[:15], 1):
+        for i, c in enumerate(deals_clean[:50], 1):
             name = (c.get("Card Name") or "")[:55]
             ed = (c.get("Edition") or "")[:30]
             myp = fmt_brl(c.get("MYP EN NM (R$)"))
@@ -175,7 +175,7 @@ def main() -> int:
     else:
         lines.append("| # | Carta | Edição | MYP R$ | TCG R$ | Margem (suspeita) |")
         lines.append("|---|---|---|---:|---:|---:|")
-        for i, c in enumerate(deals_supranum[:10], 1):
+        for i, c in enumerate(deals_supranum[:50], 1):
             name = (c.get("Card Name") or "")[:55]
             ed = (c.get("Edition") or "")[:30]
             myp = fmt_brl(c.get("MYP EN NM (R$)"))
@@ -196,7 +196,7 @@ def main() -> int:
         lines.append("")
         lines.append("| # | Carta | Edição | MYP R$ | TCG decl R$ | Última venda R$ | Margem (fake) |")
         lines.append("|---|---|---|---:|---:|---:|---:|")
-        for i, c in enumerate(deals_suspect[:10], 1):
+        for i, c in enumerate(deals_suspect[:50], 1):
             name = (c.get("Card Name") or "")[:55]
             ed = (c.get("Edition") or "")[:30]
             myp = fmt_brl(c.get("MYP EN NM (R$)"))
@@ -215,7 +215,7 @@ def main() -> int:
         lines.append("")
         lines.append("| Carta | Edição | MYP R$ reportado | TCG R$ |")
         lines.append("|---|---|---:|---:|")
-        for c in truncations[:10]:
+        for c in truncations[:50]:
             name = (c.get("Card Name") or "")[:55]
             ed = (c.get("Edition") or "")[:30]
             myp = fmt_brl(c.get("MYP EN NM (R$)"))

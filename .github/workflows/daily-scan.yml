@@ -29,9 +29,9 @@ on:
         required: false
         default: 'Mega Ascended "Black Bolt" "White Flare" "Destined Rivals" "Journey Together" "Surging Sparks" "Stellar Crown" Prismatic'
       threshold:
-        description: 'Margem mínima em percent (default 25)'
+        description: 'Margem BRUTA mínima em percent (default 30)'
         required: false
-        default: '25'
+        default: '30'
       min_price:
         description: 'Preço mínimo BRL (default 80)'
         required: false
@@ -132,7 +132,7 @@ jobs:
         env:
           PYTHONIOENCODING: utf-8
         run: |
-          THRESHOLD="${{ github.event.inputs.threshold || '25' }}"
+          THRESHOLD="${{ github.event.inputs.threshold || '30' }}"
           MIN_PRICE="${{ github.event.inputs.min_price || '80' }}"
           DELAY="${{ github.event.inputs.delay || '1.5' }}"
           DEFAULT_ED='Mega Ascended "Black Bolt" "White Flare" "Destined Rivals" "Journey Together" "Surging Sparks" "Stellar Crown" Prismatic'
@@ -201,7 +201,7 @@ jobs:
         env:
           PYTHONIOENCODING: utf-8
         run: |
-          THRESHOLD="${{ github.event.inputs.threshold || '25' }}"
+          THRESHOLD="${{ github.event.inputs.threshold || '30' }}"
           THRESHOLD_FRAC=$(python3 -c "print($THRESHOLD / 100)")
           OUT="myp_daily_$(date -u +%Y%m%d_%H%M).xlsx"
           CHUNK_COUNT=$(find chunks/ -name 'myp_chunk_*.xlsx' | wc -l)

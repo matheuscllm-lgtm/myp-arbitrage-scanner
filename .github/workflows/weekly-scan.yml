@@ -25,9 +25,9 @@ on:
         required: false
         default: ''
       threshold:
-        description: 'Margem mínima em percent (default 25 = 25%)'
+        description: 'Margem BRUTA mínima em percent (default 30 = 30%)'
         required: false
-        default: '25'
+        default: '30'
       min_price:
         description: 'Preço mínimo BRL (default 80)'
         required: false
@@ -98,7 +98,7 @@ jobs:
         env:
           PYTHONIOENCODING: utf-8
         run: |
-          THRESHOLD="${{ github.event.inputs.threshold || '25' }}"
+          THRESHOLD="${{ github.event.inputs.threshold || '30' }}"
           MIN_PRICE="${{ github.event.inputs.min_price || '80' }}"
           DELAY="${{ github.event.inputs.delay || '1.5' }}"
           EDITIONS_INPUT="${{ github.event.inputs.editions || '' }}"
@@ -164,7 +164,7 @@ jobs:
         env:
           PYTHONIOENCODING: utf-8
         run: |
-          THRESHOLD="${{ github.event.inputs.threshold || '25' }}"
+          THRESHOLD="${{ github.event.inputs.threshold || '30' }}"
           # converter percent → fração pra generate_xlsx
           THRESHOLD_FRAC=$(python3 -c "print($THRESHOLD / 100)")
           OUT="myp_arbitrage_$(date -u +%Y%m%d_%H%M).xlsx"
