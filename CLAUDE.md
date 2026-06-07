@@ -9,7 +9,7 @@
 scanner (extraído do antigo monorepo `tcg-arbitrage-scanners` em 2026-05-13).
 Se você encontrar um `myp_arbitrage_scanner.py` em qualquer outro lugar
 (`tcg-arbitrage-scanners`, `Scripts/`, cópia em Drive/Obsidian), é **STALE
-pré-extração** — não rode. Confira o cabeçalho: `Versão: v5.9` (ou superior).
+pré-extração** — não rode. Confira o cabeçalho: `Versão: v5.10` (ou superior).
 
 ## Setup (env novo)
 
@@ -33,14 +33,22 @@ o scanner.
 
 ```bash
 python myp_arbitrage_scanner.py --editions "Ascended Heroes" \
-  --threshold 25 --min-price 50 --delay 1.5 \
+  --threshold 30 --min-price 50 --delay 1.5 \
   -o results/<set>_<stamp>.xlsx
 ```
 
 - `--editions` = **substring** do título da edição MYP (ex.: `"Ascended Heroes"`
   casa `"ME: Ascended Heroes"`; `Mega` casa todos os ME0x). Não são aliases.
-- `--threshold` é **percent integer** (`25` = 25%; valor <1.0 auto-converte com
-  warning). Convenção oposta à do CardTrader scanner (lá é fração).
+- `--threshold` é **percent integer** (`30` = 30%; valor <1.0 auto-converte com
+  warning). Convenção oposta à do CardTrader scanner (lá é fração). Default
+  **30** desde v5.10.
+- **Margem é BRUTA pura** (política cross-scanner 2026-06-06): o número reportado
+  é só `(preço_alvo TCG − preço_BR) / preço_BR`, **SEM nenhuma taxa/fee/markup
+  embutido** no cálculo (diferente do CardTrader, que usa `custo = preço × 1.06`).
+  O operador calcula frete/câmbio/comissão por fora. **Não** adicionar
+  multiplicador de custo ao cálculo de margem.
+- `--min-price 50` = piso de relevância ("carta valiosa" > R$50). É **filtro**,
+  não taxa — fica fora do cálculo de margem.
 - Scan é **lento por design** (`--delay` × centenas de produtos × N edições →
   pode passar de 1h em scan largo). Para runs longos, rode detached/background.
 - Single-session sequencial. **Não paralelize fetches no mesmo IP** (a v5.9 segue

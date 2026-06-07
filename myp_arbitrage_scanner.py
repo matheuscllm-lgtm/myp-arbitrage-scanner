@@ -4,7 +4,7 @@
 ║         MYP Cards Arbitrage Scanner — Pokémon TCG Singles          ║
 ║                                                                      ║
 ║  Compara preços de singles (EN) no mypcards.com vs TCG Player.     ║
-║  Gera planilha .xlsx com alertas de arbitragem (margem >= 25%).    ║
+║  Gera planilha .xlsx com alertas de arbitragem (margem >= 30%).    ║
 ╚══════════════════════════════════════════════════════════════════════╝
 
 Uso:
@@ -17,8 +17,8 @@ Requisitos:
     pip install cloudscraper beautifulsoup4 openpyxl lxml
 
 Autor: Matheus Chillemi / Claude
-Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9)
-Versão: v5.9
+Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10)
+Versão: v5.10
 
 Changelog v5.1 (2026-05-12 — auditoria C/H/M, mesma metodologia do CT scanner):
   - C1: --threshold < 1.0 auto-converte com warning (UX guard contra trap
@@ -88,7 +88,7 @@ log = logging.getLogger(__name__)
 # CONFIG
 # ══════════════════════════════════════════════════════════════════════
 BASE_URL = "https://mypcards.com"
-MARGIN_THRESHOLD = 0.25          # 25% margem mínima para alerta
+MARGIN_THRESHOLD = 0.30          # v5.10: 30% margem BRUTA mínima para alerta (era 0.25). Política cross-scanner 2026-06-06: 30% margem bruta = só (preço_alvo − preço_BR)/preço_BR, SEM taxa embutida; operador calcula custos por fora.
 MIN_PRICE_BRL = 50.0             # piso padrão cross-scanner: "carta valiosa" = > R$50 (ignora cartas baratas)
 REQUEST_DELAY = 1.5              # segundos entre requests
 MAX_PAGES_PER_EDITION = 30       # max páginas por edição
@@ -1097,6 +1097,10 @@ class MYPScraper:
                 break
 
         # ── Calculate margin: lowest EN NM on MYP vs TCG Player EN ──
+        # MARGEM BRUTA PURA (política cross-scanner 2026-06-06): só diferença de
+        # preço entre produtos, SEM taxa/fee/markup embutido. O operador calcula
+        # custos (frete, câmbio, taxas) por fora. NÃO adicionar multiplicador de
+        # custo aqui (oposto do CardTrader scanner, que usa custo = preço × 1.06).
         if card.myp_lowest_en_nm and card.tcg_player_price and card.myp_lowest_en_nm > 0:
             card.margin_brl = card.tcg_player_price - card.myp_lowest_en_nm
             card.margin_pct = card.margin_brl / card.myp_lowest_en_nm
@@ -1544,8 +1548,10 @@ Exemplos:
                        help="Limite de edições (0 = todas, ~326 total)")
     parser.add_argument("--max-products", type=int, default=0,
                        help="Limite de produtos por edição (0 = todos)")
-    parser.add_argument("--threshold", type=float, default=25,
-                       help="Margem mínima %% para alerta (default: 25)")
+    parser.add_argument("--threshold", type=float, default=30,
+                       help="Margem BRUTA mínima %% para alerta (default: 30). "
+                            "Percent integer (30 = 30%%); valor <1.0 auto-converte. "
+                            "Margem bruta = (preço_alvo TCG − preço_BR)/preço_BR, SEM taxa embutida.")
     parser.add_argument("--min-price", type=float, default=50,
                        help="Preço mínimo EN em R$ (default: 50)")
     parser.add_argument("--delay", type=float, default=1.5,
