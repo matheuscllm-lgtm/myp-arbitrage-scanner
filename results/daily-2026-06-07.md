@@ -4,7 +4,7 @@ date: 2026-06-07
 type: daily
 source: local scan
 ---
-> ⏳ **Run parcial em andamento** — 1/20 edições concluídas (última: ME: Ascended Heroes). Atualizado 2026-06-07 19:06 UTC. Mais edições serão adicionadas nos próximos checkpoints.
+> ⏳ **Run parcial em andamento** — 1/20 edições concluídas (última: ME: Ascended Heroes). Atualizado 2026-06-07 19:30 UTC. Mais edições serão adicionadas nos próximos checkpoints.
 
 
 # MYP Scan Daily Quick — 2026-06-07
@@ -34,4 +34,4 @@ source: local scan
 
 ---
 
-*Gerado em 2026-06-07 19:06 UTC via `myp_summary.py` (single source: XLSX consolidado).*
+*Gerado em 2026-06-07 19:30 UTC via `myp_summary.py` (single source: XLSX consolidado).*
