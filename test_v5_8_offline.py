@@ -768,6 +768,89 @@ def test_no_fx_keeps_estat():
     return True
 
 
+def _no_estat_page(card_h1, en_prices):
+    """Página SEM o `.estat-tcg` do MYP (card que o MYP não declara preço TCG)."""
+    rows = "".join(_seller_row("Inglês", "NM - Quase nova", p) for p in en_prices)
+    return (
+        f'<html><body><h1>{card_h1}</h1>'
+        f'<table class="table-striped table-bordered"><tbody>{rows}</tbody></table>'
+        f'</body></html>'
+    )
+
+
+def test_real_price_clears_suspect():
+    """v5.11.3 (A1, resgatado do PR #25): card com `.estat-tcg` inflado vira
+    suspect, mas o preço REAL sobrepõe → a flag suspect é LIMPA (senão o card
+    sumiria da sheet 🔥 Deals mesmo com margem real legítima)."""
+    from myp_arbitrage_scanner import MYPScraper
+
+    # Darumaka: declarado R$2.867 vs última venda R$32 → ratio 89 > 10 = suspect.
+    html = (
+        '<html><body><h1>Darumaka (097/086)</h1>'
+        '<span class="estat-tcg">TCG Player: R$ 2.867,75</span>'
+        '<span class="estatistica-ultimo">Última venda: R$ 32,00</span>'
+        '<table class="table-striped table-bordered"><tbody>'
+        + _seller_row("Inglês", "NM - Quase nova", "120,00")
+        + _seller_row("Inglês", "NM - Quase nova", "130,00")
+        + '</tbody></table></body></html>'
+    )
+    sc = MYPScraper(delay=0.0, min_price=50.0)
+    sc.fx_usd_brl = 5.0
+    sc._fetch_ptcg_usd = lambda cid: 13.42   # real US$13,42 → R$67,10
+    sc._get = lambda url, save_debug=False: BeautifulSoup(html, "lxml")
+
+    card = sc.scrape_product("https://mypcards.com/pokemon/produto/9/daru",
+                             "SV: Black Bolt")
+    assert card is not None
+    assert card.tcg_source == "pokemontcg.io", card.tcg_source
+    assert card.tcg_suspect is False, "A1: suspect deveria ter sido limpo"
+    assert sc._stats["tcg_suspects"] == 0, sc._stats["tcg_suspects"]
+    assert abs(card.tcg_player_price - 67.10) < 0.01, card.tcg_player_price
+    print("  A1: .estat-tcg inflado → suspect setado e LIMPO após preço real ✓")
+    return True
+
+
+def test_prices_card_without_estat_tcg():
+    """v5.11.3 (A2): card SEM `.estat-tcg` não é mais skipado prematuramente —
+    o preço REAL do pokemontcg.io o precifica."""
+    from myp_arbitrage_scanner import MYPScraper
+
+    html = _no_estat_page("Foobar ex (170/086)", ["100,00", "110,00"])
+    sc = MYPScraper(delay=0.0, min_price=50.0)
+    sc.fx_usd_brl = 5.0
+    sc._fetch_ptcg_usd = lambda cid: 40.0    # real US$40 → R$200
+    sc._get = lambda url, save_debug=False: BeautifulSoup(html, "lxml")
+
+    card = sc.scrape_product("https://mypcards.com/pokemon/produto/9/foo",
+                             "SV: Black Bolt")
+    assert card is not None, "A2: não deveria skipar — preço real disponível"
+    assert card.myp_declared_tcg_brl is None, card.myp_declared_tcg_brl
+    assert card.tcg_source == "pokemontcg.io", card.tcg_source
+    assert abs(card.tcg_player_price - 200.0) < 0.01, card.tcg_player_price
+    assert card.margin_pct is not None and abs(card.margin_pct - 1.0) < 0.01, card.margin_pct
+    print("  A2: card sem .estat-tcg precificado via fonte real (R$200, +100%) ✓")
+    return True
+
+
+def test_skip_when_no_tcg_at_all():
+    """v5.11.3 (A2): sem `.estat-tcg` E sem cobertura no pokemontcg.io → skip
+    (skipped_no_tcg_price), pois não há preço TCG nenhum pra comparar."""
+    from myp_arbitrage_scanner import MYPScraper
+
+    html = _no_estat_page("Nada ex (171/086)", ["100,00", "110,00"])
+    sc = MYPScraper(delay=0.0, min_price=50.0)
+    sc.fx_usd_brl = 5.0
+    sc._fetch_ptcg_usd = lambda cid: None    # sem cobertura
+    sc._get = lambda url, save_debug=False: BeautifulSoup(html, "lxml")
+
+    card = sc.scrape_product("https://mypcards.com/pokemon/produto/9/nada",
+                             "SV: Black Bolt")
+    assert card is None, "deveria skipar: sem TCG declarado nem real"
+    assert sc._stats["skipped_no_tcg_price"] == 1, sc._stats["skipped_no_tcg_price"]
+    print("  A2: sem .estat-tcg e sem cobertura real → skip correto ✓")
+    return True
+
+
 def test_parse_brl_formats():
     """v5.8.10: _parse_brl — BR canonical, US-decimal leak, milhares, edge cases.
 
@@ -925,6 +1008,9 @@ def main():
         ("real TCG overrides .estat-tcg (v5.11)", test_real_tcg_overrides_estat),
         ("fallback to .estat-tcg sem cobertura (v5.11)", test_fallback_to_estat_when_no_coverage),
         ("sem câmbio mantém .estat-tcg (v5.11)", test_no_fx_keeps_estat),
+        ("A1 preço real limpa suspect (v5.11.3)", test_real_price_clears_suspect),
+        ("A2 precifica sem .estat-tcg (v5.11.3)", test_prices_card_without_estat_tcg),
+        ("A2 skip sem TCG nenhum (v5.11.3)", test_skip_when_no_tcg_at_all),
         ("delivery table format (v5.11.1)", test_delivery_table_format),
     ]
     failed = 0

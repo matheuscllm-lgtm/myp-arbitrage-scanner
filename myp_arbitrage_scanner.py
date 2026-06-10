@@ -17,8 +17,8 @@ Requisitos:
     pip install cloudscraper beautifulsoup4 openpyxl lxml
 
 Autor: Matheus Chillemi / Claude
-Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10) | 2026-06-07 (v5.10.1 → v5.11) | 2026-06-09 (v5.11.1) | 2026-06-10 (v5.11.2)
-Versão: v5.11.2
+Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10) | 2026-06-07 (v5.10.1 → v5.11) | 2026-06-09 (v5.11.1) | 2026-06-10 (v5.11.2 → v5.11.3)
+Versão: v5.11.3
 
 Changelog v5.1 (2026-05-12 — auditoria C/H/M, mesma metodologia do CT scanner):
   - C1: --threshold < 1.0 auto-converte com warning (UX guard contra trap
@@ -1032,14 +1032,14 @@ class MYPScraper:
         if tcg_el:
             card.myp_declared_tcg_brl = self._last_brl(tcg_el.get_text())
         # v5.11: provisório = MYP declarado (.estat-tcg). É sobreposto pelo preço
-        # REAL do TCGplayer (pokemontcg.io) depois do parse de sellers, só pra
-        # candidatos ≥ min_price. O skip/suspect-check abaixo usam o declarado.
+        # REAL do TCGplayer (pokemontcg.io) depois do parse de sellers (candidatos
+        # ≥ min_price).
+        # v5.11.3 (A2, resgatado do PR #25): NÃO skipa mais aqui quando falta o
+        # `.estat-tcg`. Com o preço real, um card sem declarado ainda pode ser
+        # precificado na fonte. O skip por "sem TCG nenhum" acontece após o
+        # override (declarado E real ausentes). O suspect-check abaixo só roda
+        # quando há declarado.
         card.tcg_player_price = card.myp_declared_tcg_brl
-
-        # If no TCG Player price (MYP não declara), skip this product entirely
-        if not card.tcg_player_price:
-            self._stats["skipped_no_tcg_price"] += 1
-            return None
 
         # v5.8 H2 (2026-05-16): capturar última venda real MYP pra sanity check.
         # MYP às vezes infla `.estat-tcg` (Jirachi PR-SM_SM161: declarava R$1499
@@ -1049,8 +1049,10 @@ class MYPScraper:
         if last_sale_el:
             card.myp_last_sale_brl = self._last_brl(last_sale_el.get_text())
 
-        # Sanity check: ratio TCG declarado / última venda real
-        if card.myp_last_sale_brl and card.myp_last_sale_brl > 0:
+        # Sanity check: ratio TCG declarado / última venda real.
+        # v5.11.3 (A2): guard `card.tcg_player_price` — sem declarado não há
+        # ratio a checar (e evita TypeError sobre None).
+        if card.tcg_player_price and card.myp_last_sale_brl and card.myp_last_sale_brl > 0:
             ratio = card.tcg_player_price / card.myp_last_sale_brl
             if ratio > TCG_SUSPECT_RATIO_THRESHOLD:
                 # TCG declarado é >Nx última venda → MYP bug provável
@@ -1250,9 +1252,24 @@ class MYPScraper:
                 card.tcg_real_usd = real_brl / self.fx_usd_brl
                 card.tcg_source = "pokemontcg.io"
                 self._stats["tcg_from_real"] += 1
+                # v5.11.3 (A1, resgatado do PR #25): o preço agora é o REAL do
+                # TCGplayer, não o `.estat-tcg` declarado. A flag de inflação do
+                # declarado (tcg_suspect) não se aplica mais — limpa pra não
+                # excluir indevidamente o card da sheet 🔥 Deals (a margem
+                # agora é real).
+                if card.tcg_suspect:
+                    card.tcg_suspect = False
+                    self._stats["tcg_suspects"] -= 1
             else:
                 card.tcg_source = "myp_estat"
                 self._stats["tcg_from_myp_fallback"] += 1
+
+        # v5.11.3 (A2): skip final — descarta só se NÃO há preço TCG nenhum
+        # (nem `.estat-tcg` declarado nem real do pokemontcg.io). Antes o skip
+        # era prematuro (antes do real), descartando cards que a fonte cobre.
+        if not card.tcg_player_price:
+            self._stats["skipped_no_tcg_price"] += 1
+            return None
 
         # ── Calculate margin: lowest EN NM on MYP vs TCG Player EN ──
         # MARGEM BRUTA PURA (política cross-scanner 2026-06-06): só diferença de

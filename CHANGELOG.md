@@ -1,5 +1,24 @@
 # Changelog
 
+## v5.11.3 — 2026-06-10 — Fixes de recall do preço real (resgate do PR #25)
+
+O PR #25 (draft, conflitante) tinha 2 fixes de comportamento que nunca chegaram
+à main — resgatados aqui sem a parte redundante (coluna "TCG Source", cuja
+proveniência o `TCG US$` do v5.11.1 já cobre). #25 fechado em favor deste.
+
+- **A1 — `tcg_suspect` obsoleto após override (falso negativo).** O flag de
+  inflação era calculado com o `.estat-tcg` declarado, ANTES do override pelo
+  preço real. Quando o pokemontcg.io corrigia o preço, o flag persistia e o
+  card era **excluído da sheet 🔥 Deals** mesmo com margem real legítima.
+  Agora, quando o preço vem da fonte real, `tcg_suspect` é limpo (counter
+  ajustado).
+- **A2 — card sem `.estat-tcg` ganha chance do preço real.** O skip por "sem
+  TCG" era prematuro (antes do fetch real), descartando cards que a fonte
+  cobre. Agora o skip só ocorre se **nem declarado nem real** existirem.
+  Suspect-check guardado contra `tcg_player_price` ausente.
+
+**Validação:** 21 testes offline ✓ (3 novos: A1, A2-precifica, A2-skip).
+
 ## v5.11.2 — 2026-06-10 — Coluna "TCG URL" no XLSX + sleep adaptativo pokemontcg.io
 
 Motivação: o **scanner integrado** (`~/integrated-scanner`) consome o XLSX deste
