@@ -1,5 +1,44 @@
 # Changelog
 
+## v5.11.1 — 2026-06-09 — Tabela de ENTREGA com links clicáveis (padrão cross-scanner COMC)
+
+Padroniza a **entrega de resultados** do markdown (`myp_summary.py`) no formato
+aprovado pelo operador no scanner COMC: tabela chat-first com **links
+verificáveis clicáveis** (oferta MYP + TCGplayer). **Nada de threshold, filtro
+ou invariante mudou** — só o formato de saída.
+
+### Mudanças
+
+1. **`myp_summary.py` — nova tabela de entrega.** A seção "🟢 Top 50 deals
+   limpos" agora emite:
+   ```
+   | # | Margem % | MYP R$ | TCG US$ | Dif | Carta | Set | Raridade | Cond | Qtd | Links |
+   ```
+   - `Carta` = nome + número numa coluna só (`Pikachu 173/165`), sem duplicar
+     (helper `carta_label`).
+   - `TCG US$` = preço real do TCGplayer em USD (pokemontcg.io); `—` no fallback
+     `.estat-tcg`.
+   - `Cond` = NM (invariante). `Qtd` = nº de ofertas EN-NM (`NM Sellers`).
+   - `Links` = `[oferta](MYP) · [TCG](TCGplayer)` clicáveis. Link TCG é o redirect
+     direto `prices.pokemontcg.io/tcgplayer/<setcode>-<num>` (ou busca por nome no
+     fallback) — pro workflow manual de validação do preço NM.
+2. **`generate_xlsx` — coluna `TCG US$`** (de `card.tcg_real_usd`) exposta no
+   XLSX entre `TCG Player (R$)` e `MYP Last Sale (R$)`, alimentando a tabela de
+   entrega. Lida por nome de header → aggregate e chunks antigos não quebram.
+3. **`myp_aggregate.py`** preserva `tcg_real_usd` (`TCG US$`) entre chunks
+   (weekly chunked não perde o USD real na consolidação).
+4. **`myp_summary.py` refatorado:** corpo extraído de `main()` p/ `build_markdown()`
+   (testável sem argv); fecha o handle do XLSX após extrair (Windows).
+5. **Teste offline** `test_delivery_table_format` (round-trip XLSX→markdown +
+   helpers de coluna). Suite: **17/17 passam**.
+
+### O que NÃO mudou
+
+- Threshold (30% percent-integer), margem BRUTA pura, piso R$50, NM-only, EN-only,
+  stack HTTP/cloudscraper, delay 1.5s, chunking, paginação v5.9, fonte TCG real
+  v5.11 — **tudo intacto**. O XLSX/CSV segue com colunas separadas + URLs cruas; o
+  formato composto (Carta/Links) é só da tabela de entrega markdown.
+
 ## v5.11 — 2026-06-07 — Preço TCG REAL via pokemontcg.io (fim do `.estat-tcg` furado)
 
 **Problema (decisão do operador 2026-06-07).** O "TCG R$" vinha do campo
