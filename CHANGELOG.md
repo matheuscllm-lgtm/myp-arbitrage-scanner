@@ -1,5 +1,34 @@
 # Changelog
 
+## v5.11.2 — 2026-06-10 — Coluna "TCG URL" no XLSX + sleep adaptativo pokemontcg.io
+
+Motivação: o **scanner integrado** (`~/integrated-scanner`) consome o XLSX deste
+scanner lendo por nome de header (dict-by-name) — hyperlink de célula não
+sobrevive a essa leitura, então os deals MYP saíam **sem Link TCG** na tabela
+unificada. E o quick do integrado media **71 min** no MYP, em parte por sleeps
+cheios no pokemontcg.io.
+
+### Mudanças
+
+1. **`generate_xlsx` — coluna `TCG URL`** (texto plano, **17ª/última** coluna):
+   o mesmo link que já era computado pro hyperlink da célula `TCG Player (R$)`
+   (direct `prices.pokemontcg.io/tcgplayer/<setcode>-<num>` quando mapeado,
+   senão busca por nome). Append no fim → índices posicionais e leitores
+   dict-by-name (`myp_summary.py`, `myp_aggregate.py`, integrado) não quebram.
+2. **Sleep adaptativo pokemontcg.io**: com `POKEMONTCG_API_KEY` definida
+   (grátis, dev.pokemontcg.io, 20k req/dia), o sleep por cache miss cai de
+   `--delay` (1.5s) pra **0.3s**. Ganho estimado em scan quick (8 edições):
+   **15-24 min**. O delay anti-CF das páginas MYP **não muda**.
+3. **Warning de startup** quando a key está ausente (throttle 429 + sleep cheio).
+4. **Teste offline** `test_tcg_url_column` (17 colunas, texto == hyperlink,
+   direct + fallback). Suite: **18/18 passam**.
+
+### O que NÃO mudou
+
+- Threshold (30% percent-integer), margem BRUTA pura, piso R$50, NM-only,
+  EN-only, delay 1.5s das páginas MYP, chunking, paginação v5.9 — **tudo
+  intacto**.
+
 ## v5.11.1 — 2026-06-09 — Tabela de ENTREGA com links clicáveis (padrão cross-scanner COMC)
 
 Padroniza a **entrega de resultados** do markdown (`myp_summary.py`) no formato

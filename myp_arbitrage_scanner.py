@@ -17,8 +17,8 @@ Requisitos:
     pip install cloudscraper beautifulsoup4 openpyxl lxml
 
 Autor: Matheus Chillemi / Claude
-Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10) | 2026-06-07 (v5.10.1 → v5.11) | 2026-06-09 (v5.11.1)
-Versão: v5.11.1
+Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10) | 2026-06-07 (v5.10.1 → v5.11) | 2026-06-09 (v5.11.1) | 2026-06-10 (v5.11.2)
+Versão: v5.11.2
 
 Changelog v5.1 (2026-05-12 — auditoria C/H/M, mesma metodologia do CT scanner):
   - C1: --threshold < 1.0 auto-converte com warning (UX guard contra trap
@@ -957,7 +957,10 @@ class MYPScraper:
         else:
             usd = self._fetch_ptcg_usd(cid)
             self._ptcg_cache[cid] = usd
-            time.sleep(self.delay)  # cortesia/rate-limit (só em cache miss)
+            # v5.11.2: sleep adaptativo — com POKEMONTCG_API_KEY o limite é
+            # 20k req/dia, então 0.3s basta. SÓ vale pra esta chamada
+            # (pokemontcg.io); o delay anti-CF das páginas MYP fica intacto.
+            time.sleep(min(self.delay, 0.3) if self.ptcg_api_key else self.delay)
         if usd is None:
             return None
         return usd * self.fx_usd_brl
@@ -1330,6 +1333,13 @@ class MYPScraper:
             src = "key" if self.ptcg_api_key else "sem key (rate-limit menor)"
             log.info(f"  💲 Preço TCG real via pokemontcg.io ATIVO ({src}); "
                      f"fallback `.estat-tcg` onde não houver cobertura.")
+            if not self.ptcg_api_key:
+                # v5.11.2: a key grátis (dev.pokemontcg.io) elimina o throttle
+                # 429 (backoff 5/15/30s) E ativa o sleep adaptativo de 0.3s —
+                # em scan largo a diferença passa de 15 min.
+                log.warning("  ⚠️ POKEMONTCG_API_KEY não definida — scans largos "
+                            "sofrem throttle 429 + sleep cheio por cache miss. "
+                            "Key grátis em dev.pokemontcg.io.")
         else:
             log.warning("  ⚠️ Sem câmbio USD→BRL — usando `.estat-tcg` (MYP) pra "
                         "todos os cards nesta run (preço real desativado).")
@@ -1481,14 +1491,18 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
     # Lida por nome de header (dict-by-name) → não quebra aggregate nem chunks
     # antigos (.get() retorna None). NÃO é taxa nem altera o cálculo de margem
     # (margem segue em BRL, BRUTA pura).
+    # v5.11.2 (2026-06-10): coluna "TCG URL" (texto plano, fim da lista) — o
+    # link TCGplayer já era computado pro hyperlink da célula "TCG Player (R$)",
+    # mas hyperlink de célula não sobrevive a leitores dict-by-name (pandas/
+    # openpyxl values-only). O scanner integrado consome esta coluna.
     headers = [
         "Card Name", "Edition", "Rarity",
         "MYP EN NM (R$)", "TCG Player (R$)", "TCG US$", "MYP Last Sale (R$)",
         "Margin %", "Diff (R$)", "NM Sellers",
         "⚠️ EN Trunc", "⚠️ TCG Suspect", "⚠️ Single Seller", "⚠️ COLLECTOR#",
-        "URL", "Updated",
+        "URL", "Updated", "TCG URL",
     ]
-    widths = [38, 32, 16, 16, 16, 12, 17, 11, 13, 10, 11, 14, 14, 14, 55, 16]
+    widths = [38, 32, 16, 16, 16, 12, 17, 11, 13, 10, 11, 14, 14, 14, 55, 16, 55]
     PRICE_COLS = {4, 5, 7, 9}       # MYP EN NM, TCG Player, Last Sale, Diff
     MYP_PRICE_COL = 4               # v5.8.8: hyperlink → página produto MYP
     TCG_PRICE_COL = 5               # v5.8.8: hyperlink → busca TCGplayer por nome
@@ -1515,15 +1529,6 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
         suspect_flag = "🚨 SUSPECT" if card.tcg_suspect else ""
         single_flag = "⚠️ 1 SELLER" if card.single_en_seller_risk else ""
         collector_flag = "⚠️ VARIANT" if card.oversized_collector_risk else ""
-        vals = [
-            card.name, card.edition, card.rarity,
-            card.myp_lowest_en_nm, card.tcg_player_price, card.tcg_real_usd,
-            card.myp_last_sale_brl,
-            card.margin_pct, diff, card.en_nm_sellers,
-            trunc_flag, suspect_flag, single_flag, collector_flag,
-            card.product_url, card.last_updated,
-        ]
-        USD_COL = 6  # v5.11.1: "TCG US$" — formato USD, não BRL
         # v5.8.8: links das células de preço. MYP EN NM → página do produto
         # (card.product_url, populado em 100% das rows verificadas no XLSX
         # 2026-05-27). TCG Player → DIRETA via pokemontcg.io redirect quando
@@ -1540,6 +1545,16 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
             )
             or tcg_search_url(card.name)
         )
+        vals = [
+            card.name, card.edition, card.rarity,
+            card.myp_lowest_en_nm, card.tcg_player_price, card.tcg_real_usd,
+            card.myp_last_sale_brl,
+            card.margin_pct, diff, card.en_nm_sellers,
+            trunc_flag, suspect_flag, single_flag, collector_flag,
+            card.product_url, card.last_updated,
+            tcg_link or "",  # v5.11.2: "TCG URL" texto plano (mesmo link do hyperlink)
+        ]
+        USD_COL = 6  # v5.11.1: "TCG US$" — formato USD, não BRL
         for col, v in enumerate(vals, 1):
             c = ws.cell(row=row, column=col, value=v)
             c.font = normal
