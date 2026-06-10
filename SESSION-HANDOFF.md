@@ -21,13 +21,15 @@ paralelo. Pra não virar bagunça de handoffs divergentes:
 
 ## ▶️ PRÓXIMO PASSO (faça isto primeiro)
 
-Nada técnico bloqueado. Faltam **2 ações do operador** (merge manual — `main` é gateado):
+**Estado em 2026-06-10:** `main` está na **v5.11.1** (PR #26 mergeado — tabela de
+entrega com links). Este PR propõe a **v5.11.2**: coluna `TCG URL` texto-plano no
+XLSX (consumida pelo scanner integrado `~/integrated-scanner`) + sleep adaptativo
+pokemontcg.io quando `POKEMONTCG_API_KEY` está definida (quick ~71 min → ~45-55).
 
-1. **Mergear PR #18** → leva este handoff + a regra anti-sprawl + o wiring do
-   `CLAUDE.md` pro `main`. **Só depois disso** uma sessão nova aberta no `main`
-   acha este arquivo sozinha.
-2. **Revisar/mergear PR #9** → cost gate v5.9.1 (scan mais rápido). É código,
-   pronto pra revisão.
+1. **Operador: definir `POKEMONTCG_API_KEY`** (key grátis em dev.pokemontcg.io)
+   como User env var — destrava o ganho de tempo.
+2. Pendência conhecida (handoff cross-projeto): MYP é o gargalo do perfil quick
+   do integrado; medir o ganho real após a key + v5.11.2.
 
 ## 🧭 Meta / o que o projeto faz
 

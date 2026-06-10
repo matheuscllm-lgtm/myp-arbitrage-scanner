@@ -316,6 +316,68 @@ def test_price_cell_hyperlinks():
     return True
 
 
+def test_tcg_url_column():
+    """v5.11.2: coluna "TCG URL" texto plano (última coluna do XLSX).
+
+    O scanner integrado lê o XLSX dict-by-name (hyperlink de célula não
+    sobrevive) — a coluna expõe o MESMO link do hyperlink da célula
+    "TCG Player (R$)": direct (pokemontcg.io redirect) quando a edição é
+    mapeada + collector# in-range, senão fallback de busca por nome.
+    """
+    clean = make_clean_deal()  # sem (NNN/MMM) no nome → fallback search
+    direct = CardData(
+        name="Iron Hands ex (070/162)",
+        edition="Temporal Forces",      # mapeada → sv5 → direct link
+        product_url="https://mypcards.com/pokemon/produto/12345/iron-hands-ex",
+        myp_lowest_en_nm=120.0,
+        tcg_player_price=240.0,
+        myp_last_sale_brl=220.0,
+        margin_pct=1.00,
+        margin_brl=120.0,
+        en_nm_sellers=5,
+        last_updated="2026-06-10 12:00",
+    )
+    cards = [clean, direct]
+
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        out = f.name
+    generate_xlsx(cards, out, threshold=0.25)
+    wb = load_workbook(out)
+
+    ws = wb["All EN Cards"]
+    hdr = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+    assert len(hdr) == 17, f"esperava 17 colunas, veio {len(hdr)}: {hdr}"
+    assert hdr[-1] == "TCG URL", f"última coluna deveria ser 'TCG URL': {hdr[-1]!r}"
+    url_col = hdr.index("TCG URL") + 1
+    tcg_price_col = hdr.index("TCG Player (R$)") + 1
+    name_col = hdr.index("Card Name") + 1
+
+    rows_checked = 0
+    for r in range(2, ws.max_row + 1):
+        nv = ws.cell(row=r, column=name_col).value
+        if not nv:
+            continue
+        plain = ws.cell(row=r, column=url_col).value
+        price_cell = ws.cell(row=r, column=tcg_price_col)
+        assert plain and str(plain).startswith("http"), \
+            f"r{r} ({nv}): TCG URL vazia/inválida: {plain!r}"
+        # texto plano == hyperlink da célula de preço (mesma fonte)
+        if price_cell.hyperlink:
+            assert plain == price_cell.hyperlink.target, \
+                f"r{r} ({nv}): TCG URL {plain!r} != hyperlink {price_cell.hyperlink.target!r}"
+        if "Iron Hands" in str(nv):
+            assert plain == "https://prices.pokemontcg.io/tcgplayer/sv5-70", \
+                f"direct esperado: {plain!r}"
+        elif "Charizard" in str(nv):
+            assert "tcgplayer.com/search" in plain, f"fallback search esperado: {plain!r}"
+        rows_checked += 1
+    assert rows_checked == 2, f"esperava 2 rows, vi {rows_checked}"
+
+    Path(out).unlink()
+    print(f"  Coluna 'TCG URL' (17ª) OK: direct + fallback ✓")
+    return True
+
+
 def test_myp_edition_to_setcode():
     """v5.8.9: mapeamento MYP edition → pokemontcg.io setcode.
 
@@ -854,6 +916,7 @@ def main():
         ("XLSX end-to-end", test_xlsx_end_to_end),
         ("tcg_search_url (v5.8.8)", test_tcg_search_url),
         ("price cell hyperlinks (v5.8.8/v5.8.9)", test_price_cell_hyperlinks),
+        ("coluna TCG URL texto plano (v5.11.2)", test_tcg_url_column),
         ("myp_edition_to_ptcg_setcode (v5.8.9)", test_myp_edition_to_setcode),
         ("tcg_direct_url (v5.8.9)", test_tcg_direct_url),
         ("marketplace pagination (v5.9)", test_marketplace_pagination),

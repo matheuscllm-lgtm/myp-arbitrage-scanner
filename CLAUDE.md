@@ -60,8 +60,11 @@ python myp_arbitrage_scanner.py --editions "Ascended Heroes" \
   com câmbio ao vivo. O campo `.estat-tcg` do MYP **não** é mais a fonte primária
   (ele mapeava a carta errada em Black Bolt/White Flare base-086 → preço furado);
   vira **fallback** só onde o pokemontcg.io não cobre. A conversão de moeda **não**
-  é taxa — é só pra comparar BRL com BRL. Defina `POKEMONTCG_API_KEY` (env) p/
-  evitar rate-limit em scans largos.
+  é taxa — é só pra comparar BRL com BRL. **Defina `POKEMONTCG_API_KEY`** (env;
+  key grátis em dev.pokemontcg.io, 20k req/dia): elimina o throttle 429
+  (backoff 5/15/30s) **e** ativa o sleep adaptativo de 0.3s (v5.11.2) — num
+  scan quick de 8 edições o ganho passa de **15-24 min**. No PowerShell:
+  `$env:POKEMONTCG_API_KEY="..."` (ou User env var pra persistir).
 - `--min-price 50` = piso de relevância ("carta valiosa" > R$50). É **filtro**,
   não taxa — fica fora do cálculo de margem.
 - Scan é **lento por design** (`--delay` × centenas de produtos × N edições →
@@ -126,5 +129,6 @@ python myp_summary.py results/<scan>.xlsx -o results/<scope>-<data>.md --type da
 ```
 
 O **XLSX/CSV continua com colunas separadas e URLs cruas** (`Card Name`, `Edition`,
-`URL`, etc.) + a coluna `TCG US$` (v5.11.1) — o formato composto (Carta/Links) é
-**só** da tabela de entrega markdown, não do XLSX.
+`URL`, etc.) + a coluna `TCG US$` (v5.11.1) + a coluna `TCG URL` (v5.11.2, texto
+plano, última coluna — é o link TCGplayer que o scanner integrado consome) — o
+formato composto (Carta/Links) é **só** da tabela de entrega markdown, não do XLSX.
