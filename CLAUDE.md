@@ -93,3 +93,38 @@ O resultado de um scan é entregue ao operador **como tabela no chat do Claude C
 - O scanner/postprocess **pode escrever** uma planilha local como subproduto de trabalho (gitignored) — tudo bem. O ponto é a **ENTREGA**: ela é a tabela na plataforma, não um anexo de arquivo.
 - Gerar/anexar arquivo **só quando o operador pedir explicitamente** (ex.: "me manda o XLSX pra importar em lote"). Sem pedido = sem arquivo.
 - A tabela traz **todos** os deals (não amostra curada) + as colunas relevantes da fonte.
+
+### Formato da tabela de entrega (v5.11.1, 2026-06-09 — padrão cross-scanner aprovado no COMC)
+
+A seção **"🟢 Top 50 deals limpos"** do markdown gerado por `myp_summary.py` usa o
+formato com **links clicáveis** aprovado pelo operador (espelha a entrega do scanner
+COMC). Colunas, nesta ordem:
+
+```
+| # | Margem % | MYP R$ | TCG US$ | Dif | Carta | Set | Raridade | Cond | Qtd | Links |
+```
+
+- **Carta** = nome + número do colecionador numa coluna só (ex. `Pikachu 173/165`).
+  Se o nome já embute o número, **não duplica** (helper `carta_label`).
+- **TCG US$** = preço **real** do TCGplayer em USD (via pokemontcg.io, campo
+  `tcg_real_usd`). `—` onde só houve fallback `.estat-tcg` (sem USD real).
+- **Dif** = lucro **bruto** em R$ (`TCG R$ − MYP R$`). A margem segue BRUTA pura.
+- **Cond** = `NM` (invariante NM-only).
+- **Qtd** = nº de ofertas EN-NM (`NM Sellers`) — quantos lotes o operador pode
+  comprar. O scanner **não** captura estoque por seller, então é a contagem de
+  ofertas EN-NM, não unidades.
+- **Links** = `[oferta](url_MYP) · [TCG](url_TCGplayer)` — **dois links markdown
+  clicáveis**. `oferta` → página do produto MYP (conferir preço/seller); `TCG` →
+  produto/busca TCGplayer pro **workflow manual de validação do preço NM**. O link
+  TCG é o redirect direto `prices.pokemontcg.io/tcgplayer/<setcode>-<num>` quando a
+  edição é mapeada e o collector# está in-range; senão cai na busca por nome.
+
+Como gerar a entrega a partir de um scan:
+
+```bash
+python myp_summary.py results/<scan>.xlsx -o results/<scope>-<data>.md --type daily
+```
+
+O **XLSX/CSV continua com colunas separadas e URLs cruas** (`Card Name`, `Edition`,
+`URL`, etc.) + a coluna `TCG US$` (v5.11.1) — o formato composto (Carta/Links) é
+**só** da tabela de entrega markdown, não do XLSX.

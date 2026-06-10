@@ -124,7 +124,8 @@ def test_xlsx_end_to_end():
     ws_susp = wb["🚨 TCG Suspect"]
     jirachi_susp = find_card_in_sheet(ws_susp, "Jirachi")
     assert jirachi_susp is not None, "BUG: Jirachi não apareceu em 🚨 TCG Suspect"
-    print(f"  Jirachi row em Suspect: name={jirachi_susp[0]!r}, last_sale={jirachi_susp[5]}")
+    # v5.11.1: coluna "TCG US$" inserida em idx 5 → last_sale agora idx 6.
+    print(f"  Jirachi row em Suspect: name={jirachi_susp[0]!r}, last_sale={jirachi_susp[6]}")
 
     # Assert 4: clean deal está em Deals
     clean_row = find_card_in_sheet(ws_deals, "Charizard")
@@ -133,7 +134,8 @@ def test_xlsx_end_to_end():
     # Borderline 18 (1800%) também entra
     # Actually let me check — threshold 0.25 = 25%. clean margin_pct=1.5 means 150%.
     assert clean_row is not None, "Clean deal sumiu de 🔥 Deals"
-    print(f"  Clean deal em Deals: name={clean_row[0]!r}, margin={clean_row[6]}")
+    # v5.11.1: "TCG US$" em idx 5 → margin agora idx 7.
+    print(f"  Clean deal em Deals: name={clean_row[0]!r}, margin={clean_row[7]}")
 
     # Assert 5: borderline (ratio 9.5x, abaixo do 10x) NÃO é suspect
     border_susp = find_card_in_sheet(ws_susp, "Mew")
@@ -756,6 +758,92 @@ def test_oversized_regex():
     return True
 
 
+def test_delivery_table_format():
+    """v5.11.1: tabela de ENTREGA do myp_summary.py no formato aprovado pelo
+    operador (links clicáveis MYP + TCG, igual scanner COMC).
+
+    Exercita: helpers de coluna (carta_label/delivery_links/fmt_usd) + round-trip
+    XLSX → markdown (myp_summary.main) garantindo header + links no output.
+    """
+    import myp_summary as S
+
+    # ── Helpers de coluna ──
+    # Carta: nome + número numa coluna só, sem duplicar.
+    assert S.carta_label("Pikachu (173/165)") == "Pikachu 173/165", \
+        f"carta_label não juntou nome+número: {S.carta_label('Pikachu (173/165)')!r}"
+    assert S.carta_label("Charizard ex") == "Charizard ex", \
+        "carta_label não deve alterar nome sem número"
+    base, num = S.split_card_name("Iron Hands ex (070/162)")
+    assert base == "Iron Hands ex" and num == "070/162", f"split errado: {base!r}/{num!r}"
+
+    # fmt_usd
+    assert S.fmt_usd(13.42) == "US$13.42", f"fmt_usd errado: {S.fmt_usd(13.42)!r}"
+    assert S.fmt_usd(None) == "—"
+
+    # Links: oferta (MYP) + TCG direto (Temporal Forces → sv5-70).
+    links = S.delivery_links(
+        "https://mypcards.com/pokemon/produto/123/iron-hands",
+        "Iron Hands ex (070/162)", "Temporal Forces", oversized=False,
+    )
+    assert "[oferta](https://mypcards.com/pokemon/produto/123/iron-hands)" in links, \
+        f"link de oferta MYP ausente: {links!r}"
+    assert "[TCG](https://prices.pokemontcg.io/tcgplayer/sv5-70)" in links, \
+        f"link TCG direto ausente: {links!r}"
+    assert " · " in links, f"separador de links ausente: {links!r}"
+
+    # Sem URL MYP mas com nome → só o link TCG (busca por nome).
+    only_tcg = S.delivery_links(None, "X", "edição inexistente")
+    assert only_tcg.startswith("[TCG]") and "[oferta]" not in only_tcg, \
+        f"sem MYP url deveria sobrar só TCG: {only_tcg!r}"
+    # Sem nada → '—'.
+    assert S.delivery_links(None, "", "") == "—"
+
+    # ── Round-trip XLSX → markdown ──
+    clean = make_clean_deal()
+    clean.name = "Charizard ex (125/191)"   # in-range (não supranumerário)
+    clean.tcg_real_usd = 36.50      # v5.11.1: USD real exposto no XLSX
+    cards = [clean, make_borderline_deal()]
+
+    import tempfile as _tf, os as _os
+    with _tf.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        xlsx_out = f.name
+    generate_xlsx(cards, xlsx_out, threshold=0.25)
+
+    # Confere que a coluna "TCG US$" entrou no XLSX e foi populada.
+    wb = load_workbook(xlsx_out)
+    ws = wb["All EN Cards"]
+    hdr = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+    assert "TCG US$" in hdr, f"coluna TCG US$ ausente do XLSX: {hdr}"
+    usd_col = hdr.index("TCG US$") + 1
+    name_col = hdr.index("Card Name") + 1
+    usd_seen = None
+    for r in range(2, ws.max_row + 1):
+        if "Charizard" in str(ws.cell(row=r, column=name_col).value or ""):
+            usd_seen = ws.cell(row=r, column=usd_col).value
+    wb.close()  # Windows: solta o handle antes do unlink
+    assert usd_seen == 36.50, f"TCG US$ não persistiu no XLSX: {usd_seen!r}"
+
+    md_out = xlsx_out.replace(".xlsx", ".md")
+    rc = S.build_markdown(xlsx_out, md_out, scan_type="daily", run_id="", repo="x/y")
+    assert rc == 0, f"build_markdown retornou {rc}"
+    md = Path(md_out).read_text(encoding="utf-8")
+
+    # Header no formato aprovado.
+    assert "| # | Margem % | MYP R$ | TCG US$ | Dif | Carta | Set | Raridade | Cond | Qtd | Links |" in md, \
+        "header da tabela de entrega não bate o formato aprovado"
+    # Carta composta + link de oferta clicável + Cond NM + USD.
+    assert "Charizard ex 125/191" in md, "Carta composta ausente do markdown"
+    assert "[oferta](https://mypcards.com/pokemon/surging-sparks/charizard-ex)" in md, \
+        "link de oferta MYP ausente do markdown"
+    assert "US$36.50" in md, "TCG US$ ausente do markdown"
+    assert "| NM |" in md, "coluna Cond=NM ausente do markdown"
+
+    _os.unlink(xlsx_out)
+    _os.unlink(md_out)
+    print("  delivery table format (header + Carta + links + USD + Cond) OK ✓")
+    return True
+
+
 def main():
     tests = [
         ("threshold constant", test_threshold_constant),
@@ -774,6 +862,7 @@ def main():
         ("real TCG overrides .estat-tcg (v5.11)", test_real_tcg_overrides_estat),
         ("fallback to .estat-tcg sem cobertura (v5.11)", test_fallback_to_estat_when_no_coverage),
         ("sem câmbio mantém .estat-tcg (v5.11)", test_no_fx_keeps_estat),
+        ("delivery table format (v5.11.1)", test_delivery_table_format),
     ]
     failed = 0
     for name, fn in tests:

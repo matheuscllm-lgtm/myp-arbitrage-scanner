@@ -26,6 +26,76 @@ if sys.stdout.encoding.lower() != "utf-8":
 
 from openpyxl import load_workbook
 
+# v5.11.1 (2026-06-09): reaproveita os helpers de URL do scanner pra montar o
+# link DIRETO do TCGplayer (via redirect pokemontcg.io) na tabela de ENTREGA.
+# Mesma lógica do XLSX (generate_xlsx) — direct link quando a edição é mapeada
+# e o collector# está in-range; senão cai pra busca-por-nome. Import tolerante:
+# se o módulo do scanner não estiver importável (ex.: teste isolado), o link
+# TCG some mas o resto da tabela segue.
+try:
+    from myp_arbitrage_scanner import tcg_direct_url, tcg_search_url
+except Exception:  # pragma: no cover - fallback defensivo
+    def tcg_direct_url(name, edition, oversized_collector_risk=False):
+        return None
+
+    def tcg_search_url(name):
+        return None
+
+
+def fmt_usd(v) -> str:
+    """Formata valor USD pra display (US$1,234.56). '—' se ausente."""
+    if v is None:
+        return "—"
+    try:
+        return f"US${float(v):,.2f}"
+    except (ValueError, TypeError):
+        return "—"
+
+
+def split_card_name(name: str | None) -> tuple[str, str]:
+    """Separa 'Pikachu (173/165)' → ('Pikachu', '173/165').
+
+    Retorna (nome_base, numero). Numero vazio se o nome não embute (NNN/MMM).
+    A coluna `Carta` da entrega junta como 'Pikachu 173/165' (sem duplicar o
+    número quando já está no nome)."""
+    if not name:
+        return ("", "")
+    import re
+    m = re.search(r"\((\d+/\d+)\)\s*$", name)
+    if not m:
+        return (name.strip(), "")
+    base = name[: m.start()].strip()
+    return (base, m.group(1))
+
+
+def carta_label(name: str | None) -> str:
+    """Coluna `Carta` = nome + número numa string só ('Pikachu 173/165').
+
+    Se o nome não embute número, retorna só o nome (sem duplicar)."""
+    base, num = split_card_name(name)
+    if num and num not in base:
+        return f"{base} {num}"
+    return base or (name or "").strip()
+
+
+def delivery_links(myp_url: str | None, name: str | None, edition: str | None,
+                   oversized: bool = False) -> str:
+    """Coluna `Links`: '[oferta](myp_url) · [TCG](tcg_url)'.
+
+    - oferta → página do produto no MYP (validação do preço/seller).
+    - TCG → produto/busca TCGplayer (workflow manual de conferir preço NM).
+    Emite só os links que existirem; '—' se nenhum."""
+    parts = []
+    if myp_url:
+        parts.append(f"[oferta]({myp_url})")
+    tcg = (
+        tcg_direct_url(name or "", edition or "", oversized_collector_risk=oversized)
+        or tcg_search_url(name or "")
+    )
+    if tcg:
+        parts.append(f"[TCG]({tcg})")
+    return " · ".join(parts) if parts else "—"
+
 
 def is_supranumerary(name: str | None) -> bool:
     """Detecta se card_num > set_total no nome '(N/M)'."""
@@ -60,17 +130,22 @@ def fmt_pct(v) -> str:
         return "—"
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Gera markdown summary do scan MYP")
-    parser.add_argument("xlsx", help="Caminho do XLSX consolidado")
-    parser.add_argument("-o", "--output", required=True, help="Caminho do .md de saída")
-    parser.add_argument("--type", choices=["daily", "weekly"], required=True,
-                        help="Tipo do scan (afeta título + tags)")
-    parser.add_argument("--run-id", default="",
-                        help="GH Actions run ID (link no markdown)")
-    parser.add_argument("--repo", default="matheuscllm-lgtm/myp-arbitrage-scanner",
-                        help="Repo GH pra link do artifact")
-    args = parser.parse_args()
+def build_markdown(xlsx: str, output: str, scan_type: str,
+                   run_id: str = "",
+                   repo: str = "matheuscllm-lgtm/myp-arbitrage-scanner") -> int:
+    """Gera o markdown de ENTREGA a partir do XLSX consolidado.
+
+    Extraído do antigo main() (v5.11.1) pra ser testável sem argv/subprocess.
+    `scan_type` ∈ {"daily","weekly"}."""
+    # nomes legados usados no corpo (mantidos pra diff mínimo)
+    class _A:  # namespace leve, evita reescrever args.* abaixo
+        pass
+    args = _A()
+    args.xlsx = xlsx
+    args.output = output
+    args.type = scan_type
+    args.run_id = run_id
+    args.repo = repo
 
     xlsx_path = Path(args.xlsx)
     if not xlsx_path.exists():
@@ -97,6 +172,10 @@ def main() -> int:
                 rec = dict(zip(headers, r))
                 if rec.get("Card Name"):
                     all_cards.append(rec)
+
+    # v5.11.1: solta o handle do XLSX assim que a extração termina (Windows
+    # segura o arquivo em read_only até fechar — relevante p/ testes/uso in-process).
+    wb.close()
 
     deals = [c for c in all_cards if c.get("Margin %") and c["Margin %"] >= 0.25]
     deals_sorted = sorted(deals, key=lambda c: c.get("Margin %") or 0, reverse=True)
@@ -145,22 +224,43 @@ def main() -> int:
         lines.append(f"**Artifact XLSX:** [`myp-{args.type}-consolidated-{args.run_id}`](https://github.com/{args.repo}/actions/runs/{args.run_id})")
         lines.append("")
 
-    # ── Top 50 deals limpos ──
+    # ── Top 50 deals limpos — FORMATO DE ENTREGA (links clicáveis) ──
+    # v5.11.1 (2026-06-09): formato aprovado pelo operador (espelha a entrega do
+    # scanner COMC). Colunas:
+    #   # | Margem % | MYP R$ | TCG US$ | Dif | Carta | Set | Raridade | Cond | Qtd | Links
+    # - Carta = nome + número numa coluna só ('Pikachu 173/165'), sem duplicar.
+    # - TCG US$ = preço REAL do TCGplayer em USD (pokemontcg.io). '—' onde só
+    #   houve fallback .estat-tcg (sem USD real).
+    # - Dif = lucro bruto em R$ (Diff (R$) = TCG R$ − MYP R$); margem segue BRUTA.
+    # - Cond = NM (invariante NM-only).
+    # - Qtd = nº de ofertas EN-NM (NM Sellers) — quantos lotes o operador pode
+    #   comprar; o scanner não captura estoque por seller, então é a contagem.
+    # - Links = [oferta](MYP) · [TCG](TCGplayer) — clicáveis; TCG p/ validação NM.
     lines.append("## 🟢 Top 50 deals limpos (sem flag SIR/HR/SAR)")
     lines.append("")
     if not deals_clean:
         lines.append("> Nenhum deal limpo nesta run.")
     else:
-        lines.append("| # | Carta | Edição | MYP R$ | TCG R$ | Margem | Lucro R$ |")
-        lines.append("|---|---|---|---:|---:|---:|---:|")
+        lines.append("| # | Margem % | MYP R$ | TCG US$ | Dif | Carta | Set | Raridade | Cond | Qtd | Links |")
+        lines.append("|---|---:|---:|---:|---:|---|---|---|---|---:|---|")
         for i, c in enumerate(deals_clean[:50], 1):
-            name = (c.get("Card Name") or "")[:55]
-            ed = (c.get("Edition") or "")[:30]
+            name = c.get("Card Name")
+            carta = carta_label(name)
+            ed = (c.get("Edition") or "").strip()
+            rarity = (c.get("Rarity") or "").strip() or "—"
             myp = fmt_brl(c.get("MYP EN NM (R$)"))
-            tcg = fmt_brl(c.get("TCG Player (R$)"))
+            tcg_usd = fmt_usd(c.get("TCG US$"))
             margin = fmt_pct(c.get("Margin %"))
             diff = fmt_brl(c.get("Diff (R$)"))
-            lines.append(f"| {i} | {name} | {ed} | {myp} | {tcg} | **{margin}** | {diff} |")
+            qty = c.get("NM Sellers") or 0
+            links = delivery_links(
+                c.get("URL"), name, ed,
+                oversized=bool(c.get("⚠️ COLLECTOR#")),
+            )
+            lines.append(
+                f"| {i} | **{margin}** | {myp} | {tcg_usd} | {diff} | "
+                f"{carta} | {ed} | {rarity} | NM | {qty} | {links} |"
+            )
     lines.append("")
 
     # ── Deals com flag SIR (alto risco) ──
@@ -233,6 +333,23 @@ def main() -> int:
     out_path.write_text("\n".join(lines), encoding="utf-8")
     print(f"OK markdown summary: {out_path}")
     return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Gera markdown summary do scan MYP")
+    parser.add_argument("xlsx", help="Caminho do XLSX consolidado")
+    parser.add_argument("-o", "--output", required=True, help="Caminho do .md de saída")
+    parser.add_argument("--type", choices=["daily", "weekly"], required=True,
+                        help="Tipo do scan (afeta título + tags)")
+    parser.add_argument("--run-id", default="",
+                        help="GH Actions run ID (link no markdown)")
+    parser.add_argument("--repo", default="matheuscllm-lgtm/myp-arbitrage-scanner",
+                        help="Repo GH pra link do artifact")
+    args = parser.parse_args()
+    return build_markdown(
+        xlsx=args.xlsx, output=args.output, scan_type=args.type,
+        run_id=args.run_id, repo=args.repo,
+    )
 
 
 if __name__ == "__main__":

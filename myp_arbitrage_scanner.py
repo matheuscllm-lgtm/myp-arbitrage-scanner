@@ -17,8 +17,8 @@ Requisitos:
     pip install cloudscraper beautifulsoup4 openpyxl lxml
 
 Autor: Matheus Chillemi / Claude
-Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10) | 2026-06-07 (v5.10.1 → v5.11)
-Versão: v5.11
+Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10) | 2026-06-07 (v5.10.1 → v5.11) | 2026-06-09 (v5.11.1)
+Versão: v5.11.1
 
 Changelog v5.1 (2026-05-12 — auditoria C/H/M, mesma metodologia do CT scanner):
   - C1: --threshold < 1.0 auto-converte com warning (UX guard contra trap
@@ -1475,22 +1475,28 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
     # Sinaliza cards onde collector_number > set_size (variant SIR/HR/promo
     # extra, frequentemente JP-only). Casos Darumaka 097/086, Mew ex 232/091.
     # Aggregate lê via dict-by-name, então ordem não quebra o pipeline.
+    # v5.11.1 (2026-06-09): coluna "TCG US$" (preço real em USD via pokemontcg.io,
+    # card.tcg_real_usd) exposta no XLSX pra alimentar a tabela de ENTREGA do
+    # myp_summary.py (formato aprovado pelo operador: links clicáveis MYP + TCG).
+    # Lida por nome de header (dict-by-name) → não quebra aggregate nem chunks
+    # antigos (.get() retorna None). NÃO é taxa nem altera o cálculo de margem
+    # (margem segue em BRL, BRUTA pura).
     headers = [
         "Card Name", "Edition", "Rarity",
-        "MYP EN NM (R$)", "TCG Player (R$)", "MYP Last Sale (R$)",
+        "MYP EN NM (R$)", "TCG Player (R$)", "TCG US$", "MYP Last Sale (R$)",
         "Margin %", "Diff (R$)", "NM Sellers",
         "⚠️ EN Trunc", "⚠️ TCG Suspect", "⚠️ Single Seller", "⚠️ COLLECTOR#",
         "URL", "Updated",
     ]
-    widths = [38, 32, 16, 16, 16, 17, 11, 13, 10, 11, 14, 14, 14, 55, 16]
-    PRICE_COLS = {4, 5, 6, 8}       # MYP EN NM, TCG Player, Last Sale, Diff
+    widths = [38, 32, 16, 16, 16, 12, 17, 11, 13, 10, 11, 14, 14, 14, 55, 16]
+    PRICE_COLS = {4, 5, 7, 9}       # MYP EN NM, TCG Player, Last Sale, Diff
     MYP_PRICE_COL = 4               # v5.8.8: hyperlink → página produto MYP
     TCG_PRICE_COL = 5               # v5.8.8: hyperlink → busca TCGplayer por nome
-    MARGIN_COL = 7
-    EN_TRUNC_COL = 10
-    TCG_SUSPECT_COL = 11
-    SINGLE_SELLER_COL = 12
-    COLLECTOR_COL = 13
+    MARGIN_COL = 8
+    EN_TRUNC_COL = 11
+    TCG_SUSPECT_COL = 12
+    SINGLE_SELLER_COL = 13
+    COLLECTOR_COL = 14
 
     def write_headers(ws):
         for col, h in enumerate(headers, 1):
@@ -1511,11 +1517,13 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
         collector_flag = "⚠️ VARIANT" if card.oversized_collector_risk else ""
         vals = [
             card.name, card.edition, card.rarity,
-            card.myp_lowest_en_nm, card.tcg_player_price, card.myp_last_sale_brl,
+            card.myp_lowest_en_nm, card.tcg_player_price, card.tcg_real_usd,
+            card.myp_last_sale_brl,
             card.margin_pct, diff, card.en_nm_sellers,
             trunc_flag, suspect_flag, single_flag, collector_flag,
             card.product_url, card.last_updated,
         ]
+        USD_COL = 6  # v5.11.1: "TCG US$" — formato USD, não BRL
         # v5.8.8: links das células de preço. MYP EN NM → página do produto
         # (card.product_url, populado em 100% das rows verificadas no XLSX
         # 2026-05-27). TCG Player → DIRETA via pokemontcg.io redirect quando
@@ -1538,6 +1546,8 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
             c.border = border
             if col in PRICE_COLS:
                 c.number_format = '#,##0.00'
+            if col == USD_COL and v is not None:
+                c.number_format = '"US$"#,##0.00'
             if col == MYP_PRICE_COL and v is not None and card.product_url:
                 c.hyperlink = card.product_url
                 c.font = HYPERLINK_FONT
