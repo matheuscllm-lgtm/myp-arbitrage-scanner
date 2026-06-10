@@ -1,5 +1,29 @@
 # Changelog
 
+## v5.11.1 — 2026-06-09 — Correções do preço real (suspect/cobertura/auditoria)
+
+Três acertos sobre a v5.11, achados em revisão:
+
+- **A1 — `tcg_suspect` obsoleto após override (falso negativo corrigido).** O
+  flag de inflação era calculado com o `.estat-tcg` declarado, ANTES do override
+  pelo preço real. Quando o pokemontcg.io corrigia o preço, o flag persistia e o
+  card era **excluído da sheet 🔥 Deals** mesmo com margem real legítima. Agora,
+  quando o preço vem da fonte real, `tcg_suspect` é **limpo** (a inflação do
+  declarado não se aplica mais). Counter `tcg_suspects` ajustado.
+- **A2 — card sem `.estat-tcg` ganha chance do preço real.** O skip por "sem TCG"
+  era prematuro (antes do fetch real), descartando cards que a fonte cobre. Agora
+  o skip só ocorre se **nem declarado nem real** existirem. Suspect-check guardado
+  contra `tcg_player_price` ausente.
+- **A4 — coluna `TCG Source` no XLSX.** Surfaça se o preço veio da fonte real
+  (`✅ TCGplayer (real)`, verde) ou do fallback (`⚠️ MYP .estat-tcg`, amarelo) —
+  o operador distingue preço verificado de fallback por rate-limit (ex.: Lampent
+  369%). Appendada no fim (não re-indexa colunas existentes). `myp_aggregate.py`
+  preserva a proveniência entre chunks.
+
+**Validação:** 20 testes offline ✓ (4 novos: A1, A2 precifica, A2 skip, A4 coluna).
+Smoke ao vivo Black Bolt: câmbio buscado, 4 preços reais, **0 suspects**, coluna
+`TCG Source` = `✅ TCGplayer (real)`.
+
 ## v5.11 — 2026-06-07 — Preço TCG REAL via pokemontcg.io (fim do `.estat-tcg` furado)
 
 **Problema (decisão do operador 2026-06-07).** O "TCG R$" vinha do campo

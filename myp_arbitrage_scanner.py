@@ -17,8 +17,8 @@ Requisitos:
     pip install cloudscraper beautifulsoup4 openpyxl lxml
 
 Autor: Matheus Chillemi / Claude
-Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10) | 2026-06-07 (v5.10.1 → v5.11)
-Versão: v5.11
+Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10) | 2026-06-07 (v5.10.1 → v5.11) | 2026-06-09 (v5.11.1)
+Versão: v5.11.1
 
 Changelog v5.1 (2026-05-12 — auditoria C/H/M, mesma metodologia do CT scanner):
   - C1: --threshold < 1.0 auto-converte com warning (UX guard contra trap
@@ -1029,14 +1029,13 @@ class MYPScraper:
         if tcg_el:
             card.myp_declared_tcg_brl = self._last_brl(tcg_el.get_text())
         # v5.11: provisório = MYP declarado (.estat-tcg). É sobreposto pelo preço
-        # REAL do TCGplayer (pokemontcg.io) depois do parse de sellers, só pra
-        # candidatos ≥ min_price. O skip/suspect-check abaixo usam o declarado.
+        # REAL do TCGplayer (pokemontcg.io) depois do parse de sellers (candidatos
+        # ≥ min_price).
+        # v5.11.1 (A2): NÃO skipa mais aqui quando falta o `.estat-tcg`. Com o
+        # preço real, um card sem declarado ainda pode ser precificado na fonte.
+        # O skip por "sem TCG nenhum" acontece após o override (declarado E real
+        # ausentes). O suspect-check abaixo só roda quando há declarado.
         card.tcg_player_price = card.myp_declared_tcg_brl
-
-        # If no TCG Player price (MYP não declara), skip this product entirely
-        if not card.tcg_player_price:
-            self._stats["skipped_no_tcg_price"] += 1
-            return None
 
         # v5.8 H2 (2026-05-16): capturar última venda real MYP pra sanity check.
         # MYP às vezes infla `.estat-tcg` (Jirachi PR-SM_SM161: declarava R$1499
@@ -1046,8 +1045,10 @@ class MYPScraper:
         if last_sale_el:
             card.myp_last_sale_brl = self._last_brl(last_sale_el.get_text())
 
-        # Sanity check: ratio TCG declarado / última venda real
-        if card.myp_last_sale_brl and card.myp_last_sale_brl > 0:
+        # Sanity check: ratio TCG declarado / última venda real.
+        # v5.11.1 (A2): guard `card.tcg_player_price` — sem declarado não há
+        # ratio a checar (e evita ZeroDivision/None).
+        if card.tcg_player_price and card.myp_last_sale_brl and card.myp_last_sale_brl > 0:
             ratio = card.tcg_player_price / card.myp_last_sale_brl
             if ratio > TCG_SUSPECT_RATIO_THRESHOLD:
                 # TCG declarado é >Nx última venda → MYP bug provável
@@ -1247,9 +1248,23 @@ class MYPScraper:
                 card.tcg_real_usd = real_brl / self.fx_usd_brl
                 card.tcg_source = "pokemontcg.io"
                 self._stats["tcg_from_real"] += 1
+                # v5.11.1 (A1): o preço agora é o REAL do TCGplayer, não o
+                # `.estat-tcg` declarado. A flag de inflação do declarado
+                # (tcg_suspect) não se aplica mais — limpa pra não excluir
+                # indevidamente o card da sheet 🔥 Deals (a margem agora é real).
+                if card.tcg_suspect:
+                    card.tcg_suspect = False
+                    self._stats["tcg_suspects"] -= 1
             else:
                 card.tcg_source = "myp_estat"
                 self._stats["tcg_from_myp_fallback"] += 1
+
+        # v5.11.1 (A2): skip final — descarta só se NÃO há preço TCG nenhum
+        # (nem `.estat-tcg` declarado nem real do pokemontcg.io). Antes o skip
+        # era prematuro (antes do real), descartando cards que a fonte cobre.
+        if not card.tcg_player_price:
+            self._stats["skipped_no_tcg_price"] += 1
+            return None
 
         # ── Calculate margin: lowest EN NM on MYP vs TCG Player EN ──
         # MARGEM BRUTA PURA (política cross-scanner 2026-06-06): só diferença de
@@ -1475,14 +1490,18 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
     # Sinaliza cards onde collector_number > set_size (variant SIR/HR/promo
     # extra, frequentemente JP-only). Casos Darumaka 097/086, Mew ex 232/091.
     # Aggregate lê via dict-by-name, então ordem não quebra o pipeline.
+    # v5.11.1 (A4): coluna "TCG Source" APPENDADA no fim (col 16) — surfaça se o
+    # preço veio da fonte real (pokemontcg.io) ou do fallback `.estat-tcg` do MYP.
+    # Append no fim de propósito: NÃO re-indexa nenhuma das colunas/constantes
+    # existentes (todas ≤15), zero risco de regressão no resto do writer.
     headers = [
         "Card Name", "Edition", "Rarity",
         "MYP EN NM (R$)", "TCG Player (R$)", "MYP Last Sale (R$)",
         "Margin %", "Diff (R$)", "NM Sellers",
         "⚠️ EN Trunc", "⚠️ TCG Suspect", "⚠️ Single Seller", "⚠️ COLLECTOR#",
-        "URL", "Updated",
+        "URL", "Updated", "TCG Source",
     ]
-    widths = [38, 32, 16, 16, 16, 17, 11, 13, 10, 11, 14, 14, 14, 55, 16]
+    widths = [38, 32, 16, 16, 16, 17, 11, 13, 10, 11, 14, 14, 14, 55, 16, 20]
     PRICE_COLS = {4, 5, 6, 8}       # MYP EN NM, TCG Player, Last Sale, Diff
     MYP_PRICE_COL = 4               # v5.8.8: hyperlink → página produto MYP
     TCG_PRICE_COL = 5               # v5.8.8: hyperlink → busca TCGplayer por nome
@@ -1491,6 +1510,7 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
     TCG_SUSPECT_COL = 11
     SINGLE_SELLER_COL = 12
     COLLECTOR_COL = 13
+    SOURCE_COL = 16                 # v5.11.1: proveniência do preço TCG
 
     def write_headers(ws):
         for col, h in enumerate(headers, 1):
@@ -1509,12 +1529,17 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
         suspect_flag = "🚨 SUSPECT" if card.tcg_suspect else ""
         single_flag = "⚠️ 1 SELLER" if card.single_en_seller_risk else ""
         collector_flag = "⚠️ VARIANT" if card.oversized_collector_risk else ""
+        # v5.11.1 (A4): rótulo legível da proveniência do preço TCG.
+        source_label = {
+            "pokemontcg.io": "✅ TCGplayer (real)",
+            "myp_estat": "⚠️ MYP .estat-tcg",
+        }.get(card.tcg_source, card.tcg_source or "")
         vals = [
             card.name, card.edition, card.rarity,
             card.myp_lowest_en_nm, card.tcg_player_price, card.myp_last_sale_brl,
             card.margin_pct, diff, card.en_nm_sellers,
             trunc_flag, suspect_flag, single_flag, collector_flag,
-            card.product_url, card.last_updated,
+            card.product_url, card.last_updated, source_label,
         ]
         # v5.8.8: links das células de preço. MYP EN NM → página do produto
         # (card.product_url, populado em 100% das rows verificadas no XLSX
@@ -1569,6 +1594,11 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
                 c.alignment = Alignment(horizontal="center")
             if col == COLLECTOR_COL and card.oversized_collector_risk:
                 c.fill = yellow_fill
+                c.alignment = Alignment(horizontal="center")
+            if col == SOURCE_COL:
+                # v5.11.1: verde = preço real (pokemontcg.io); amarelo = fallback
+                # `.estat-tcg` do MYP (pode estar furado em base-086 etc.).
+                c.fill = green_fill if card.tcg_source == "pokemontcg.io" else yellow_fill
                 c.alignment = Alignment(horizontal="center")
 
     # ── Sheet 1: Deals ──

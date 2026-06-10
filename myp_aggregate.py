@@ -68,6 +68,12 @@ def card_from_row(headers: list[str], row: tuple) -> CardData | None:
     card.oversized_collector_risk = bool(rec.get("⚠️ COLLECTOR#"))
     card.product_url = rec.get("URL") or ""
     card.last_updated = rec.get("Updated") or ""
+    # v5.11.1 (A4): preservar proveniência do preço TCG entre chunks, senão o
+    # consolidated XLSX rotularia tudo como fallback (default "myp_estat"). O
+    # label vem do writer ("✅ TCGplayer (real)" / "⚠️ MYP .estat-tcg"). Chunks
+    # antigos sem a coluna → None → "myp_estat".
+    _src = rec.get("TCG Source") or ""
+    card.tcg_source = "pokemontcg.io" if "real" in _src else "myp_estat"
     # margin_brl: derived
     if card.tcg_player_price and card.myp_lowest_en_nm:
         card.margin_brl = card.tcg_player_price - card.myp_lowest_en_nm
