@@ -72,6 +72,15 @@ python myp_arbitrage_scanner.py --editions "Ascended Heroes" \
 - Single-session sequencial. **Não paralelize fetches no mesmo IP** (a v5.9 segue
   paginação `?estoque-outros-page=N` da tabela marketplace; 2 sessões no mesmo IP
   = 403 CF).
+- **Jeito RÁPIDO de rodar o quick (2026-06-10): workflow `Quick MYP Scan
+  (chunked)`** — `gh workflow run quick-scan.yml` (ou pela aba Actions). Cada
+  chunk roda num runner do GitHub com **IP próprio** (sem conflito de CF), 6
+  chunks default ≈ **10-15 min** de relógio pras 11 edições do quick
+  (principais SV + Ascended Heroes/Perfect Order/Chaos Rising). Usa o secret
+  `POKEMONTCG_API_KEY` (sleep adaptativo, sem 429). Sai XLSX consolidado como
+  artifact + `results/latest-quick.md` commitado. Edições custom: input
+  `editions` (multi-palavra entre aspas — o quick parseia certo via `eval
+  set --`; o weekly tem bug latente com multi-palavra no `$ARGS` cru).
 
 ## Saída e commit
 

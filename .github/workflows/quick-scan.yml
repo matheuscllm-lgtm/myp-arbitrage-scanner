@@ -1,0 +1,225 @@
+name: Quick MYP Scan (chunked)
+
+# 2026-06-10: quick chunked sob demanda. Motivação: o quick local single-session
+# leva ~45-70 min (Cloudflare força 1 sessão por IP + delay 1.5s). Aqui cada
+# chunk roda num runner com IP PRÓPRIO (datacenter GH passa no CF do MYP,
+# confirmado 2026-06-06), então 6 chunks paralelos ≈ 10-15 min de relógio.
+#
+# Edições default = perfil quick do scanner integrado (11): principais SV +
+# era Mega Evolution (Ascended Heroes / Perfect Order / Chaos Rising — pedido
+# do operador 2026-06-10, sets com mais hits no MYP).
+#
+# Diferença vs weekly-scan.yml: parsing de edições MULTI-PALAVRA correto
+# (eval set -- preserva aspas; o $ARGS cru do weekly quebraria "Paldean Fates"
+# em dois filtros) + POKEMONTCG_API_KEY (sleep adaptativo v5.11.2, sem 429).
+
+on:
+  workflow_dispatch:
+    inputs:
+      editions:
+        description: 'Substrings de edições (espaço-separadas; multi-palavra em ""). Vazio = as 11 do quick.'
+        required: false
+        default: ''
+      threshold:
+        description: 'Margem BRUTA mínima em percent (default 30 = 30%)'
+        required: false
+        default: '30'
+      min_price:
+        description: 'Preço mínimo BRL (default 50 — piso canônico)'
+        required: false
+        default: '50'
+      delay:
+        description: 'Delay entre requests em segundos (default 1.5)'
+        required: false
+        default: '1.5'
+      chunk_total:
+        description: 'Chunks paralelos (default 6; max 11 = 1 edição/chunk)'
+        required: false
+        default: '6'
+
+concurrency:
+  group: myp-scan          # mesmo grupo do weekly: nunca 2 scans simultâneos
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      chunk_indices: ${{ steps.plan.outputs.chunk_indices }}
+      chunk_total: ${{ steps.plan.outputs.chunk_total }}
+    steps:
+      - name: Compute chunk indices
+        id: plan
+        run: |
+          TOTAL="${{ github.event.inputs.chunk_total || '6' }}"
+          if [ "$TOTAL" -lt 1 ]; then TOTAL=1; fi
+          if [ "$TOTAL" -gt 11 ]; then TOTAL=11; fi
+          INDICES=$(python3 -c "import json; print(json.dumps(list(range($TOTAL))))")
+          echo "chunk_indices=$INDICES" >> $GITHUB_OUTPUT
+          echo "chunk_total=$TOTAL" >> $GITHUB_OUTPUT
+          echo "Plan: $TOTAL chunks → $INDICES"
+
+  scan:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 60    # ~2 edições/chunk × ~6 min/edição (com key) + folga
+    strategy:
+      fail-fast: false
+      matrix:
+        chunk_index: ${{ fromJSON(needs.plan.outputs.chunk_indices) }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run scanner chunk ${{ matrix.chunk_index }}/${{ needs.plan.outputs.chunk_total }}
+        env:
+          PYTHONIOENCODING: utf-8
+          # Sleep adaptativo v5.11.2 (0.3s/cache-miss) + zero 429 nos runners.
+          POKEMONTCG_API_KEY: ${{ secrets.POKEMONTCG_API_KEY }}
+        run: |
+          THRESHOLD="${{ github.event.inputs.threshold || '30' }}"
+          MIN_PRICE="${{ github.event.inputs.min_price || '50' }}"
+          DELAY="${{ github.event.inputs.delay || '1.5' }}"
+          CI="${{ matrix.chunk_index }}"
+          CT="${{ needs.plan.outputs.chunk_total }}"
+
+          # Edições default = perfil quick (11). Multi-palavra entre aspas;
+          # `eval set --` re-parseia preservando as aspas (o $ARGS cru do
+          # weekly quebraria "Paldean Fates" em "Paldean" + "Fates").
+          EDITIONS_DEFAULT='Prismatic Surging Journey Stellar Twilight Shrouded "Paldean Fates" 151 "Ascended Heroes" "Perfect Order" "Chaos Rising"'
+          EDITIONS_INPUT='${{ github.event.inputs.editions }}'
+          EDS="${EDITIONS_INPUT:-$EDITIONS_DEFAULT}"
+          eval "set -- $EDS"
+          echo "Edições ($#): $@"
+
+          python myp_arbitrage_scanner.py \
+            --threshold "$THRESHOLD" --min-price "$MIN_PRICE" --delay "$DELAY" \
+            --chunk-index "$CI" --chunk-total "$CT" \
+            --output "myp_chunk_${CI}.xlsx" \
+            --editions "$@"
+
+      - name: Upload chunk artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: myp-quick-chunk-${{ matrix.chunk_index }}
+          include-hidden-files: true
+          path: |
+            myp_chunk_*.xlsx
+            .debug/
+          retention-days: 14
+          if-no-files-found: warn
+
+  aggregate:
+    needs: scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: always() && needs.scan.result != 'cancelled'
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Download all chunk artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: myp-quick-chunk-*
+          merge-multiple: true
+          path: chunks/
+
+      - name: List downloaded chunks
+        run: |
+          echo "Chunks recebidos:"
+          ls -la chunks/ || echo "(diretório vazio)"
+          find chunks/ -name 'myp_chunk_*.xlsx' -ls
+
+      - name: Aggregate chunks into consolidated XLSX
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          THRESHOLD="${{ github.event.inputs.threshold || '30' }}"
+          THRESHOLD_FRAC=$(python3 -c "print($THRESHOLD / 100)")
+          OUT="myp_quick_$(date -u +%Y%m%d_%H%M).xlsx"
+          CHUNK_COUNT=$(find chunks/ -name 'myp_chunk_*.xlsx' | wc -l)
+          if [ "$CHUNK_COUNT" -eq 0 ]; then
+            echo "::error::Zero chunks recuperados — não há nada pra agregar"
+            exit 1
+          fi
+          python myp_aggregate.py chunks/myp_chunk_*.xlsx \
+            --output "$OUT" \
+            --threshold "$THRESHOLD_FRAC"
+          echo "Final XLSX: $OUT"
+
+      - name: Upload consolidated artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: myp-quick-consolidated-${{ github.run_id }}
+          path: |
+            myp_quick_*.xlsx
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Generate markdown summary
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          XLSX=$(ls -t myp_quick_*.xlsx 2>/dev/null | head -1)
+          if [ -z "$XLSX" ]; then
+            echo "::warning::Sem XLSX consolidado, pulando summary"
+            exit 0
+          fi
+          DATE=$(date -u +%Y-%m-%d)
+          mkdir -p results
+          OUT="results/quick-${DATE}.md"
+          python myp_summary.py "$XLSX" \
+            --output "$OUT" \
+            --type daily \
+            --run-id "${{ github.run_id }}" \
+            --repo "${{ github.repository }}"
+          cp "$OUT" "results/latest-quick.md"
+          echo "Generated: $OUT + results/latest-quick.md"
+
+      - name: Commit markdown to repo
+        run: |
+          if [ ! -f "results/latest-quick.md" ]; then
+            echo "Sem markdown gerado, pulando commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin main || true
+          git add results/
+          if git diff --cached --quiet; then
+            echo "Nada novo pra commitar"
+            exit 0
+          fi
+          git commit -m "results: quick scan $(date -u +%Y-%m-%d) [skip ci]"
+          git push
+          echo "Pushed markdown summary to main"
