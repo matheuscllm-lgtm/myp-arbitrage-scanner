@@ -65,6 +65,19 @@ python myp_arbitrage_scanner.py --editions "Ascended Heroes" \
   (backoff 5/15/30s) **e** ativa o sleep adaptativo de 0.3s (v5.11.2) — num
   scan quick de 8 edições o ganho passa de **15-24 min**. No PowerShell:
   `$env:POKEMONTCG_API_KEY="..."` (ou User env var pra persistir).
+  - ✅ **Onde a key mora (2 lugares automáticos, setados 1× pelo operador):**
+    1. **CI (workflows):** secret do GitHub Actions `POKEMONTCG_API_KEY`
+       (*Settings → Secrets and variables → Actions*). Os 3 workflows
+       (daily/weekly/quick) injetam no `env` do step de scan sozinhos (desde
+       #30). Toda run de workflow já usa — automático.
+    2. **Sessões Claude Code na nuvem (run local no container):** configure
+       `POKEMONTCG_API_KEY` como **variável de ambiente do environment** do
+       Claude Code (config do environment em code.claude.com). Aí **toda sessão**
+       já nasce com a key no `os.environ` — o scanner usa automático, sem
+       re-passar. (Container é efêmero; export manual no shell só vale a sessão
+       atual.)
+    - **Nunca** commitar o valor da key em arquivo (o repo é versionado).
+      Obter/conferir a key: **dev.pokemontcg.io** → Dashboard.
 - `--min-price 50` = piso de relevância ("carta valiosa" > R$50). É **filtro**,
   não taxa — fica fora do cálculo de margem.
 - Scan é **lento por design** (`--delay` × centenas de produtos × N edições →
