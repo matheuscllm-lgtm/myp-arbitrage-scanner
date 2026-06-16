@@ -1,5 +1,27 @@
 # Changelog
 
+## v5.11.4 — 2026-06-16 — Checkpoint/resume (sobrevive ao reciclo do container)
+
+**Problema.** O ambiente de nuvem recicla/reinicia o container na inatividade e
+**mata o processo do scan** — mas o disco sobrevive. Como o scanner só escrevia
+o XLSX no fim, um kill no meio perdia **horas** de trabalho (visto repetidamente).
+
+**Mudança.** Checkpoint por edição + `--resume`:
+- Após **cada edição concluída**, o scanner salva o progresso (cards + edições
+  feitas + stats) num sidecar `<output>.resume.json` (escrita **atômica** via
+  `os.replace` — não corrompe se morrer no meio do write).
+- Com **`--resume`**, ao reiniciar ele carrega o checkpoint, **pula as edições já
+  feitas** e continua de onde parou. Sem `--resume`, ignora o checkpoint (scan
+  do zero), mas ainda o escreve (pra um `--resume` futuro poder retomar).
+- No fim de um run completo, o checkpoint é removido.
+- Tolerante a checkpoint corrompido/versão antiga (`CHECKPOINT_VERSION`) → cai
+  pra scan do zero com warning. Cada chunk tem seu próprio checkpoint (por
+  `--output`), então chunks paralelos retomam independente.
+
+**Validação:** 23 testes offline ✓ (2 novos: round-trip save/load; scan com
+resume pula edição feita, escaneia só a que falta e limpa o checkpoint no fim).
+Nenhuma chamada de rede nos testes (mocks).
+
 ## v5.11.3 — 2026-06-10 — Fixes de recall do preço real (resgate do PR #25)
 
 O PR #25 (draft, conflitante) tinha 2 fixes de comportamento que nunca chegaram

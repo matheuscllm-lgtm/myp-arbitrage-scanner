@@ -17,8 +17,8 @@ Requisitos:
     pip install cloudscraper beautifulsoup4 openpyxl lxml
 
 Autor: Matheus Chillemi / Claude
-Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10) | 2026-06-07 (v5.10.1 → v5.11) | 2026-06-09 (v5.11.1) | 2026-06-10 (v5.11.2 → v5.11.3)
-Versão: v5.11.3
+Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10) | 2026-06-07 (v5.10.1 → v5.11) | 2026-06-09 (v5.11.1) | 2026-06-10 (v5.11.2 → v5.11.3) | 2026-06-16 (v5.11.4)
+Versão: v5.11.4
 
 Changelog v5.1 (2026-05-12 — auditoria C/H/M, mesma metodologia do CT scanner):
   - C1: --threshold < 1.0 auto-converte com warning (UX guard contra trap
@@ -72,7 +72,7 @@ import re
 import time
 import logging
 from datetime import datetime
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from typing import Optional
 from pathlib import Path
 from urllib.parse import quote_plus
@@ -99,6 +99,11 @@ MAX_EDITION_PAGES = 50           # v5.4 H4: cap em get_all_editions (evita infin
 # páginas a seguir por produto (evita loop infinito + limita custo de scan).
 MAX_SELLER_PAGES = 10            # v5.9: max páginas da tabela marketplace por produto
 MIN_EDITIONS_EXPECTED = 200      # v5.4 C2: catalog scrape sanity floor (~326 esperado, alarme em <200)
+# v5.11.4 (2026-06-16): checkpoint/resume. O container da nuvem é reciclado na
+# inatividade e mata o processo — mas o disco sobrevive. Salvando o progresso por
+# edição (cards + edições já feitas) num sidecar `<output>.resume.json`, um
+# `--resume` retoma de onde parou em vez de perder horas de scan.
+CHECKPOINT_VERSION = 1
 TIMEOUT = 20                     # timeout HTTP em segundos
 HTTP_MAX_RETRIES = 3             # M1 fix: retries em transient errors
 DEBUG_DIR = Path(__file__).resolve().parent / ".debug"   # M4 fix: subpasta dedicada
@@ -1329,9 +1334,53 @@ class MYPScraper:
         return card
 
     # ── Main scan ────────────────────────────────────────────────────
+    # ── v5.11.4: checkpoint/resume ──
+    def _save_checkpoint(self, path: str, done_editions: set) -> None:
+        """Dump cards + edições já feitas + stats num JSON (escrita atômica via
+        os.replace, pra não corromper se o processo morrer no meio do write)."""
+        import json
+        try:
+            payload = {
+                "version": CHECKPOINT_VERSION,
+                "cards": [asdict(c) for c in self.cards],
+                "done_editions": sorted(done_editions),
+                "stats": self._stats,
+            }
+            tmp = f"{path}.tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(payload, f)
+            os.replace(tmp, path)   # atômico
+        except Exception as e:  # noqa: BLE001 — checkpoint é best-effort, nunca derruba o scan
+            log.warning(f"  ⚠️ Falha ao salvar checkpoint {path}: {e!r}")
+
+    def _load_checkpoint(self, path: str) -> set:
+        """Restaura self.cards + self._stats e retorna o set de edições já feitas.
+        Tolerante a checkpoint corrompido/versão diferente → começa do zero."""
+        import json
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:  # noqa: BLE001
+            log.warning(f"  ⚠️ Checkpoint {path} ilegível ({e!r}) — ignorando, scan do zero.")
+            return set()
+        if data.get("version") != CHECKPOINT_VERSION:
+            log.warning(f"  ⚠️ Checkpoint {path} é de versão antiga — ignorando.")
+            return set()
+        fields = CardData.__dataclass_fields__
+        # filtra chaves desconhecidas (defensivo a mudança de schema do CardData)
+        self.cards = [
+            CardData(**{k: v for k, v in c.items() if k in fields})
+            for c in data.get("cards", [])
+        ]
+        st = data.get("stats")
+        if isinstance(st, dict):
+            self._stats.update(st)
+        return set(data.get("done_editions", []))
+
     def scan(self, max_editions: int = 0, max_products: int = 0,
              edition_filter: list[str] = None,
-             chunk_index: int = 0, chunk_total: int = 1) -> list[CardData]:
+             chunk_index: int = 0, chunk_total: int = 1,
+             resume: bool = False, checkpoint_path: Optional[str] = None) -> list[CardData]:
         log.info("═" * 60)
         log.info("  MYP Cards Arbitrage Scanner")
         log.info(f"  Threshold: {self.margin_threshold*100:.0f}% | Language: EN only | Condition: NM")
@@ -1397,7 +1446,19 @@ class MYPScraper:
                 f"(chunk {chunk_index}/{chunk_total})"
             )
 
+        # v5.11.4: resume — carrega progresso salvo e pula edições já feitas.
+        done_editions: set = set()
+        if resume and checkpoint_path and os.path.exists(checkpoint_path):
+            done_editions = self._load_checkpoint(checkpoint_path)
+            log.info(
+                f"  ⏯️ Resume de {checkpoint_path}: {len(done_editions)} edição(ões) "
+                f"já feitas, {len(self.cards)} cards restaurados."
+            )
+
         for i, ed in enumerate(editions):
+            if ed["url"] in done_editions:
+                log.info(f"\n[{i+1}/{len(editions)}] ⏭️ (resume) já feita: {ed['title']}")
+                continue
             log.info(f"\n[{i+1}/{len(editions)}] 📦 {ed['title']}")
 
             product_urls = self.get_edition_products(ed["url"])
@@ -1431,6 +1492,12 @@ class MYPScraper:
                         f"> TCG: R${card.tcg_player_price:,.2f} (negative)"
                     )
 
+            # v5.11.4: checkpoint após cada edição concluída (escrita atômica).
+            # Se o container reiniciar/morrer, `--resume` retoma daqui.
+            if checkpoint_path:
+                done_editions.add(ed["url"])
+                self._save_checkpoint(checkpoint_path, done_editions)
+
         # Summary
         deals = [c for c in self.cards if c.margin_pct and c.margin_pct >= self.margin_threshold]
         log.info("\n" + "═" * 60)
@@ -1460,6 +1527,13 @@ class MYPScraper:
         log.info(f"      TCG fallback .estat-tcg MYP (v5.11): {self._stats['tcg_from_myp_fallback']}")
         log.info(f"      HTTP retries (M1): {self._stats['http_retries']}")
         log.info("═" * 60)
+
+        # v5.11.4: run completo → checkpoint não é mais necessário.
+        if checkpoint_path and os.path.exists(checkpoint_path):
+            try:
+                os.remove(checkpoint_path)
+            except OSError:
+                pass
 
         return self.cards
 
@@ -1784,6 +1858,11 @@ Exemplos:
                        help="Índice do chunk (0-based). Usado com --chunk-total pra dividir scan em jobs paralelos.")
     parser.add_argument("--chunk-total", type=int, default=1,
                        help="Total de chunks (1 = sem chunking). Editions são fatiadas via slicing interleaved.")
+    # v5.11.4: resume após kill do container. Salva progresso por edição em
+    # `<output>.resume.json`; com --resume, retoma de onde parou.
+    parser.add_argument("--resume", action="store_true",
+                       help="Retoma de um checkpoint `<output>.resume.json` se existir "
+                            "(pula edições já feitas). Útil quando o container reinicia.")
     args = parser.parse_args()
 
     # C1 fix (2026-05-12): MYP usa percent integer (35 = 35%), oposto do CT
@@ -1808,9 +1887,13 @@ Exemplos:
         f"Config: threshold={args.threshold}%, min_price=R${args.min_price}, "
         f"delay={args.delay}s, min_en_sellers={args.min_en_sellers}"
     )
+    # v5.11.4: checkpoint vive ao lado do XLSX de saída (sobrevive ao reciclo
+    # do container; o XLSX em si só é escrito no fim).
+    checkpoint_path = f"{output_path}.resume.json"
     cards = scraper.scan(max_editions=args.max_editions, max_products=args.max_products,
                          edition_filter=args.editions,
-                         chunk_index=args.chunk_index, chunk_total=args.chunk_total)
+                         chunk_index=args.chunk_index, chunk_total=args.chunk_total,
+                         resume=args.resume, checkpoint_path=checkpoint_path)
 
     # v5.4 M1 + invariant check: cron precisa distinguir "scan saudável com
     # zero deals" de "scraper quebrado". Exit codes:
