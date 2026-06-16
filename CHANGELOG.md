@@ -1,5 +1,26 @@
 # Changelog
 
+## v5.11.5 — 2026-06-16 — A3: preço real ANTES da trava de custo (não perder deals)
+
+**Problema (A3, achado na revisão).** A trava de custo (v5.10.1) decide *se vai
+paginar* a tabela marketplace usando o `card.tcg_player_price` — que naquele
+ponto ainda é o **`.estat-tcg` DECLARADO** pelo MYP (o real só é buscado
+adiante). Como o MYP às vezes **subdeclara** (mapeia a carta errada, caso
+base-086), um card valioso podia ter declarado `< min_price`, cair em "nunca é
+deal" → **paginação pulada** → o EN-NM barato das páginas 2+ nunca era achado →
+**deal real perdido**. As duas features (trava de custo + preço real v5.11) se
+atrapalhavam.
+
+**Fix.** Quando a trava está prestes a pular por TCG baixo, consulta o **preço
+real** (`_real_tcg_brl`) ANTES de decidir e usa `max(declarado, real)`. O real é
+**cacheado por card-id** → reusado no override adiante, sem request extra. Custo:
+1 fetch pokemontcg.io por card truncado-e-declarado-baixo (cacheado, host não é
+o do CF, rápido com `POKEMONTCG_API_KEY`).
+
+**Validação:** 24 testes offline ✓ (1 novo: truncado declarado R$50<80 mas real
+R$500 → PAGINA e acha o EN R$85 da pág 2; a regressão do cost-gate genuíno — real
+também baixo → ainda pula — segue passando).
+
 ## v5.11.4 — 2026-06-16 — Checkpoint/resume (sobrevive ao reciclo do container)
 
 **Problema.** O ambiente de nuvem recicla/reinicia o container na inatividade e

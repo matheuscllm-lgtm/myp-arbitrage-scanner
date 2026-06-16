@@ -17,8 +17,8 @@ Requisitos:
     pip install cloudscraper beautifulsoup4 openpyxl lxml
 
 Autor: Matheus Chillemi / Claude
-Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10) | 2026-06-07 (v5.10.1 → v5.11) | 2026-06-09 (v5.11.1) | 2026-06-10 (v5.11.2 → v5.11.3) | 2026-06-16 (v5.11.4)
-Versão: v5.11.4
+Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10) | 2026-06-07 (v5.10.1 → v5.11) | 2026-06-09 (v5.11.1) | 2026-06-10 (v5.11.2 → v5.11.3) | 2026-06-16 (v5.11.4 → v5.11.5)
+Versão: v5.11.5
 
 Changelog v5.1 (2026-05-12 — auditoria C/H/M, mesma metodologia do CT scanner):
   - C1: --threshold < 1.0 auto-converte com warning (UX guard contra trap
@@ -1137,7 +1137,20 @@ class MYPScraper:
         # filtrado adiante de qualquer forma — paginar pra resolver truncation
         # aqui é puro desperdício (medido: ~85% das paginações caíam em commons
         # < R$80). Só paginamos quando o card ainda pode ser deal.
-        can_be_deal = (card.tcg_player_price or 0) >= self.min_price
+        # v5.11.5 (A3): a premissa "TCG < min_price ⟹ nunca deal" só vale com o
+        # preço REAL. O `card.tcg_player_price` aqui ainda é o `.estat-tcg`
+        # DECLARADO (o real só é buscado adiante), e o MYP às vezes SUBdeclara
+        # (mapeia a carta errada) — base-086 é o caso. Se a trava fosse decidir
+        # com o declarado baixo, pularia a paginação e perderia o EN-NM barato
+        # das páginas 2+ de uma carta que é deal de verdade. Então, quando a
+        # trava está prestes a pular por TCG baixo, consulta o preço real ANTES
+        # (cacheado por card-id → reusado no override adiante, sem request extra).
+        gate_tcg = card.tcg_player_price or 0
+        if page1_truncation_gate and max_seller_page >= 2 and gate_tcg < self.min_price:
+            real_brl = self._real_tcg_brl(card.name, edition_name)
+            if real_brl is not None:
+                gate_tcg = max(gate_tcg, real_brl)
+        can_be_deal = gate_tcg >= self.min_price
         if page1_truncation_gate and max_seller_page >= 2 and not can_be_deal:
             self._stats["pagination_skipped_low_tcg"] += 1
         elif page1_truncation_gate and max_seller_page >= 2:

@@ -685,6 +685,60 @@ def test_pagination_cost_gate_low_tcg():
     return True
 
 
+def test_a3_real_price_rescues_pagination():
+    """v5.11.5 (A3): card truncado com `.estat-tcg` DECLARADO baixo (< min_price)
+    MAS preço REAL alto → a trava de custo consulta o real ANTES e PAGINA (não
+    pula), achando o EN-NM barato da página 2. Sem o fix (decidindo pelo
+    declarado), pularia e perderia o deal. Espelha test_pagination_cost_gate_low_tcg
+    mas com o real resgatando."""
+    from myp_arbitrage_scanner import MYPScraper
+
+    base = "https://mypcards.com/pokemon/produto/9/blackbolt"
+    # Lojistas: 2 EN-NM (90, 95) → lowest_en pág-1 = 90 (≥ min 80).
+    lojistas = (
+        '<table class="table-striped table-bordered"><tbody>'
+        + _seller_row("Inglês", "NM - Quase nova", "90,00")
+        + _seller_row("Inglês", "NM - Quase nova", "95,00")
+        + '</tbody></table>'
+    )
+    # Marketplace pág-1: 16 PT/JP baratos (0 EN) < 90 → truncation gate dispara.
+    mkt1 = "".join(
+        _seller_row("Português" if i % 2 == 0 else "Japonês", "NM - Quase nova", f"{40 + i*2},00")
+        for i in range(16)
+    )
+    pagination = '<ul class="pagination"><a href="?estoque-outros-page=2">2</a></ul>'
+    page1 = (
+        '<html><body><h1>Cheap Truncated (010/100)</h1>'
+        '<span class="estat-tcg">TCG Player: R$ 50,00</span>'   # DECLARADO baixo (<80)
+        + lojistas + _marketplace_container(mkt1, pagination) + '</body></html>'
+    )
+    # Página 2: um EN-NM barato (R$85) escondido — só achável paginando.
+    page2 = (
+        '<html><body>'
+        + _marketplace_container(_seller_row("Inglês", "NM - Quase nova", "85,00"))
+        + '</body></html>'
+    )
+    pages = {base: page1, f"{base}?estoque-outros-page=2": page2}
+
+    sc = MYPScraper(delay=0.0, min_price=80.0)
+    sc.fx_usd_brl = 5.0
+    sc._fetch_ptcg_usd = lambda cid: 100.0   # real US$100 → R$500 (≥ min)
+    sc._get = lambda url, save_debug=False: BeautifulSoup(pages[url], "lxml") if url in pages else None
+
+    card = sc.scrape_product(base, "SV: Black Bolt")   # edição mapeada → setcode resolve
+
+    assert card is not None
+    # PAGINOU (não pulou) porque o real resgatou a decisão.
+    assert sc._stats["pagination_skipped_low_tcg"] == 0, "A3: NÃO devia pular (real é alto)"
+    assert sc._stats["seller_pages_followed"] == 1, \
+        f"A3: devia paginar pág 2, got {sc._stats['seller_pages_followed']}"
+    # Achou o EN-NM barato da página 2 (R$85 < 90 visível).
+    assert card.myp_lowest_en_nm == 85.0, f"lowest_en={card.myp_lowest_en_nm} (esperado 85 da pág 2)"
+    assert card.tcg_source == "pokemontcg.io"
+    print("  A3: declarado R$50<80 mas real R$500 → paginou, achou EN R$85 (deal salvo) ✓")
+    return True
+
+
 def _real_price_page(card_h1, estat_tcg_brl, en_prices):
     """Página simples: h1 com (NNN/MMM), .estat-tcg declarado, N sellers EN-NM."""
     rows = "".join(_seller_row("Inglês", "NM - Quase nova", p) for p in en_prices)
@@ -1074,6 +1128,7 @@ def main():
         ("marketplace pagination (v5.9)", test_marketplace_pagination),
         ("pagination truncation gate (v5.9)", test_pagination_gate_skips_untruncated),
         ("pagination cost gate TCG<min (v5.9.1)", test_pagination_cost_gate_low_tcg),
+        ("A3 real price rescues pagination (v5.11.5)", test_a3_real_price_rescues_pagination),
         ("real TCG overrides .estat-tcg (v5.11)", test_real_tcg_overrides_estat),
         ("fallback to .estat-tcg sem cobertura (v5.11)", test_fallback_to_estat_when_no_coverage),
         ("sem câmbio mantém .estat-tcg (v5.11)", test_no_fx_keeps_estat),
