@@ -989,6 +989,75 @@ def test_delivery_table_format():
     return True
 
 
+def test_checkpoint_save_load():
+    """v5.11.4: _save_checkpoint → _load_checkpoint preserva cards, stats e o
+    set de edições feitas (round-trip)."""
+    import os as _os, tempfile
+    from myp_arbitrage_scanner import MYPScraper, CardData
+
+    sc = MYPScraper(delay=0.0)
+    c = CardData(); c.name = "Pikachu (058/102)"; c.myp_lowest_en_nm = 100.0
+    c.tcg_player_price = 180.0; c.margin_pct = 0.8; c.tcg_source = "pokemontcg.io"
+    sc.cards = [c]
+    sc._stats["en_found"] = 1
+    fd, path = tempfile.mkstemp(suffix=".resume.json"); _os.close(fd)
+    try:
+        sc._save_checkpoint(path, {"u1", "u2"})
+        sc2 = MYPScraper(delay=0.0)
+        done = sc2._load_checkpoint(path)
+        assert done == {"u1", "u2"}, done
+        assert len(sc2.cards) == 1 and sc2.cards[0].name == "Pikachu (058/102)", sc2.cards
+        assert abs(sc2.cards[0].tcg_player_price - 180.0) < 0.01
+        assert sc2.cards[0].tcg_source == "pokemontcg.io"
+        assert sc2._stats["en_found"] == 1, sc2._stats["en_found"]
+    finally:
+        _os.path.exists(path) and _os.unlink(path)
+    print("  checkpoint save/load round-trip (cards + stats + done) ✓")
+    return True
+
+
+def test_scan_resume_skips_done_editions():
+    """v5.11.4: scan(resume=True) pula edições já no checkpoint, escaneia só as
+    que faltam, e remove o checkpoint ao concluir."""
+    import os as _os, tempfile, json
+    import myp_arbitrage_scanner as M
+    from myp_arbitrage_scanner import MYPScraper, CardData, CHECKPOINT_VERSION
+
+    # checkpoint pré-existente: edição u1 já feita, 1 card restaurado.
+    pre = CardData(); pre.name = "Done (1/100)"; pre.myp_lowest_en_nm = 100.0
+    pre.tcg_player_price = 200.0; pre.margin_pct = 1.0
+    fd, ckpt = tempfile.mkstemp(suffix=".resume.json"); _os.close(fd)
+    with open(ckpt, "w", encoding="utf-8") as f:
+        json.dump({"version": CHECKPOINT_VERSION,
+                   "cards": [{"name": "Done (1/100)", "myp_lowest_en_nm": 100.0,
+                              "tcg_player_price": 200.0, "margin_pct": 1.0}],
+                   "done_editions": ["u1"], "stats": {}}, f)
+
+    sc = MYPScraper(delay=0.0)
+    # evita rede: câmbio mockado + catálogo/produtos/scrape mockados.
+    M.fetch_usd_brl = lambda session: 5.0
+    sc.get_all_editions = lambda: [{"title": "E1", "url": "u1"},
+                                   {"title": "E2", "url": "u2"}]
+    sc.get_edition_products = lambda url: [f"{url}/p1"]
+    scraped = []
+
+    def fake_scrape(purl, title):
+        scraped.append(purl)
+        c = CardData(); c.name = f"{title} (2/100)"; c.myp_lowest_en_nm = 100.0
+        c.tcg_player_price = 150.0; c.margin_pct = 0.5
+        return c
+    sc.scrape_product = fake_scrape
+
+    cards = sc.scan(resume=True, checkpoint_path=ckpt)
+
+    assert scraped == ["u2/p1"], f"deveria escanear só u2 (E1 já feita): {scraped}"
+    names = sorted(c.name for c in cards)
+    assert names == ["Done (1/100)", "E2 (2/100)"], names
+    assert not _os.path.exists(ckpt), "checkpoint deveria ser removido ao concluir"
+    print("  resume: pula edição feita (u1), escaneia só u2, limpa checkpoint ✓")
+    return True
+
+
 def main():
     tests = [
         ("threshold constant", test_threshold_constant),
@@ -1012,6 +1081,8 @@ def main():
         ("A2 precifica sem .estat-tcg (v5.11.3)", test_prices_card_without_estat_tcg),
         ("A2 skip sem TCG nenhum (v5.11.3)", test_skip_when_no_tcg_at_all),
         ("delivery table format (v5.11.1)", test_delivery_table_format),
+        ("checkpoint save/load (v5.11.4)", test_checkpoint_save_load),
+        ("scan resume skips done editions (v5.11.4)", test_scan_resume_skips_done_editions),
     ]
     failed = 0
     for name, fn in tests:
