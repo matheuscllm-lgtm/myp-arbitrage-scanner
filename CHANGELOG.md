@@ -1,5 +1,33 @@
 # Changelog
 
+## v5.11.6 — 2026-06-16 — Carta + Links nas tabelas de supranumerário/suspeito
+
+As seções **supranumerário** e **TCG suspect** do markdown de entrega
+(`myp_summary.py`) saíam **sem coluna `Links`** e usavam o `Card Name` cru em vez
+do `Carta` canônico (nome + número). Como os deals supranumerários são a **maior
+parte da entrega** do operador (raridade='Comum' no MYP, número > total do set),
+ele recebia a maioria das linhas **sem link clicável** pra validar a oferta MYP e
+o preço TCGplayer NM.
+
+(Renumerado de v5.11.4 → v5.11.6 no merge: v5.11.4 e v5.11.5 já tinham sido
+ocupados na `main` pelos PRs #32 e #33 enquanto este PR estava aberto.)
+
+### Mudanças
+
+1. **`delivery_links` aceita `tcg_url` explícito.** Novo parâmetro que prefere a
+   coluna **`TCG URL`** do XLSX (plain-text desde v5.11.2) sobre o recompute via
+   import do scanner. A entrega passa a usar o **mesmo** link que o XLSX carrega,
+   e funciona mesmo quando `myp_arbitrage_scanner` não é importável.
+2. **Tabela de supranumerário** ganha coluna `Carta` (via `carta_label`, nome +
+   número sem duplicar) + coluna `Links` (`[oferta](MYP) · [TCG](TCGplayer)`).
+3. **Tabela de TCG suspect** ganha as mesmas colunas `Carta` + `Links`.
+4. A tabela de **deals limpos** também passa o `tcg_url` do XLSX (consistência).
+
+**Validação:** smoke test sobre o XLSX parcial consolidado
+(`myp_arbitrage_PARTIAL_run27559472691.xlsx`, 87 deals, 19/20 chunks) — as
+linhas supranumerárias agora trazem `Links` preenchido (oferta MYP + TCG). Sem
+mudança em delay/CF, threshold ou invariante NM-only.
+
 ## v5.11.5 — 2026-06-16 — A3: preço real ANTES da trava de custo (não perder deals)
 
 **Problema (A3, achado na revisão).** A trava de custo (v5.10.1) decide *se vai
