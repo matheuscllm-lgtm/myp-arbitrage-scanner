@@ -79,16 +79,21 @@ def carta_label(name: str | None) -> str:
 
 
 def delivery_links(myp_url: str | None, name: str | None, edition: str | None,
-                   oversized: bool = False) -> str:
+                   oversized: bool = False, tcg_url: str | None = None) -> str:
     """Coluna `Links`: '[oferta](myp_url) · [TCG](tcg_url)'.
 
     - oferta → página do produto no MYP (validação do preço/seller).
     - TCG → produto/busca TCGplayer (workflow manual de conferir preço NM).
-    Emite só os links que existirem; '—' se nenhum."""
+    Emite só os links que existirem; '—' se nenhum.
+
+    v5.11.4: aceita `tcg_url` explícito (coluna `TCG URL` do XLSX, plain-text
+    desde v5.11.2) e o prefere sobre o recompute via import do scanner — assim a
+    entrega usa o MESMO link que o XLSX já carrega, e funciona mesmo quando
+    `myp_arbitrage_scanner` não é importável (teste isolado / env sem o módulo)."""
     parts = []
     if myp_url:
         parts.append(f"[oferta]({myp_url})")
-    tcg = (
+    tcg = tcg_url or (
         tcg_direct_url(name or "", edition or "", oversized_collector_risk=oversized)
         or tcg_search_url(name or "")
     )
@@ -256,6 +261,7 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
             links = delivery_links(
                 c.get("URL"), name, ed,
                 oversized=bool(c.get("⚠️ COLLECTOR#")),
+                tcg_url=c.get("TCG URL"),
             )
             lines.append(
                 f"| {i} | **{margin}** | {myp} | {tcg_usd} | {diff} | "
@@ -273,15 +279,24 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
     if not deals_supranum:
         lines.append("> Nenhum deal com flag supranumerário nesta run.")
     else:
-        lines.append("| # | Carta | Edição | MYP R$ | TCG R$ | Margem (suspeita) |")
-        lines.append("|---|---|---|---:|---:|---:|")
+        # v5.11.4: Carta (nome+número via carta_label) + Links (oferta MYP · TCG)
+        # no formato canônico — esses deals são a MAIOR PARTE da entrega do
+        # operador e antes saíam sem links clicáveis.
+        lines.append("| # | Carta | Edição | MYP R$ | TCG R$ | Margem (suspeita) | Links |")
+        lines.append("|---|---|---|---:|---:|---:|---|")
         for i, c in enumerate(deals_supranum[:50], 1):
-            name = (c.get("Card Name") or "")[:55]
+            name = c.get("Card Name")
+            carta = carta_label(name)
             ed = (c.get("Edition") or "")[:30]
             myp = fmt_brl(c.get("MYP EN NM (R$)"))
             tcg = fmt_brl(c.get("TCG Player (R$)"))
             margin = fmt_pct(c.get("Margin %"))
-            lines.append(f"| {i} | {name} | {ed} | {myp} | {tcg} | {margin} |")
+            links = delivery_links(
+                c.get("URL"), name, (c.get("Edition") or "").strip(),
+                oversized=bool(c.get("⚠️ COLLECTOR#")),
+                tcg_url=c.get("TCG URL"),
+            )
+            lines.append(f"| {i} | {carta} | {ed} | {myp} | {tcg} | {margin} | {links} |")
     lines.append("")
 
     # ── TCG Suspect (v5.8 — MYP infla .estat-tcg) ──
@@ -294,16 +309,24 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
                      "Margens absurdas aqui são quase certamente artefato. **Já excluídos "
                      "do Top 15 limpos**, listados aqui pra auditoria.")
         lines.append("")
-        lines.append("| # | Carta | Edição | MYP R$ | TCG decl R$ | Última venda R$ | Margem (fake) |")
-        lines.append("|---|---|---|---:|---:|---:|---:|")
+        # v5.11.4: Carta + Links também no balde de suspeitos (auditoria do
+        # operador precisa do link de oferta MYP + TCG pra validar manualmente).
+        lines.append("| # | Carta | Edição | MYP R$ | TCG decl R$ | Última venda R$ | Margem (fake) | Links |")
+        lines.append("|---|---|---|---:|---:|---:|---:|---|")
         for i, c in enumerate(deals_suspect[:50], 1):
-            name = (c.get("Card Name") or "")[:55]
+            name = c.get("Card Name")
+            carta = carta_label(name)
             ed = (c.get("Edition") or "")[:30]
             myp = fmt_brl(c.get("MYP EN NM (R$)"))
             tcg = fmt_brl(c.get("TCG Player (R$)"))
             last = fmt_brl(c.get("MYP Last Sale (R$)"))
             margin = fmt_pct(c.get("Margin %"))
-            lines.append(f"| {i} | {name} | {ed} | {myp} | {tcg} | {last} | {margin} |")
+            links = delivery_links(
+                c.get("URL"), name, (c.get("Edition") or "").strip(),
+                oversized=bool(c.get("⚠️ COLLECTOR#")),
+                tcg_url=c.get("TCG URL"),
+            )
+            lines.append(f"| {i} | {carta} | {ed} | {myp} | {tcg} | {last} | {margin} | {links} |")
         lines.append("")
 
     # ── Truncation risks ──
