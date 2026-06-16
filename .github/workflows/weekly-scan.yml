@@ -97,6 +97,10 @@ jobs:
       - name: Run scanner chunk ${{ matrix.chunk_index }}/${{ needs.plan.outputs.chunk_total }}
         env:
           PYTHONIOENCODING: utf-8
+          # v5.11: preço TCG real via pokemontcg.io. Sem a key, scans grandes
+          # sofrem 429 e caem no fallback `.estat-tcg`. Vazio se o secret não
+          # existir → scanner roda keyless (graceful).
+          POKEMONTCG_API_KEY: ${{ secrets.POKEMONTCG_API_KEY }}
         run: |
           THRESHOLD="${{ github.event.inputs.threshold || '30' }}"
           MIN_PRICE="${{ github.event.inputs.min_price || '80' }}"
