@@ -1,5 +1,30 @@
 # Changelog
 
+## v5.11.4 — 2026-06-13 — Carta + Links nas tabelas de supranumerário/suspeito
+
+As seções **supranumerário** e **TCG suspect** do markdown de entrega
+(`myp_summary.py`) saíam **sem coluna `Links`** e usavam o `Card Name` cru em vez
+do `Carta` canônico (nome + número). Como os deals supranumerários são a **maior
+parte da entrega** do operador (raridade='Comum' no MYP, número > total do set),
+ele recebia a maioria das linhas **sem link clicável** pra validar a oferta MYP e
+o preço TCGplayer NM.
+
+### Mudanças
+
+1. **`delivery_links` aceita `tcg_url` explícito.** Novo parâmetro que prefere a
+   coluna **`TCG URL`** do XLSX (plain-text desde v5.11.2) sobre o recompute via
+   import do scanner. A entrega passa a usar o **mesmo** link que o XLSX carrega,
+   e funciona mesmo quando `myp_arbitrage_scanner` não é importável.
+2. **Tabela de supranumerário** ganha coluna `Carta` (via `carta_label`, nome +
+   número sem duplicar) + coluna `Links` (`[oferta](MYP) · [TCG](TCGplayer)`).
+3. **Tabela de TCG suspect** ganha as mesmas colunas `Carta` + `Links`.
+4. A tabela de **deals limpos** também passa o `tcg_url` do XLSX (consistência).
+
+**Validação:** smoke test sobre o XLSX parcial consolidado
+(`myp_arbitrage_PARTIAL_run27559472691.xlsx`, 87 deals, 19/20 chunks) — as 18
+linhas supranumerárias agora trazem `Links` preenchido (oferta MYP + TCG). Sem
+mudança em delay/CF, threshold ou invariante NM-only.
+
 ## v5.11.3 — 2026-06-10 — Fixes de recall do preço real (resgate do PR #25)
 
 O PR #25 (draft, conflitante) tinha 2 fixes de comportamento que nunca chegaram
