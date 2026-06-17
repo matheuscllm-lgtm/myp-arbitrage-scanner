@@ -21,15 +21,17 @@ paralelo. Pra não virar bagunça de handoffs divergentes:
 
 ## ▶️ PRÓXIMO PASSO (faça isto primeiro)
 
-**Estado em 2026-06-10:** `main` está na **v5.11.1** (PR #26 mergeado — tabela de
-entrega com links). Este PR propõe a **v5.11.2**: coluna `TCG URL` texto-plano no
-XLSX (consumida pelo scanner integrado `~/integrated-scanner`) + sleep adaptativo
-pokemontcg.io quando `POKEMONTCG_API_KEY` está definida (quick ~71 min → ~45-55).
+**Estado em 2026-06-17:** `main` está na **v5.11.7** (entrega via `myp_summary.py`
+virou convenção obrigatória; ver CHANGELOG + PRs #30–#36). Última mudança de CI:
+**weekly alinhado ao quick** (PR #38) — parsing de `--editions` multi-palavra via
+`eval set --` (corrige `"Paldean Fates"` quebrar em 2 filtros), `git pull --rebase
+origin main` antes do commit do resumo, e timeout por chunk 120 → 240 min.
 
 1. **Operador: definir `POKEMONTCG_API_KEY`** (key grátis em dev.pokemontcg.io)
-   como User env var — destrava o ganho de tempo.
-2. Pendência conhecida (handoff cross-projeto): MYP é o gargalo do perfil quick
-   do integrado; medir o ganho real após a key + v5.11.2.
+   como User env var / secret de Actions — destrava o sleep adaptativo (scans
+   mais rápidos, sem 429).
+2. Próximo candidato de CI (opcional): levar o `drift_check` (canário anti-mudança
+   de HTML/Cloudflare, hoje só no daily) também pro weekly/quick.
 
 ## 🧭 Meta / o que o projeto faz
 
