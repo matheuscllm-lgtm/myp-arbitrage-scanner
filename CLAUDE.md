@@ -95,6 +95,16 @@ python myp_arbitrage_scanner.py --editions "Ascended Heroes" \
   `editions` (multi-palavra entre aspas — o quick parseia certo via `eval
   set --`; o weekly tem bug latente com multi-palavra no `$ARGS` cru).
 
+## Otimizar o scanner (loop iterativo)
+
+Pra otimizar (velocidade/correção/custo/qualidade) há **um caminho só**: o loop
+iterativo de dev documentado em
+[`docs/optimization-loop.md`](docs/optimization-loop.md) — *medir
+(`python bench.py`) → mudar → verificar (`python test_v5_8_offline.py`) →
+repetir*. Não improvise: o playbook tem o ciclo, as ferramentas por passo e o
+backlog priorizado. **Não** existe comando "loop engineering"; a skill `/loop` é
+só agendador.
+
 ## Saída e commit
 
 - Outputs vão pra `results/`. **O `.xlsx` é gitignored de propósito** (`*.xlsx`).

@@ -1,5 +1,59 @@
 # Changelog
 
+## v5.12 — 2026-06-17 — Batch pokemontcg.io por set (Iteração #1 do loop)
+
+Primeira otimização rodada **dentro** do loop iterativo (fundação na v5.11.8).
+Troca N round-trips por-card `/v2/cards/{id}` por ~1 request paginado por set
+(`/v2/cards?q=set.id:<setcode>`) que pré-popula o cache `_ptcg_cache` — num scan
+largo é o grosso do tempo (e do risco de 429).
+
+### Mudanças
+
+1. **`_prefill_ptcg_set(setcode)`** — chamado 1× por edição (quando há câmbio e a
+   edição mapeia a um setcode), pagina o set inteiro e popula o cache. **Cache
+   POSITIVO:** só cacheia cards que existem; cids ausentes caem no
+   `_fetch_ptcg_usd` por-card normal → preserva o 404→fallback `.estat-tcg`
+   **exato**. Falha de rede aborta o prefill em silêncio (fallback por-card assume).
+2. **`_min_tcg_usd(prices)`** — helper extraído (fonte única da seleção
+   `min(market|mid)`), usado pelo fetch por-card **e** pelo prefill → preço
+   idêntico nos dois caminhos. Chave de cache normalizada igual (`lstrip("0")`);
+   número não-numérico (TG/GG/promo) é pulado.
+3. **Contador `ptcg_prefill_calls`** + linha no summary; `bench.py` modela o
+   endpoint batch e reporta o novo contador.
+4. **Teste novo** `test_prefill_ptcg_set_batch` (min(market|mid), strip de zero,
+   skip não-numérico, idempotência, cache-hit elimina round-trip). **25/25** verdes.
+
+Antes/depois no `bench.py` (mockado, 2 sets × 8 produtos): **`ptcg_calls` 16 → 0**,
+`ptcg_prefill_calls` 0 → 2, `tcg_from_real` inalterado em 16 (mesmo preço, sem os
+round-trips por-card).
+
+## v5.11.8 — 2026-06-17 — Loop de otimização: instrumentação de tempo + `bench.py`
+
+Fundação pro **loop iterativo de otimização** (*medir → mudar → verificar →
+repetir*). Mudança **aditiva e neutra de comportamento** — não altera scraping,
+delay/CF, threshold, margem (bruta pura) nem a invariante NM-only. Só passa a
+**medir** o que antes era invisível (o scanner contava eventos, mas não tempo).
+
+### Mudanças
+
+1. **Instrumentação de tempo (sempre ligada, overhead desprezível)** via
+   `time.perf_counter()`, somada no `self._stats` já existente: `t_http_total`
+   (dentro de `_get`), `t_ptcg_total` + `ptcg_calls` (dentro de `_fetch_ptcg_usd`
+   — conta só round-trip REAL; cache-hit não passa por lá) e `t_editions_total`
+   (loop por edição em `scan()`). Saem no summary do scanner.
+2. **`bench.py`** — micro-benchmark reprodutível. Default mockado (sem rede,
+   CI-safe): substitui só a rede, todo o resto roda de verdade, então
+   `ptcg_calls` é real. `--live` mede tempo de relógio. Relatório de uma tela no
+   stdout, fácil de comparar antes/depois (`diff before.txt after.txt`).
+3. **`docs/optimization-loop.md`** — playbook do loop (ciclo, ferramentas por
+   passo, como ler o bench, backlog priorizado). `CLAUDE.md` aponta pra ele.
+4. **Sem novas dependências.** Os 24 testes offline seguem verdes (mudança
+   aditiva; chaves extras de `_stats` fazem round-trip no checkpoint sem mudar
+   schema).
+
+Baseline mockado atual: 16 produtos → `ptcg_calls=16`. Próxima iteração
+planejada: **batch pokemontcg.io por set** (derrubar `ptcg_calls` pra ~O(sets)).
+
 ## v5.11.7 — 2026-06-13 — Entrega via `myp_summary.py` vira convenção OBRIGATÓRIA (doc-only)
 
 Mudança **só de documentação**. Sem alteração de código, delay/CF, threshold ou
