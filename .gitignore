@@ -23,6 +23,7 @@ chunk*.log
 .run_with_*.py
 # Root-level scratch/driver scripts (anchored so scripts/_audit_*.py stay tracked)
 /_*.py
+/_*.sh
 
 # Experimental PriceCharting scrape cache (lives in %TEMP%)
 
