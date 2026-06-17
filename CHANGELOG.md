@@ -1,5 +1,32 @@
 # Changelog
 
+## v5.12 — 2026-06-17 — Batch pokemontcg.io por set (Iteração #1 do loop)
+
+Primeira otimização rodada **dentro** do loop iterativo (fundação na v5.11.8).
+Troca N round-trips por-card `/v2/cards/{id}` por ~1 request paginado por set
+(`/v2/cards?q=set.id:<setcode>`) que pré-popula o cache `_ptcg_cache` — num scan
+largo é o grosso do tempo (e do risco de 429).
+
+### Mudanças
+
+1. **`_prefill_ptcg_set(setcode)`** — chamado 1× por edição (quando há câmbio e a
+   edição mapeia a um setcode), pagina o set inteiro e popula o cache. **Cache
+   POSITIVO:** só cacheia cards que existem; cids ausentes caem no
+   `_fetch_ptcg_usd` por-card normal → preserva o 404→fallback `.estat-tcg`
+   **exato**. Falha de rede aborta o prefill em silêncio (fallback por-card assume).
+2. **`_min_tcg_usd(prices)`** — helper extraído (fonte única da seleção
+   `min(market|mid)`), usado pelo fetch por-card **e** pelo prefill → preço
+   idêntico nos dois caminhos. Chave de cache normalizada igual (`lstrip("0")`);
+   número não-numérico (TG/GG/promo) é pulado.
+3. **Contador `ptcg_prefill_calls`** + linha no summary; `bench.py` modela o
+   endpoint batch e reporta o novo contador.
+4. **Teste novo** `test_prefill_ptcg_set_batch` (min(market|mid), strip de zero,
+   skip não-numérico, idempotência, cache-hit elimina round-trip). **25/25** verdes.
+
+Antes/depois no `bench.py` (mockado, 2 sets × 8 produtos): **`ptcg_calls` 16 → 0**,
+`ptcg_prefill_calls` 0 → 2, `tcg_from_real` inalterado em 16 (mesmo preço, sem os
+round-trips por-card).
+
 ## v5.11.8 — 2026-06-17 — Loop de otimização: instrumentação de tempo + `bench.py`
 
 Fundação pro **loop iterativo de otimização** (*medir → mudar → verificar →

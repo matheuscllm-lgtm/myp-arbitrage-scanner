@@ -76,7 +76,7 @@ Aditiva, sempre ligada, overhead desprezível (`time.perf_counter`):
 ## Backlog (as iterações, priorizadas)
 
 **Velocidade**
-- **V3 — batch pokemontcg.io por set** *(Iteração #1)*: 1 `GET /v2/cards?q=set.id:<setcode>`
+- **V3 — batch pokemontcg.io por set** *(Iteração #1 — ✅ v5.12)*: 1 `GET /v2/cards?q=set.id:<setcode>`
   paginado pré-popula `_ptcg_cache` da edição → derruba `ptcg_calls` de ~O(cards)
   pra ~O(sets). Estratégia de menor risco: **cache positivo** — cids ausentes
   caem no `_fetch_ptcg_usd` atual (preserva 404→fallback). Cuidado com a chave

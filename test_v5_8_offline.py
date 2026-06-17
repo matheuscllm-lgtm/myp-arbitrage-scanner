@@ -1112,6 +1112,61 @@ def test_scan_resume_skips_done_editions():
     return True
 
 
+def test_prefill_ptcg_set_batch():
+    """v5.12: _prefill_ptcg_set popula o cache do set inteiro num request, e
+    _real_tcg_brl passa a usar o cache SEM chamar _fetch_ptcg_usd (round-trip
+    por-card eliminado). Cobre min(market|mid), strip de zero à esquerda na
+    chave e skip de número não-numérico (TG/GG)."""
+    from myp_arbitrage_scanner import MYPScraper
+
+    batch = {"data": [
+        {"id": "sv5-70", "number": "070",
+         "tcgplayer": {"prices": {"holofoil": {"market": 13.42, "mid": 20.0}}}},
+        {"id": "sv5-1", "number": "1",
+         "tcgplayer": {"prices": {"normal": {"mid": 5.0}}}},          # só mid
+        {"id": "sv5-GG01", "number": "GG01",
+         "tcgplayer": {"prices": {"holofoil": {"market": 99.0}}}},    # não-numérico → skip
+    ], "page": 1, "pageSize": 250, "count": 3, "totalCount": 3}
+    calls = {"batch": 0, "single": 0}
+
+    class _Resp:
+        status_code = 200
+        def raise_for_status(self):
+            pass
+        def json(self):
+            return batch
+
+    class _Sess:
+        def get(self, url, **kw):
+            calls["batch" if "q=set.id" in url else "single"] += 1
+            return _Resp()
+
+    sc = MYPScraper(delay=0.0, min_price=50.0)
+    sc.fx_usd_brl = 5.0
+    sc.session = _Sess()
+    sc._prefill_ptcg_set("sv5")
+
+    # min(market|mid): market 13.42 vence mid 20; zero à esquerda normalizado (070→70)
+    assert sc._ptcg_cache.get("sv5-70") == 13.42, sc._ptcg_cache
+    assert sc._ptcg_cache.get("sv5-1") == 5.0, sc._ptcg_cache       # só mid disponível
+    assert "sv5-GG01" not in sc._ptcg_cache, "número não-numérico não deve entrar no cache"
+    assert calls["batch"] == 1, f"esperava 1 request batch, got {calls['batch']}"
+
+    # idempotente: 2ª chamada do mesmo setcode não refaz request
+    sc._prefill_ptcg_set("sv5")
+    assert calls["batch"] == 1, "prefill repetido do mesmo set não deveria refazer request"
+
+    # _real_tcg_brl agora resolve pelo cache, SEM round-trip por-card
+    def _boom(cid):
+        raise AssertionError(f"não devia chamar _fetch_ptcg_usd: {cid}")
+    sc._fetch_ptcg_usd = _boom
+    brl = sc._real_tcg_brl("Iron Hands ex (070/162)", "Temporal Forces")  # Temporal Forces → sv5
+    assert abs(brl - 13.42 * 5.0) < 1e-6, brl
+    assert calls["single"] == 0, "não devia haver fetch por-card após prefill"
+    print("  v5.12 prefill: batch popula cache + _real_tcg_brl usa cache (0 round-trips por-card) ✓")
+    return True
+
+
 def main():
     tests = [
         ("threshold constant", test_threshold_constant),
@@ -1138,6 +1193,7 @@ def main():
         ("delivery table format (v5.11.1)", test_delivery_table_format),
         ("checkpoint save/load (v5.11.4)", test_checkpoint_save_load),
         ("scan resume skips done editions (v5.11.4)", test_scan_resume_skips_done_editions),
+        ("v5.12 prefill batch pokemontcg.io por set", test_prefill_ptcg_set_batch),
     ]
     failed = 0
     for name, fn in tests:

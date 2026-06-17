@@ -17,8 +17,8 @@ Requisitos:
     pip install cloudscraper beautifulsoup4 openpyxl lxml
 
 Autor: Matheus Chillemi / Claude
-Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10) | 2026-06-07 (v5.10.1 → v5.11) | 2026-06-09 (v5.11.1) | 2026-06-10 (v5.11.2 → v5.11.3) | 2026-06-16 (v5.11.4 → v5.11.6) | 2026-06-13 (v5.11.7, doc-only) | 2026-06-17 (v5.11.8 — loop: timing + bench)
-Versão: v5.11.8
+Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10) | 2026-06-07 (v5.10.1 → v5.11) | 2026-06-09 (v5.11.1) | 2026-06-10 (v5.11.2 → v5.11.3) | 2026-06-16 (v5.11.4 → v5.11.6) | 2026-06-13 (v5.11.7, doc-only) | 2026-06-17 (v5.11.8 — loop: timing + bench) | 2026-06-17 (v5.12 — batch pokemontcg.io por set)
+Versão: v5.12
 
 Changelog v5.1 (2026-05-12 — auditoria C/H/M, mesma metodologia do CT scanner):
   - C1: --threshold < 1.0 auto-converte com warning (UX guard contra trap
@@ -473,6 +473,7 @@ class MYPScraper:
         self.fx_usd_brl: Optional[float] = None
         self.ptcg_api_key: Optional[str] = os.environ.get("POKEMONTCG_API_KEY") or None
         self._ptcg_cache: dict[str, Optional[float]] = {}  # cid → preço USD (ou None)
+        self._prefilled_sets: set[str] = set()  # v5.12: setcodes já pré-carregados (batch)
         self._stats = {
             "pages_fetched": 0, "products_scanned": 0, "en_found": 0,
             # M5 fix: counters por motivo de skip (auditoria do funnel)
@@ -521,7 +522,8 @@ class MYPScraper:
             # por _fetch_ptcg_usd, então não conta).
             "t_http_total": 0.0,      # tempo acumulado dentro de _get (s)
             "t_ptcg_total": 0.0,      # tempo acumulado em _fetch_ptcg_usd (s)
-            "ptcg_calls": 0,          # nº de chamadas reais à pokemontcg.io
+            "ptcg_calls": 0,          # nº de chamadas reais à pokemontcg.io (por-card)
+            "ptcg_prefill_calls": 0,  # v5.12: requests de prefill batch (por-set)
             "t_editions_total": 0.0,  # tempo de parede por edição, acumulado (s)
         }
         # v5.4 H1: warn-once cache pra unknown language titles
@@ -954,12 +956,7 @@ class MYPScraper:
                 except Exception:  # noqa: BLE001
                     return None
                 break
-            vals = []
-            for p in prices.values():
-                v = p.get("market") or p.get("mid")
-                if v and float(v) > 0:
-                    vals.append(float(v))
-            return min(vals) if vals else None
+            return self._min_tcg_usd(prices)
         finally:
             self._stats["t_ptcg_total"] += time.perf_counter() - _t0
 
@@ -989,6 +986,76 @@ class MYPScraper:
         if usd is None:
             return None
         return usd * self.fx_usd_brl
+
+    @staticmethod
+    def _min_tcg_usd(prices: dict) -> Optional[float]:
+        """Menor preço USD entre as variantes TCGplayer (`market`, senão `mid`);
+        ignora ≤0. Conservador — não superestima a margem. Fonte ÚNICA da seleção
+        de preço, usada pelo fetch por-card (`_fetch_ptcg_usd`) E pelo prefill
+        por-set (`_prefill_ptcg_set`) — garante resultado idêntico nos 2 caminhos."""
+        vals = []
+        for p in (prices or {}).values():
+            v = p.get("market") or p.get("mid")
+            if v and float(v) > 0:
+                vals.append(float(v))
+        return min(vals) if vals else None
+
+    def _prefill_ptcg_set(self, setcode: str) -> None:
+        """v5.12: pré-carrega os preços TCGplayer do SET inteiro numa tacada
+        (`GET /v2/cards?q=set.id:<setcode>`, paginado), populando `_ptcg_cache`.
+        Troca N round-trips `/v2/cards/{id}` por ~1 request por set — o grosso do
+        tempo (e do risco de 429) num scan largo.
+
+        Cache POSITIVO: só popula cards que existem; cids ausentes caem no
+        `_fetch_ptcg_usd` normal (preserva o 404→fallback `.estat-tcg` EXATO, e
+        mantém os testes que mockam só `_fetch_ptcg_usd` válidos). Roda no máx.
+        1× por setcode/run; falha de rede aborta em silêncio (fallback por-card
+        assume)."""
+        if setcode in self._prefilled_sets:
+            return
+        self._prefilled_sets.add(setcode)
+        headers = {"X-Api-Key": self.ptcg_api_key} if self.ptcg_api_key else {}
+        base = PTCG_API_BASE.rstrip("/")  # endpoint de busca não usa o /{id}
+        backoffs = (5, 15, 30)
+        page, page_size, cached = 1, 250, 0
+        while True:
+            url = f"{base}?q=set.id:{setcode}&page={page}&pageSize={page_size}"
+            payload = None
+            for attempt in range(len(backoffs) + 1):
+                try:
+                    r = self.session.get(url, headers=headers, timeout=20)
+                except Exception as e:  # noqa: BLE001
+                    log.debug(f"prefill {setcode} p{page} falhou: {e!r}")
+                    return
+                if r.status_code == 429 and attempt < len(backoffs):
+                    time.sleep(backoffs[attempt])
+                    continue
+                if r.status_code != 200:
+                    return
+                try:
+                    payload = r.json()
+                except Exception:  # noqa: BLE001
+                    return
+                break
+            if payload is None:
+                return
+            self._stats["ptcg_prefill_calls"] += 1
+            data = payload.get("data") or []
+            for card in data:
+                num_raw = str(card.get("number") or "")
+                if not num_raw.isdigit():
+                    continue  # número não-numérico (TG/GG/promo) não casa o (NNN/MMM)
+                cid = f"{setcode}-{num_raw.lstrip('0') or '0'}"
+                if cid not in self._ptcg_cache:
+                    tp = (card.get("tcgplayer") or {}).get("prices") or {}
+                    self._ptcg_cache[cid] = self._min_tcg_usd(tp)
+                    cached += 1
+            total = payload.get("totalCount") or 0
+            if not data or page * page_size >= total:
+                break
+            page += 1
+        if cached:
+            log.info(f"  💾 prefill {setcode}: {cached} preços TCG em cache (batch)")
 
     # ── Step 3: Scrape product detail page (v2 — per-seller language) ─
     def scrape_product(self, url: str, edition_name: str) -> Optional[CardData]:
@@ -1500,6 +1567,14 @@ class MYPScraper:
                 product_urls = product_urls[:max_products]
             log.info(f"  → {len(product_urls)} products found")
 
+            # v5.12: prefill batch dos preços TCG do set (1 request no lugar de N
+            # por-card). Só quando há câmbio e a edição mapeia a um setcode; cards
+            # fora do batch caem no fetch por-card normal (fallback intacto).
+            if self.fx_usd_brl:
+                _setcode = myp_edition_to_ptcg_setcode(ed["title"])
+                if _setcode:
+                    self._prefill_ptcg_set(_setcode)
+
             for j, purl in enumerate(product_urls):
                 self._stats["products_scanned"] += 1
                 if (j + 1) % 10 == 0:
@@ -1567,8 +1642,9 @@ class MYPScraper:
         # loop plumbing: timings (perf_counter) pro loop de otimização iterativo
         log.info(f"  ── Timing (perf_counter):")
         log.info(f"      HTTP total (_get): {self._stats['t_http_total']:.1f}s")
-        log.info(f"      pokemontcg.io total: {self._stats['t_ptcg_total']:.1f}s "
-                 f"em {self._stats['ptcg_calls']} chamadas")
+        log.info(f"      pokemontcg.io: {self._stats['t_ptcg_total']:.1f}s em "
+                 f"{self._stats['ptcg_calls']} chamadas por-card "
+                 f"+ {self._stats['ptcg_prefill_calls']} prefill batch (v5.12)")
         log.info(f"      Editions wall-time: {self._stats['t_editions_total']:.1f}s")
         log.info("═" * 60)
 

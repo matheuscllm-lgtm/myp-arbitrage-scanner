@@ -47,6 +47,20 @@ _CARD_NUM_RE = re.compile(r"card-(\d+)")
 _PTCG_JSON = {"data": {"tcgplayer": {"prices": {"holofoil": {"market": 40.0}}}}}
 
 
+def _ptcg_set_json():
+    """Resposta do endpoint de BUSCA por set (v5.12 batch): lista de cards com
+    `number` + tcgplayer.prices. Cobre números 1..50 (≥ limit típico do bench),
+    então no modo mockado o prefill cobre todos os cards → ptcg_calls cai pra 0."""
+    return {
+        "data": [
+            {"id": f"set-{n}", "number": str(n),
+             "tcgplayer": {"prices": {"holofoil": {"market": 40.0}}}}
+            for n in range(1, 51)
+        ],
+        "page": 1, "pageSize": 250, "count": 50, "totalCount": 50,
+    }
+
+
 def _product_html(num: int) -> str:
     """Página de produto sintética: 1 EN-NM ≥ min_price (dispara o preço real),
     número de colecionador único por produto (cids distintos → cache miss →
@@ -85,6 +99,8 @@ class _FakeSession:
 
     def get(self, url, **kwargs):
         if "api.pokemontcg.io" in url:
+            if "q=set.id" in url:           # v5.12: prefill batch por set
+                return _FakeResp(json_data=_ptcg_set_json())
             return _FakeResp(json_data=_PTCG_JSON)
         m = _CARD_NUM_RE.search(url)
         num = int(m.group(1)) if m else 1
@@ -145,6 +161,7 @@ def main():
         ("products_scanned", f"{stats.get('products_scanned', 0):8d}"),
         ("pages_fetched", f"{stats.get('pages_fetched', 0):8d}"),
         ("ptcg_calls", f"{stats.get('ptcg_calls', 0):8d}"),
+        ("ptcg_prefill_calls", f"{stats.get('ptcg_prefill_calls', 0):8d}"),
         ("t_http_total_s", f"{stats.get('t_http_total', 0.0):8.2f}"),
         ("t_ptcg_total_s", f"{stats.get('t_ptcg_total', 0.0):8.2f}"),
         ("t_editions_total_s", f"{stats.get('t_editions_total', 0.0):8.2f}"),
