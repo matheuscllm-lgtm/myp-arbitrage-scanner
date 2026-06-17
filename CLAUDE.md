@@ -119,38 +119,98 @@ O resultado de um scan é entregue ao operador **como tabela no chat do Claude C
 - Gerar/anexar arquivo **só quando o operador pedir explicitamente** (ex.: "me manda o XLSX pra importar em lote"). Sem pedido = sem arquivo.
 - A tabela traz **todos** os deals (não amostra curada) + as colunas relevantes da fonte.
 
-### Formato da tabela de entrega (v5.11.1, 2026-06-09 — padrão cross-scanner aprovado no COMC)
+### ⛔ Formato da entrega é OBRIGATÓRIO — gere via `myp_summary.py`, NUNCA monte tabela à mão
 
-A seção **"🟢 Top 50 deals limpos"** do markdown gerado por `myp_summary.py` usa o
-formato com **links clicáveis** aprovado pelo operador (espelha a entrega do scanner
-COMC). Colunas, nesta ordem:
+**Regra dura (operador, 2026-06-13). Não negociável, para qualquer agente — inclusive
+um Claude Code da nuvem que clonou este repo.**
 
-```
-| # | Margem % | MYP R$ | TCG US$ | Dif | Carta | Set | Raridade | Cond | Qtd | Links |
-```
+Quando você for **entregar o resultado de um scan**, há **um caminho só**:
 
-- **Carta** = nome + número do colecionador numa coluna só (ex. `Pikachu 173/165`).
+> **Rode `myp_summary.py` sobre o XLSX do scan e cole/mostre o markdown que ele
+> gerou.** Você **não** redesenha, reordena nem reescreve a tabela. Você **não**
+> monta uma tabela "na mão" a partir dos números do XLSX num layout antigo
+> (sem links, com colunas diferentes). A formatação canônica vive **dentro** do
+> `myp_summary.py` — é a única fonte de verdade do formato. Se a entrega que você
+> está prestes a colar **não** veio do `myp_summary.py`, **pare e gere por ele.**
+
+Em português simples pro operador: o "jeito certo de te mostrar os deals" está
+programado no script. O agente sempre roda o script e te entrega o que saiu —
+nunca improvisa um formato diferente.
+
+#### O que o `myp_summary.py` gera (e que você entrega assim, sem mexer)
+
+São **três tabelas**, e **TODAS as três** trazem a coluna **`Carta`** (nome +
+número) e a coluna **`Links`** (`[oferta](url_MYP) · [TCG](url_TCGplayer)`):
+
+1. **🟢 Top 50 deals limpos** (sem flag SIR/HR/SAR — os confiáveis). Colunas, nesta ordem:
+   ```
+   | # | Margem % | MYP R$ | TCG US$ | Dif | Carta | Set | Raridade | Cond | Qtd | Links |
+   ```
+2. **⚠️ Deals com flag supranumerário** (`card_num > set_total`, ex. `226/217` —
+   raridade dita "Comum" no MYP mas provavelmente IR/SIR/SAR). Marcados
+   **"(validar manualmente)"** no título da seção. Colunas:
+   ```
+   | # | Carta | Edição | MYP R$ | TCG R$ | Margem (suspeita) | Links |
+   ```
+3. **🚨 Deals com flag TCG suspect** (preço TCG declarado destoa da última venda —
+   mapeamento de carta provavelmente furado). Também **"(validar manualmente)"**.
+   Colunas:
+   ```
+   | # | Carta | Edição | MYP R$ | TCG decl R$ | Última venda R$ | Margem (fake) | Links |
+   ```
+
+Significado das colunas:
+
+- **`Carta`** = nome + número do colecionador numa coluna só (ex. `Pikachu 173/165`).
   Se o nome já embute o número, **não duplica** (helper `carta_label`).
-- **TCG US$** = preço **real** do TCGplayer em USD (via pokemontcg.io, campo
-  `tcg_real_usd`). `—` onde só houve fallback `.estat-tcg` (sem USD real).
-- **Dif** = lucro **bruto** em R$ (`TCG R$ − MYP R$`). A margem segue BRUTA pura.
-- **Cond** = `NM` (invariante NM-only).
-- **Qtd** = nº de ofertas EN-NM (`NM Sellers`) — quantos lotes o operador pode
-  comprar. O scanner **não** captura estoque por seller, então é a contagem de
-  ofertas EN-NM, não unidades.
-- **Links** = `[oferta](url_MYP) · [TCG](url_TCGplayer)` — **dois links markdown
-  clicáveis**. `oferta` → página do produto MYP (conferir preço/seller); `TCG` →
-  produto/busca TCGplayer pro **workflow manual de validação do preço NM**. O link
-  TCG é o redirect direto `prices.pokemontcg.io/tcgplayer/<setcode>-<num>` quando a
-  edição é mapeada e o collector# está in-range; senão cai na busca por nome.
+- **`Links`** = **dois links markdown clicáveis**: `oferta` → página do produto MYP
+  (conferir preço/seller); `TCG` → produto/busca TCGplayer pro **workflow manual de
+  validação do preço NM**. **Os dois links são LIDOS do XLSX** — `oferta` da coluna
+  `URL`, `TCG` da coluna `TCG URL` (texto plano, v5.11.2). **NUNCA invente, adivinhe
+  ou "monte" uma URL** — se a coluna não tem link, a célula fica sem aquele link, e
+  ponto. (O `myp_summary.py` cai num redirect/busca por nome só internamente, via
+  helper; você não fabrica URLs.)
+- **`TCG US$`** = preço **real** do TCGplayer em USD (via pokemontcg.io). `—` onde
+  só houve fallback `.estat-tcg` (sem USD real).
+- **`Dif`** = lucro **bruto** em R$ (`TCG R$ − MYP R$`). A margem segue BRUTA pura.
+- **`Cond`** = `NM` (invariante NM-only).
+- **`Qtd`** = nº de ofertas EN-NM (`NM Sellers`). O scanner **não** captura estoque
+  por seller, então é a contagem de ofertas EN-NM, não unidades.
 
-Como gerar a entrega a partir de um scan:
+#### Mostre TODOS os deals — nada de amostra curada
+
+A entrega traz **todos** os deals de cada bucket (limpos / supranumerário / suspeito),
+**não** uma seleção curada de "os melhores". Os buckets supranumerário e suspeito
+**sempre** vão marcados como **"validar manualmente"** com o caveat de que a
+margem pode ser falsa (mapeamento de carta errado / variante misclassificada).
+Você reporta margem, flags e fontes; **a decisão de comprar é do operador** — não
+rankeie "BUY NOW" nem recomende capital.
+
+#### Comando literal pra gerar a entrega
 
 ```bash
-python myp_summary.py results/<scan>.xlsx -o results/<scope>-<data>.md --type daily
+# scan diário/quick (hot sets) → use --type daily
+python myp_summary.py results/<scan>.xlsx --type daily  -o results/<scope>-<data>.md
+
+# scan semanal (catálogo completo) → use --type weekly
+python myp_summary.py results/<scan>.xlsx --type weekly -o results/<scope>-<data>.md
 ```
 
-O **XLSX/CSV continua com colunas separadas e URLs cruas** (`Card Name`, `Edition`,
-`URL`, etc.) + a coluna `TCG US$` (v5.11.1) + a coluna `TCG URL` (v5.11.2, texto
-plano, última coluna — é o link TCGplayer que o scanner integrado consome) — o
-formato composto (Carta/Links) é **só** da tabela de entrega markdown, não do XLSX.
+- `--type` aceita **só `daily` ou `weekly`** (afeta título + tags do markdown).
+  **Não existe `--type quick`** — o **scan quick usa `--type daily`** (é o que o
+  `quick-scan.yml` faz). Passar um valor fora desses dois faz o script errar com
+  argparse.
+- `-o`/`--output` é **obrigatório** (o script grava o `.md`; você abre/cola o conteúdo).
+- O markdown gerado é o que você entrega no chat (terminal **ou** app). Lembre:
+  **entrega = tabela na plataforma**, arquivo `.xlsx`/`.csv` **só** se o operador
+  pedir explicitamente.
+
+#### O XLSX é matéria-prima, NÃO é a entrega
+
+O XLSX/CSV continua com **colunas separadas e URLs cruas** (`Card Name`, `Edition`,
+`URL`, …) + a coluna `TCG US$` (v5.11.1) + a coluna `TCG URL` (v5.11.2, texto plano,
+última coluna — é de onde a entrega lê o link TCGplayer, e que o scanner integrado
+consome). O formato composto (`Carta` + `Links` clicáveis) **só** existe na tabela
+markdown de entrega que o `myp_summary.py` produz. Ou seja: o XLSX é o insumo; a
+entrega é o markdown do `myp_summary.py`. **Não tente entregar o XLSX "formatado à
+mão" — rode o script.**

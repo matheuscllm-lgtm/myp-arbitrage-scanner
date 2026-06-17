@@ -1,5 +1,35 @@
 # Changelog
 
+## v5.11.7 — 2026-06-13 — Entrega via `myp_summary.py` vira convenção OBRIGATÓRIA (doc-only)
+
+Mudança **só de documentação**. Sem alteração de código, delay/CF, threshold ou
+invariante NM-only. Reforça que a **entrega de resultados** tem um caminho único e
+inequívoco, para qualquer agente — inclusive um Claude Code da nuvem que clona o
+repo (e por isso só "vê" o `CLAUDE.md`/`README.md` versionados, nunca a memória
+local).
+
+### Mudanças
+
+1. **`CLAUDE.md` — seção de entrega reescrita como regra dura.** Agora explícito e
+   mandatório: entregar resultado = **sempre** rodar `myp_summary.py` sobre o XLSX e
+   colar o markdown gerado; **nunca** montar tabela à mão num layout antigo. A
+   formatação canônica vive dentro do script (single source of truth do formato).
+2. **As 3 tabelas documentadas explicitamente** (limpos / supranumerário / suspeito),
+   **todas** com coluna `Carta` (nome + número) e `Links`
+   (`[oferta](MYP) · [TCG](TCGplayer)`). Antes a doc só descrevia a tabela "limpos" e
+   afirmava que o formato composto era "só" dela — desatualizado desde v5.11.6, que
+   levou `Carta`+`Links` aos 3 buckets.
+3. **Links lidos do XLSX, nunca inventados** — `oferta` da coluna `URL`, `TCG` da
+   coluna `TCG URL`. Regra anti-fabricação de URL escrita por extenso.
+4. **"Mostrar TODOS os deals, não amostra curada"** + supranumerário/suspeito
+   **sempre** marcados como *validar manualmente* com o caveat de margem falsa.
+5. **Comando literal corrigido:** `--type` aceita **só `daily`|`weekly`** — **não
+   existe `--type quick`** (o scan quick usa `--type daily`, como o `quick-scan.yml`).
+   Documentar `quick` faria o argparse errar.
+6. **`README.md`** ganha subseção "Convenção de entrega (OBRIGATÓRIA)" sob *Onde estão
+   os resultados* + corrige "Top 15/Top 10" para Top 50 + bucket suspeito. README é o
+   que viaja cross-env, então a regra precisa estar nele resumida com link pro CLAUDE.md.
+
 ## v5.11.6 — 2026-06-16 — Carta + Links nas tabelas de supranumerário/suspeito
 
 As seções **supranumerário** e **TCG suspect** do markdown de entrega
