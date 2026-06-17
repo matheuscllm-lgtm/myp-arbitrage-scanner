@@ -84,8 +84,24 @@ Aditiva, sempre ligada, overhead desprezível (`time.perf_counter`):
 - V4 — sondar o piso do `--delay` (1.5s domina todo GET) medindo 403 vs delay.
 
 **Correção / falso-positivo**
+- **C0 — atribuição de cobertura do fallback** *(Iteração #2 — ✅ v5.13)*:
+  `_attribute_fallback` divide `tcg_from_myp_fallback` em 4 baldes
+  (`no_fx`/`unmapped_set`/`no_collector_num`/`no_coverage`) no summary e no bench.
+  É a **medição** que orienta C1/C2.
+- ⚠️ **ACHADO do quick ao vivo 2026-06-17** (61 fallbacks: 22 `unmapped_set`,
+  38 `no_coverage`, 1 sem nº): a era **Mega Evolution inteira está com 0% de
+  preço TCGplayer no pokemontcg.io** (`me2pt5`/`me3`/`me4` → `tcgplayer` só com
+  `url`, sem `prices`; SV = 100%). **Refuta o C1 ingênuo:** mapear
+  `Perfect Order`→me3 / `Chaos Rising`→me4 NÃO recupera preço — só move o card de
+  `unmapped_set` pra `no_coverage`. Os "deals" ME (Ascended Heroes, etc.) saem do
+  `.estat-tcg` e caem corretamente nos baldes validar-manualmente. **Não é bug do
+  scanner — é limite da fonte.**
 - C1 — ampliar cobertura `MYP_EDITION_SUBSTR_TO_PTCG` + número→id de variantes
   supranumerárias (097/086) → preço **real** em vez do `.estat-tcg` inflado.
+  *Só vale onde a fonte TEM preço* (medir com C0 antes): SV sim, ME **não** hoje.
+- C1b *(novo, gated pelo achado)* — **preço TCGplayer alternativo pra era ME**
+  (scrape direto via `tcgplayer.url` do pokemontcg.io, ou outra fonte). É o único
+  caminho que destrava margem real pros sets Mega enquanto a fonte não popula.
 - C2 — `tcg_suspect` sem preço real ⇒ suprimir/rebaixar a margem (não reportar
   deal falso). Travar com a fixture Jirachi.
 - C3 — fixtures offline dos casos base-086 (Black Bolt/White Flare).

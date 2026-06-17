@@ -215,6 +215,17 @@ MYP_EDITION_SUBSTR_TO_PTCG = {
     # cobertura parcial pros ME sets (`me2pt5-274` 404 em 2026-05-29 mas
     # `me2pt5-10` 200). Quando oversized_collector_risk=True, write_card_row
     # CAI no fallback de busca (variant fora de range é o caso 404 típico).
+    #
+    # ⚠️ ACHADO 2026-06-17 (Iteração #2, medido no quick ao vivo): a era ME
+    # INTEIRA está com **0% de preço TCGplayer** no pokemontcg.io — `me2pt5`,
+    # `me3` (Perfect Order), `me4` (Chaos Rising) retornam 200 mas o objeto
+    # `tcgplayer` traz só `url`, sem `prices` (vs SV = 100%, atualizado no dia).
+    # CONSEQUÊNCIA: NÃO adicionar `Perfect Order`→me3 / `Chaos Rising`→me4
+    # esperando reduzir fallback — não recupera preço nenhum, só troca o card de
+    # `unmapped_set` pra `no_coverage`. Os "deals" ME (Ascended Heroes etc.) saem
+    # do `.estat-tcg` e por isso caem nos baldes validar-manualmente. Só um preço
+    # TCGplayer alternativo (scrape direto / outra fonte) destrava margem real
+    # pra ME — ver backlog em docs/optimization-loop.md.
     "Mega Evolution: Phantasmal Flames": "me2",
     "Ascended Heroes":                   "me2pt5",
     "Mega Evolution":                    "me1",   # base ME (catch-all curto, longest-substr win pros específicos acima)
