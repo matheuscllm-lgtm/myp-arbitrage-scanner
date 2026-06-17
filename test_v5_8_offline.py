@@ -1167,6 +1167,41 @@ def test_prefill_ptcg_set_batch():
     return True
 
 
+def test_fallback_attribution():
+    """v5.13 (Iteração #2): _attribute_fallback classifica POR QUE o card caiu no
+    fallback `.estat-tcg`, na MESMA cascata de _real_tcg_brl. Cada motivo cai no
+    seu balde — base de medição pro ataque a falso-positivo (cobertura)."""
+    from myp_arbitrage_scanner import MYPScraper
+
+    sc = MYPScraper(delay=0.0, min_price=50.0)
+
+    # 1) sem câmbio → no_fx (condição global precede checagem de cobertura)
+    sc.fx_usd_brl = None
+    sc._attribute_fallback("Iron Hands ex (070/162)", "Temporal Forces")
+    assert sc._stats["fallback_no_fx"] == 1, sc._stats
+
+    sc.fx_usd_brl = 5.0  # câmbio presente daqui pra frente
+
+    # 2) edição fora do mapa → unmapped_set (mesmo com nº colecionador válido)
+    sc._attribute_fallback("Charizard (004/102)", "Base Set 1999")
+    assert sc._stats["fallback_unmapped_set"] == 1, sc._stats
+
+    # 3) edição mapeada mas nome sem token (NNN/MMM) → no_collector_num
+    sc._attribute_fallback("Iron Hands ex", "Temporal Forces")  # → sv5, sem (N/M)
+    assert sc._stats["fallback_no_collector_num"] == 1, sc._stats
+
+    # 4) edição mapeada + nº presente → no_coverage (cid existe, pokemontcg.io 404)
+    sc._attribute_fallback("Iron Hands ex (070/162)", "Temporal Forces")
+    assert sc._stats["fallback_no_coverage"] == 1, sc._stats
+
+    # baldes somam o total de fallbacks atribuídos (invariante do relatório)
+    total = (sc._stats["fallback_no_fx"] + sc._stats["fallback_unmapped_set"]
+             + sc._stats["fallback_no_collector_num"] + sc._stats["fallback_no_coverage"])
+    assert total == 4, total
+    print("  v5.13 fallback attribution: no_fx/unmapped_set/no_collector_num/no_coverage ✓")
+    return True
+
+
 def main():
     tests = [
         ("threshold constant", test_threshold_constant),
@@ -1194,6 +1229,7 @@ def main():
         ("checkpoint save/load (v5.11.4)", test_checkpoint_save_load),
         ("scan resume skips done editions (v5.11.4)", test_scan_resume_skips_done_editions),
         ("v5.12 prefill batch pokemontcg.io por set", test_prefill_ptcg_set_batch),
+        ("v5.13 atribuição de cobertura do fallback", test_fallback_attribution),
     ]
     failed = 0
     for name, fn in tests:

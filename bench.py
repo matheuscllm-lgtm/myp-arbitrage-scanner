@@ -129,7 +129,16 @@ def run_once(args) -> tuple[float, dict]:
         checkpoint_path=None,  # sem I/O de disco no bench
     )
     wall = time.perf_counter() - t0
-    return wall, dict(sc._stats)
+    # v5.13: o bench precisa demonstrar a SAÍDA (deals), não só velocidade/calls
+    # — senão uma otimização que zerasse os deals passaria no gate. Deal = card
+    # com margem ≥ threshold (mesma definição do summary do scanner, L1615).
+    # `deals_clean` exclui tcg_suspect (o que de fato entra na sheet 🔥 Deals).
+    stats = dict(sc._stats)
+    thr = sc.margin_threshold
+    stats["deals"] = sum(1 for c in sc.cards if c.margin_pct and c.margin_pct >= thr)
+    stats["deals_clean"] = sum(1 for c in sc.cards
+                               if c.margin_pct and c.margin_pct >= thr and not c.tcg_suspect)
+    return wall, stats
 
 
 def main():
@@ -159,6 +168,9 @@ def main():
     rows = [
         ("wall_total_s", f"{wall:8.2f}"),
         ("products_scanned", f"{stats.get('products_scanned', 0):8d}"),
+        # SAÍDA (o que importa): uma otimização só vale se os deals sobrevivem.
+        ("deals (margem≥thr)", f"{stats.get('deals', 0):8d}"),
+        ("deals_clean", f"{stats.get('deals_clean', 0):8d}"),
         ("pages_fetched", f"{stats.get('pages_fetched', 0):8d}"),
         ("ptcg_calls", f"{stats.get('ptcg_calls', 0):8d}"),
         ("ptcg_prefill_calls", f"{stats.get('ptcg_prefill_calls', 0):8d}"),
@@ -168,6 +180,13 @@ def main():
         ("en_found", f"{stats.get('en_found', 0):8d}"),
         ("tcg_from_real", f"{stats.get('tcg_from_real', 0):8d}"),
         ("tcg_from_myp_fallback", f"{stats.get('tcg_from_myp_fallback', 0):8d}"),
+        # v5.13 (Iteração #2): atribuição de cobertura do fallback (raiz dos FP).
+        # Some os 4 = tcg_from_myp_fallback. No mockado fica ~0 (mock cobre tudo);
+        # é em --live que o balde fixável aparece.
+        ("  fb_no_fx", f"{stats.get('fallback_no_fx', 0):8d}"),
+        ("  fb_unmapped_set", f"{stats.get('fallback_unmapped_set', 0):8d}"),
+        ("  fb_no_collector_num", f"{stats.get('fallback_no_collector_num', 0):8d}"),
+        ("  fb_no_coverage", f"{stats.get('fallback_no_coverage', 0):8d}"),
     ]
     print("══ MYP bench ══")
     print(f"modo: {mode}")

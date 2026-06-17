@@ -17,8 +17,8 @@ Requisitos:
     pip install cloudscraper beautifulsoup4 openpyxl lxml
 
 Autor: Matheus Chillemi / Claude
-Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10) | 2026-06-07 (v5.10.1 → v5.11) | 2026-06-09 (v5.11.1) | 2026-06-10 (v5.11.2 → v5.11.3) | 2026-06-16 (v5.11.4 → v5.11.6) | 2026-06-13 (v5.11.7, doc-only) | 2026-06-17 (v5.11.8 — loop: timing + bench) | 2026-06-17 (v5.12 — batch pokemontcg.io por set)
-Versão: v5.12
+Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10) | 2026-06-07 (v5.10.1 → v5.11) | 2026-06-09 (v5.11.1) | 2026-06-10 (v5.11.2 → v5.11.3) | 2026-06-16 (v5.11.4 → v5.11.6) | 2026-06-13 (v5.11.7, doc-only) | 2026-06-17 (v5.11.8 — loop: timing + bench) | 2026-06-17 (v5.12 — batch pokemontcg.io por set) | 2026-06-17 (v5.13 — Iteração #2: atribuição de cobertura do fallback)
+Versão: v5.13
 
 Changelog v5.1 (2026-05-12 — auditoria C/H/M, mesma metodologia do CT scanner):
   - C1: --threshold < 1.0 auto-converte com warning (UX guard contra trap
@@ -516,6 +516,15 @@ class MYPScraper:
             # v5.11 (2026-06-07): proveniência do preço TCG na margem.
             "tcg_from_real": 0,         # preço real do TCGplayer (pokemontcg.io)
             "tcg_from_myp_fallback": 0, # fallback no `.estat-tcg` do MYP
+            # v5.13 (Iteração #2): POR QUE o candidato caiu no fallback `.estat-tcg`
+            # — atribuição de cobertura. Cobertura faltante é a RAIZ dos falso-
+            # positivos: tcg_suspect/supranumerário só sobrevivem sem preço real.
+            # A soma dos 4 baldes = tcg_from_myp_fallback. Num scan ao vivo aponta
+            # o maior balde FIXÁVEL (ex.: unmapped_set → adicionar o setcode).
+            "fallback_no_fx": 0,            # run sem câmbio (condição global, não cobertura)
+            "fallback_unmapped_set": 0,     # edição fora de MYP_EDITION_SUBSTR_TO_PTCG
+            "fallback_no_collector_num": 0, # nome sem token (NNN/MMM) parseável
+            "fallback_no_coverage": 0,      # cid existe mas pokemontcg.io 404/sem preço/429
             # loop plumbing: medição de tempo (perf_counter, sempre ligada, ~0
             # overhead) — base do loop de otimização iterativo. `ptcg_calls`
             # conta só round-trips REAIS (cache-hit em _real_tcg_brl não passa
@@ -987,6 +996,25 @@ class MYPScraper:
             return None
         return usd * self.fx_usd_brl
 
+    def _attribute_fallback(self, card_name: Optional[str], edition_name: str) -> None:
+        """v5.13 (Iteração #2): classifica POR QUE o preço real não resolveu (→
+        fallback `.estat-tcg`) num dos 4 baldes de cobertura. Cobertura faltante
+        é a raiz dos falso-positivos (tcg_suspect/supranumerário sobrevivem só
+        sem preço real), então saber qual balde domina aponta a menor mudança de
+        maior efeito (ex.: muitos `unmapped_set` numa mesma era → adicionar 1
+        setcode cobre o set inteiro).
+
+        Re-deriva o motivo das MESMAS checagens-em-cascata de `_real_tcg_brl`
+        (puro, barato, independe do cache — vale mesmo em cache-hit de None)."""
+        if not self.fx_usd_brl:
+            self._stats["fallback_no_fx"] += 1
+        elif not myp_edition_to_ptcg_setcode(edition_name):
+            self._stats["fallback_unmapped_set"] += 1
+        elif not _COLLECTOR_NUM_RE.search(card_name or ""):
+            self._stats["fallback_no_collector_num"] += 1
+        else:
+            self._stats["fallback_no_coverage"] += 1
+
     @staticmethod
     def _min_tcg_usd(prices: dict) -> Optional[float]:
         """Menor preço USD entre as variantes TCGplayer (`market`, senão `mid`);
@@ -1368,6 +1396,7 @@ class MYPScraper:
             else:
                 card.tcg_source = "myp_estat"
                 self._stats["tcg_from_myp_fallback"] += 1
+                self._attribute_fallback(card.name, edition_name)
 
         # v5.11.3 (A2): skip final — descarta só se NÃO há preço TCG nenhum
         # (nem `.estat-tcg` declarado nem real do pokemontcg.io). Antes o skip
@@ -1638,6 +1667,13 @@ class MYPScraper:
         log.info(f"      Pagination skipped (cost gate TCG<min, v5.10.1): {self._stats['pagination_skipped_low_tcg']}")
         log.info(f"      TCG real via pokemontcg.io (v5.11): {self._stats['tcg_from_real']}")
         log.info(f"      TCG fallback .estat-tcg MYP (v5.11): {self._stats['tcg_from_myp_fallback']}")
+        # v5.13 (Iteração #2): por que caiu no fallback (raiz dos falso-positivos).
+        # unmapped_set é o balde mais fixável: 1 setcode cobre o set inteiro.
+        log.info(f"        ↳ fallback por motivo (v5.13): "
+                 f"sem câmbio={self._stats['fallback_no_fx']} | "
+                 f"set não-mapeado={self._stats['fallback_unmapped_set']} | "
+                 f"sem nº colecionador={self._stats['fallback_no_collector_num']} | "
+                 f"sem cobertura(404/sem preço)={self._stats['fallback_no_coverage']}")
         log.info(f"      HTTP retries (M1): {self._stats['http_retries']}")
         # loop plumbing: timings (perf_counter) pro loop de otimização iterativo
         log.info(f"  ── Timing (perf_counter):")

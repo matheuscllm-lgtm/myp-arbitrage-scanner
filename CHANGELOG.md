@@ -1,5 +1,38 @@
 # Changelog
 
+## v5.13 — 2026-06-17 — Atribuição de cobertura do fallback (Iteração #2 do loop)
+
+Fundação da Iteração #2 (correção / falso-positivo). **Não muda comportamento** —
+é puramente medição, no mesmo espírito aditivo da v5.11.8.
+
+**Diagnóstico da raiz.** Os dois falso-positivos (`tcg_suspect` e supranumerário)
+sobrevivem **só** quando o card cai no fallback `.estat-tcg` — i.e., quando o
+preço REAL do pokemontcg.io não resolveu. Enquanto o scanner só contava
+`tcg_from_myp_fallback` (um número opaco), não dava pra saber **o que** consertar:
+set não-mapeado? nome sem nº de colecionador? 404 genuíno? Sem isso, mexer em
+threshold seria chutar — e adicionar um setcode **errado** é pior que o fallback.
+
+### Mudanças
+
+1. **`_attribute_fallback(card_name, edition)`** — re-deriva o motivo na **mesma
+   cascata** de `_real_tcg_brl` (puro, barato, independe do cache) e incrementa 1
+   de 4 baldes: `fallback_no_fx` (run sem câmbio), `fallback_unmapped_set`
+   (edição fora de `MYP_EDITION_SUBSTR_TO_PTCG`), `fallback_no_collector_num`
+   (nome sem `(NNN/MMM)`), `fallback_no_coverage` (cid existe mas pokemontcg.io
+   404/sem preço/429). A soma dos 4 = `tcg_from_myp_fallback`.
+2. **Summary + `bench.py`** ganham a linha de breakdown. No mockado fica ~0 (o
+   mock cobre tudo); é em `--live` que o balde fixável aparece.
+3. **Teste novo** `test_fallback_attribution`. **26/26** verdes; `bench.py`
+   mockado inalterado (`ptcg_calls 0`, `tcg_from_real 16`).
+4. **`bench.py` passa a reportar `deals` / `deals_clean`** (a SAÍDA, não só
+   velocidade/calls). Buraco no gate: uma otimização que zerasse os deals passava
+   no bench antigo (que só media `ptcg_calls`/tempo). Agora todo run prova que os
+   deals sobrevivem — no mockado: `deals 16`, `deals_clean 16` pós-v5.12.
+
+**Próximo passo (precisa de scan ao vivo):** rodar `--live`/quick, ler qual balde
+domina e fechar o maior **fixável** — tipicamente `unmapped_set` (1 setcode cobre
+o set inteiro). Só então o supranumerário/`tcg_suspect` encolhe por cobertura.
+
 ## v5.12 — 2026-06-17 — Batch pokemontcg.io por set (Iteração #1 do loop)
 
 Primeira otimização rodada **dentro** do loop iterativo (fundação na v5.11.8).
