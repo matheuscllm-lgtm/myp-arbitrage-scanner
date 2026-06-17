@@ -73,7 +73,7 @@ jobs:
   scan:
     needs: plan
     runs-on: ubuntu-latest
-    timeout-minutes: 120   # por chunk; com 20 chunks de ~17 editions cada, ~30min sobra folga
+    timeout-minutes: 240   # por chunk (4h). Folga p/ scan largo / Cloudflare lenta; teto GH é 6h/job
     strategy:
       fail-fast: false    # um chunk falhar não derruba os outros
       matrix:
@@ -105,17 +105,29 @@ jobs:
           THRESHOLD="${{ github.event.inputs.threshold || '30' }}"
           MIN_PRICE="${{ github.event.inputs.min_price || '80' }}"
           DELAY="${{ github.event.inputs.delay || '1.5' }}"
-          EDITIONS_INPUT="${{ github.event.inputs.editions || '' }}"
+          EDITIONS_INPUT='${{ github.event.inputs.editions }}'
           CI="${{ matrix.chunk_index }}"
           CT="${{ needs.plan.outputs.chunk_total }}"
 
-          ARGS="--threshold $THRESHOLD --min-price $MIN_PRICE --delay $DELAY"
-          ARGS="$ARGS --chunk-index $CI --chunk-total $CT"
-          ARGS="$ARGS --output myp_chunk_${CI}.xlsx"
-          [ -n "$EDITIONS_INPUT" ] && ARGS="$ARGS --editions $EDITIONS_INPUT"
-
-          echo "Args: $ARGS"
-          python myp_arbitrage_scanner.py $ARGS
+          # Multi-palavra: `eval set --` re-parseia preservando as aspas, igual
+          # ao quick-scan.yml (ex.: "Paldean Fates" vira 1 filtro, não "Paldean"
+          # + "Fates" — bug do $ARGS cru anterior). Editions vazio = catálogo
+          # full (não passa --editions; o scanner varre todas as edições).
+          if [ -n "$EDITIONS_INPUT" ]; then
+            eval "set -- $EDITIONS_INPUT"
+            echo "Edições ($#): $@"
+            python myp_arbitrage_scanner.py \
+              --threshold "$THRESHOLD" --min-price "$MIN_PRICE" --delay "$DELAY" \
+              --chunk-index "$CI" --chunk-total "$CT" \
+              --output "myp_chunk_${CI}.xlsx" \
+              --editions "$@"
+          else
+            echo "Editions vazio → catálogo full"
+            python myp_arbitrage_scanner.py \
+              --threshold "$THRESHOLD" --min-price "$MIN_PRICE" --delay "$DELAY" \
+              --chunk-index "$CI" --chunk-total "$CT" \
+              --output "myp_chunk_${CI}.xlsx"
+          fi
 
       - name: Upload chunk artifact
         if: always()
@@ -224,6 +236,7 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin main || true
           git add results/
           if git diff --cached --quiet; then
             echo "Nada novo pra commitar"
