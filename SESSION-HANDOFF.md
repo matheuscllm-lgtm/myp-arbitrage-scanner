@@ -32,6 +32,11 @@ origin main` antes do commit do resumo, e timeout por chunk 120 → 240 min.
    mais rápidos, sem 429).
 2. Próximo candidato de CI (opcional): levar o `drift_check` (canário anti-mudança
    de HTML/Cloudflare, hoje só no daily) também pro weekly/quick.
+3. **Loop de otimização (proposta na branch `claude/eloquent-mendel-akwqbe`):** a
+   fundação landou (instrumentação de tempo no `_stats` + `bench.py` +
+   [`docs/optimization-loop.md`](docs/optimization-loop.md), v5.11.8). **Próxima
+   iteração:** batch pokemontcg.io por set — derrubar `ptcg_calls` de ~O(cards)
+   pra ~O(sets). Roteiro completo no playbook.
 
 ## 🧭 Meta / o que o projeto faz
 

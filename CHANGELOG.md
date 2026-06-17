@@ -1,5 +1,32 @@
 # Changelog
 
+## v5.11.8 — 2026-06-17 — Loop de otimização: instrumentação de tempo + `bench.py`
+
+Fundação pro **loop iterativo de otimização** (*medir → mudar → verificar →
+repetir*). Mudança **aditiva e neutra de comportamento** — não altera scraping,
+delay/CF, threshold, margem (bruta pura) nem a invariante NM-only. Só passa a
+**medir** o que antes era invisível (o scanner contava eventos, mas não tempo).
+
+### Mudanças
+
+1. **Instrumentação de tempo (sempre ligada, overhead desprezível)** via
+   `time.perf_counter()`, somada no `self._stats` já existente: `t_http_total`
+   (dentro de `_get`), `t_ptcg_total` + `ptcg_calls` (dentro de `_fetch_ptcg_usd`
+   — conta só round-trip REAL; cache-hit não passa por lá) e `t_editions_total`
+   (loop por edição em `scan()`). Saem no summary do scanner.
+2. **`bench.py`** — micro-benchmark reprodutível. Default mockado (sem rede,
+   CI-safe): substitui só a rede, todo o resto roda de verdade, então
+   `ptcg_calls` é real. `--live` mede tempo de relógio. Relatório de uma tela no
+   stdout, fácil de comparar antes/depois (`diff before.txt after.txt`).
+3. **`docs/optimization-loop.md`** — playbook do loop (ciclo, ferramentas por
+   passo, como ler o bench, backlog priorizado). `CLAUDE.md` aponta pra ele.
+4. **Sem novas dependências.** Os 24 testes offline seguem verdes (mudança
+   aditiva; chaves extras de `_stats` fazem round-trip no checkpoint sem mudar
+   schema).
+
+Baseline mockado atual: 16 produtos → `ptcg_calls=16`. Próxima iteração
+planejada: **batch pokemontcg.io por set** (derrubar `ptcg_calls` pra ~O(sets)).
+
 ## v5.11.7 — 2026-06-13 — Entrega via `myp_summary.py` vira convenção OBRIGATÓRIA (doc-only)
 
 Mudança **só de documentação**. Sem alteração de código, delay/CF, threshold ou
