@@ -21,36 +21,53 @@ paralelo. Pra não virar bagunça de handoffs divergentes:
 
 ## ▶️ PRÓXIMO PASSO (faça isto primeiro)
 
-**Estado em 2026-06-17:** `main` está na **v5.11.7** (entrega via `myp_summary.py`
-virou convenção obrigatória; ver CHANGELOG + PRs #30–#36). Última mudança de CI:
-**weekly alinhado ao quick** (PR #38) — parsing de `--editions` multi-palavra via
-`eval set --` (corrige `"Paldean Fates"` quebrar em 2 filtros), `git pull --rebase
-origin main` antes do commit do resumo, e timeout por chunk 120 → 240 min.
+**Estado em 2026-06-17 (fim do dia):** `main` está na **v5.13**. Mergeado nesta
+sessão: **v5.12** (#40 — batch pokemontcg.io por set, `ptcg_calls` 16→0),
+**v5.13** (#41 — Iteração #2: atribuição de cobertura do fallback em 4 baldes +
+`bench.py` agora mede `deals`/`deals_clean`, não só velocidade) e **#39**
+(gitignore `/_*.sh`). Daily scan completo do dia: 20/20 edições, 276 EN cards,
+25 deals ≥30% (ver `results/daily-2026-06-17.md`).
 
-1. **Operador: definir `POKEMONTCG_API_KEY`** (key grátis em dev.pokemontcg.io)
-   como User env var / secret de Actions — destrava o sleep adaptativo (scans
-   mais rápidos, sem 429).
-2. Próximo candidato de CI (opcional): levar o `drift_check` (canário anti-mudança
-   de HTML/Cloudflare, hoje só no daily) também pro weekly/quick.
-3. **Loop de otimização (proposta na branch `claude/eloquent-mendel-akwqbe`):**
-   fundação (v5.11.8: timing no `_stats` + `bench.py` +
-   [`docs/optimization-loop.md`](docs/optimization-loop.md)) **+ Iteração #1
-   (v5.12): batch pokemontcg.io por set** — `bench.py` mostra `ptcg_calls` 16→0
-   (1 request por set no lugar de N por-card; preço idêntico). **Próximas
-   iterações** no backlog do playbook: C1 (cobertura → menos falso-positivo),
-   Q1 (refactor `scrape_product`).
+### ⚙️ Modelo de ativação do scanner (LEIA — corrige doc anterior)
+
+**O modelo PRINCIPAL é rodar o scanner LOCAL / no container** (sessão Claude Code
+na nuvem ou PC local), via `myp_arbitrage_scanner.py` direto. **Não dependa dos
+workflows do GitHub Actions** (`quick-scan.yml` / `daily-scan.yml`): eles só
+rodam quando há **créditos de Actions disponíveis**, o que é **raro** — logo o
+dispatch via Actions é um **fallback ocasional, NÃO o caminho preferido**.
+(Qualquer doc dizendo "`quick-scan.yml` é o workflow preferido / `daily-scan.yml`
+deprecado" está **errada** — corrigida aqui.)
+
+- **Run local/container** (principal): single-session sequencial, ~2-2.5h pro
+  conjunto largo. Use `--resume` (v5.11.4) em scans longos — o container é
+  reciclado por inatividade e o checkpoint `.resume.json` retoma de onde parou.
+  ⚠️ Mantenha a sessão "viva" durante o scan (ex.: um monitor/keep-alive ativo);
+  processo background sem keep-alive pode ser ceifado pelo ambiente no meio
+  (causa investigada e confirmada em 2026-06-17 — não é bug do scanner).
+- **Workflow Actions** (fallback, só com créditos): `gh workflow run
+  quick-scan.yml` distribui em runners com IP próprio (sem conflito de CF).
+
+1. **`POKEMONTCG_API_KEY`** já setada no environment do Claude Code (toda sessão
+   nasce com ela) e como secret de Actions (#30) — sleep adaptativo 0.3s ativo,
+   sem 429. Nada a fazer.
+2. **Próxima iteração do loop (v5.14, precisa de `--live`):** ler qual balde de
+   `fallback_*` (v5.13) domina num scan ao vivo e fechar o maior FIXÁVEL —
+   tipicamente `unmapped_set` (1 setcode em `MYP_EDITION_SUBSTR_TO_PTCG` cobre o
+   set inteiro → preço real resolve → supranumerário/`tcg_suspect` encolhe por
+   cobertura, não por threshold).
 
 ## 🧭 Meta / o que o projeto faz
 
 MYP Arbitrage Scanner: compara preço de singles Pokémon **EN-NM** no
 **mypcards.com** (Brasil) vs **TCG Player**, e lista cards onde MYP < TCG por
-margem **≥25%** (arbitragem). Roda scans (daily/weekly), gera resumo markdown em
-`results/`. O operador revisa os deals e opera os **limpos** — os
-supranumerários (`card_num > set_total`) e TCG-suspect são quase sempre artefato
-(`.estat-tcg` inflado), **validar manual antes de comprar**.
+margem **≥30%** (arbitragem; default desde v5.10). Roda scans (daily/weekly),
+gera resumo markdown em `results/`. O operador revisa os deals e opera os
+**limpos** — os supranumerários (`card_num > set_total`) e TCG-suspect são quase
+sempre artefato (`.estat-tcg` inflado), **validar manual antes de comprar**.
 
-- Scanner canônico: `myp_arbitrage_scanner.py` (v5.9 no `main`). Como rodar: `CLAUDE.md`.
-- Resumo: `myp_summary.py`. `.xlsx` é **gitignored** (só markdown entra no repo).
+- Scanner canônico: `myp_arbitrage_scanner.py` (**v5.13** no `main`). Como rodar: `CLAUDE.md`.
+- Resumo: `myp_summary.py` (entrega via ele é convenção OBRIGATÓRIA — #36). `.xlsx`
+  é **gitignored** (só markdown entra no repo).
 
 ## 📋 Contexto desta sessão (2026-06-06)
 
