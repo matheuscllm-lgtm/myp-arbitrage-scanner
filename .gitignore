@@ -15,6 +15,7 @@ ENV/
 # Scanner outputs
 *.xlsx
 *.xlsx.bak
+*.resume.json
 .debug/
 .myp_run_*.log
 logs/
