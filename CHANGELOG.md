@@ -24,6 +24,10 @@ threshold seria chutar — e adicionar um setcode **errado** é pior que o fallb
    mock cobre tudo); é em `--live` que o balde fixável aparece.
 3. **Teste novo** `test_fallback_attribution`. **26/26** verdes; `bench.py`
    mockado inalterado (`ptcg_calls 0`, `tcg_from_real 16`).
+4. **`bench.py` passa a reportar `deals` / `deals_clean`** (a SAÍDA, não só
+   velocidade/calls). Buraco no gate: uma otimização que zerasse os deals passava
+   no bench antigo (que só media `ptcg_calls`/tempo). Agora todo run prova que os
+   deals sobrevivem — no mockado: `deals 16`, `deals_clean 16` pós-v5.12.
 
 **Próximo passo (precisa de scan ao vivo):** rodar `--live`/quick, ler qual balde
 domina e fechar o maior **fixável** — tipicamente `unmapped_set` (1 setcode cobre

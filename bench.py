@@ -129,7 +129,16 @@ def run_once(args) -> tuple[float, dict]:
         checkpoint_path=None,  # sem I/O de disco no bench
     )
     wall = time.perf_counter() - t0
-    return wall, dict(sc._stats)
+    # v5.13: o bench precisa demonstrar a SAÍDA (deals), não só velocidade/calls
+    # — senão uma otimização que zerasse os deals passaria no gate. Deal = card
+    # com margem ≥ threshold (mesma definição do summary do scanner, L1615).
+    # `deals_clean` exclui tcg_suspect (o que de fato entra na sheet 🔥 Deals).
+    stats = dict(sc._stats)
+    thr = sc.margin_threshold
+    stats["deals"] = sum(1 for c in sc.cards if c.margin_pct and c.margin_pct >= thr)
+    stats["deals_clean"] = sum(1 for c in sc.cards
+                               if c.margin_pct and c.margin_pct >= thr and not c.tcg_suspect)
+    return wall, stats
 
 
 def main():
@@ -159,6 +168,9 @@ def main():
     rows = [
         ("wall_total_s", f"{wall:8.2f}"),
         ("products_scanned", f"{stats.get('products_scanned', 0):8d}"),
+        # SAÍDA (o que importa): uma otimização só vale se os deals sobrevivem.
+        ("deals (margem≥thr)", f"{stats.get('deals', 0):8d}"),
+        ("deals_clean", f"{stats.get('deals_clean', 0):8d}"),
         ("pages_fetched", f"{stats.get('pages_fetched', 0):8d}"),
         ("ptcg_calls", f"{stats.get('ptcg_calls', 0):8d}"),
         ("ptcg_prefill_calls", f"{stats.get('ptcg_prefill_calls', 0):8d}"),
