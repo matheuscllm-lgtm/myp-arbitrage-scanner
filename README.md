@@ -370,10 +370,29 @@ Após cada scan, o aggregate job gera markdown summary e commita em:
 **Conteúdo do markdown:**
 - Frontmatter Obsidian (tags, date, type) — já formatado pra vault
 - Stats (cards EN, deals, threshold, truncations)
-- Top 15 deals **limpos** (sem flag SIR/HR/SAR — confiáveis)
-- Top 10 deals **supranumerários** (margem suspeita, validar manual)
+- Top 50 deals **limpos** (sem flag SIR/HR/SAR — confiáveis)
+- Deals **supranumerários** (margem suspeita, **validar manualmente**)
+- Deals **TCG suspect** (preço TCG furado, **validar manualmente**)
 - EN truncation risks
 - Link pro artifact xlsx (se quiser detalhe)
+
+#### Convenção de entrega (OBRIGATÓRIA)
+
+A entrega de um resultado é **sempre** o markdown gerado por `myp_summary.py` —
+nunca uma tabela montada à mão num layout antigo. As **três** tabelas (limpos /
+supranumerário / suspeito) trazem a coluna **`Carta`** (nome + número) e a coluna
+**`Links`** = `[oferta](url MYP) · [TCG](url TCGplayer)`, com os links **lidos das
+colunas `URL` / `TCG URL` do XLSX (nunca inventados)**. Mostre **todos** os deals
+(não amostra curada); os buckets supranumerário/suspeito vão sempre marcados como
+*validar manualmente*. Gerar:
+
+```bash
+# quick/daily → --type daily   |   weekly → --type weekly  (NÃO existe --type quick)
+python myp_summary.py results/<scan>.xlsx --type daily -o results/<scope>-<data>.md
+```
+
+Detalhes (colunas, semântica, regra "entrega = tabela na plataforma, não arquivo")
+no [`CLAUDE.md`](CLAUDE.md#-formato-da-entrega-é-obrigatório--gere-via-myp_summarypy-nunca-monte-tabela-à-mão).
 
 ### 2. XLSX consolidado (artifact do GH Actions)
 
