@@ -168,6 +168,13 @@ def main():
         ("en_found", f"{stats.get('en_found', 0):8d}"),
         ("tcg_from_real", f"{stats.get('tcg_from_real', 0):8d}"),
         ("tcg_from_myp_fallback", f"{stats.get('tcg_from_myp_fallback', 0):8d}"),
+        # v5.13 (Iteração #2): atribuição de cobertura do fallback (raiz dos FP).
+        # Some os 4 = tcg_from_myp_fallback. No mockado fica ~0 (mock cobre tudo);
+        # é em --live que o balde fixável aparece.
+        ("  fb_no_fx", f"{stats.get('fallback_no_fx', 0):8d}"),
+        ("  fb_unmapped_set", f"{stats.get('fallback_unmapped_set', 0):8d}"),
+        ("  fb_no_collector_num", f"{stats.get('fallback_no_collector_num', 0):8d}"),
+        ("  fb_no_coverage", f"{stats.get('fallback_no_coverage', 0):8d}"),
     ]
     print("══ MYP bench ══")
     print(f"modo: {mode}")
