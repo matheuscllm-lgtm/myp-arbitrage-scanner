@@ -47,14 +47,22 @@ deprecado" está **errada** — corrigida aqui.)
 - **Workflow Actions** (fallback, só com créditos): `gh workflow run
   quick-scan.yml` distribui em runners com IP próprio (sem conflito de CF).
 
-1. **`POKEMONTCG_API_KEY`** já setada no environment do Claude Code (toda sessão
-   nasce com ela) e como secret de Actions (#30) — sleep adaptativo 0.3s ativo,
-   sem 429. Nada a fazer.
-2. **Próxima iteração do loop (v5.14, precisa de `--live`):** ler qual balde de
-   `fallback_*` (v5.13) domina num scan ao vivo e fechar o maior FIXÁVEL —
-   tipicamente `unmapped_set` (1 setcode em `MYP_EDITION_SUBSTR_TO_PTCG` cobre o
-   set inteiro → preço real resolve → supranumerário/`tcg_suspect` encolhe por
-   cobertura, não por threshold).
+1. **`POKEMONTCG_API_KEY`** setada como **variável de usuário do Windows**
+   (fluxo **local-first** — o operador decidiu não custear o GitHub Actions) e
+   também no environment Claude Code / secret de Actions. Toda sessão/terminal
+   novo nasce com ela; sleep adaptativo 0.3s ativo, sem 429. Nada a fazer. Ver
+   `CLAUDE.md` → "Onde a key mora (3 lugares)".
+2. **Iteração #2 — MEDIDA no quick ao vivo 2026-06-17 (61 fallbacks: 22
+   `unmapped_set`, 38 `no_coverage`, 1 sem nº).** ⚠️ **O fix óbvio foi REFUTADO
+   pelos dados:** mapear `Perfect Order`→me3 / `Chaos Rising`→me4 **não recupera
+   preço** — a **era Mega Evolution inteira (me2pt5/me3/me4) está com 0% de preço
+   TCGplayer no pokemontcg.io** (objeto `tcgplayer` só com `url`, sem `prices`;
+   SV = 100%). Não é bug do scanner — é limite da fonte; o scanner já quarentena
+   esses "deals" nos baldes validar-manualmente (o único deal limpo do scan foi
+   SV6, com preço real). **NÃO adicionar me3/me4 esperando reduzir fallback.**
+   Próximo lever real = **C1b** no backlog (`docs/optimization-loop.md`): preço
+   TCGplayer alternativo pra era ME (scrape direto via `tcgplayer.url`) — trabalho
+   maior, opcional. Detalhe completo no comentário de `MYP_EDITION_SUBSTR_TO_PTCG`.
 
 ## 🧭 Meta / o que o projeto faz
 
