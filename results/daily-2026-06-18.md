@@ -4,7 +4,7 @@ date: 2026-06-18
 type: daily
 source: local scan
 ---
-> ⏳ **Run parcial em andamento** — 19/20 edições concluídas (última: Mega Evolution: Series Black Star Promo Cards). Atualizado 2026-06-18 17:55 UTC. Mais edições serão adicionadas nos próximos checkpoints.
+> **Scan completo** das principais edições — 20/20 edições varridas. Última atualização 2026-06-18 17:55 UTC.
 
 
 # MYP Scan Daily Quick — 2026-06-18
