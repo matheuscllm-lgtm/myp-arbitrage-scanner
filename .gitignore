@@ -5,6 +5,7 @@ __pycache__/
 *.pyd
 .Python
 *.egg-info/
+.pytest_cache/
 
 # Virtual envs
 .venv/
@@ -12,7 +13,7 @@ venv/
 env/
 ENV/
 
-# Scanner outputs
+# Scanner outputs (data, not code)
 *.xlsx
 *.xlsx.bak
 *.resume.json
@@ -20,16 +21,35 @@ ENV/
 .myp_run_*.log
 logs/
 *.tmp
+*.log
 chunk*.log
 .run_with_*.py
 # Root-level scratch/driver scripts (anchored so scripts/_audit_*.py stay tracked)
 /_*.py
 /_*.sh
+# Local scratch/driver helpers under scripts/ (operator-only; never published).
+# scripts/_audit_*.py are tracked code — keep them; ignore other _* scratch.
+scripts/_check_scan.ps1
+scripts/_launch_full_scan_remote.ps1
+scripts/_proc_probe.ps1
+scripts/run_full_scan.bat
+scripts/postprocess_v583_flags.py
+
+# Scan result summaries (deal data — kept local, not published)
+results/
+
+# Internal handoff / strategy / review notes (kept local, not published)
+SESSION-HANDOFF*.md
+HANDOFF-*.md
+REVIEW.md
+docs/optimization-loop.md
 
 # Experimental PriceCharting scrape cache (lives in %TEMP%)
 
 # Secrets
 .env
+*.env
+!.env.example
 
 # IDE / OS
 .vscode/
