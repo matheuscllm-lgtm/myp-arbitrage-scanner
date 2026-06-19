@@ -41,8 +41,10 @@ concurrency:
   group: myp-scan          # mesmo grupo do weekly: nunca 2 scans simultâneos
   cancel-in-progress: false
 
+# Public-repo posture: results are delivered as artifacts only (never committed
+# to a public branch), so the workflow needs only read access to the repo.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   plan:
@@ -176,16 +178,9 @@ jobs:
             --threshold "$THRESHOLD_FRAC"
           echo "Final XLSX: $OUT"
 
-      - name: Upload consolidated artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: myp-quick-consolidated-${{ github.run_id }}
-          path: |
-            myp_quick_*.xlsx
-          retention-days: 14
-          if-no-files-found: warn
-
+      # Public-repo posture: deal data is delivered as a run ARTIFACT only —
+      # never committed to a public branch. Generate the markdown summary first,
+      # then bundle it into the consolidated artifact below.
       - name: Generate markdown summary
         env:
           PYTHONIOENCODING: utf-8
@@ -206,20 +201,14 @@ jobs:
           cp "$OUT" "results/latest-quick.md"
           echo "Generated: $OUT + results/latest-quick.md"
 
-      - name: Commit markdown to repo
-        run: |
-          if [ ! -f "results/latest-quick.md" ]; then
-            echo "Sem markdown gerado, pulando commit"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git pull --rebase origin main || true
-          git add results/
-          if git diff --cached --quiet; then
-            echo "Nada novo pra commitar"
-            exit 0
-          fi
-          git commit -m "results: quick scan $(date -u +%Y-%m-%d) [skip ci]"
-          git push
-          echo "Pushed markdown summary to main"
+      - name: Upload consolidated artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: myp-quick-consolidated-${{ github.run_id }}
+          path: |
+            myp_quick_*.xlsx
+            results/quick-*.md
+            results/latest-quick.md
+          retention-days: 14
+          if-no-files-found: warn

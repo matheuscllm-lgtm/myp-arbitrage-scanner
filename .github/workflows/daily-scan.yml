@@ -51,9 +51,10 @@ concurrency:
   group: myp-scan-daily
   cancel-in-progress: false
 
-# v5.6 (2026-05-14): aggregate job precisa committar markdown summary no repo
+# Public-repo posture: results are delivered as artifacts only (never committed
+# to a public branch), so the workflow needs only read access to the repo.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   # v5.7 (2026-05-14): drift detection canary ANTES do plan.
@@ -218,17 +219,9 @@ jobs:
             --threshold "$THRESHOLD_FRAC"
           echo "Final daily XLSX: $OUT"
 
-      - name: Upload consolidated daily artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: myp-daily-consolidated-${{ github.run_id }}
-          path: |
-            myp_daily_*.xlsx
-          retention-days: 14
-          if-no-files-found: warn
-
-      # v5.6: markdown summary pra results/ folder (visível direto no repo)
+      # Public-repo posture: deal data is delivered as a run ARTIFACT only —
+      # never committed to a public branch. The markdown summary is generated
+      # into results/ and bundled into the consolidated artifact below.
       - name: Generate markdown summary
         env:
           PYTHONIOENCODING: utf-8
@@ -249,19 +242,14 @@ jobs:
           cp "$OUT" "results/latest-daily.md"
           echo "Generated: $OUT + results/latest-daily.md"
 
-      - name: Commit markdown to repo
-        run: |
-          if [ ! -f "results/latest-daily.md" ]; then
-            echo "Sem markdown gerado, pulando commit"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add results/
-          if git diff --cached --quiet; then
-            echo "Nada novo pra commitar"
-            exit 0
-          fi
-          git commit -m "results: daily scan $(date -u +%Y-%m-%d) [skip ci]"
-          git push
-          echo "Pushed markdown summary to main"
+      - name: Upload consolidated daily artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: myp-daily-consolidated-${{ github.run_id }}
+          path: |
+            myp_daily_*.xlsx
+            results/daily-*.md
+            results/latest-daily.md
+          retention-days: 14
+          if-no-files-found: warn
