@@ -1444,13 +1444,24 @@ class MYPScraper:
                 # Bolt SIR), Mew ex 232/091 (151 SIR), Charizard ex 234/091.
                 # Sinaliza pra triagem visual; combina com single_en_seller
                 # pra escalar pra Validate Manually.
-                if num > total:
+                # Rarity-confidence gate (operador 2026-06-19): uma carta
+                # supranumerária é MUITAS VEZES REAL — o problema é que a MYP às
+                # vezes erra a RARIDADE dela, marcando como "Comum". Então o flag
+                # significa "não confie nesse rótulo 'Comum', valide", NÃO "deal
+                # falso". Uma supranumerária com raridade real (Rara/Hiper/etc.) é
+                # carta normal e NÃO deve ser flagada só por ser supranumerária —
+                # antes, flagar todas inundava o operador com 352 falsos flags em
+                # cartas reais (de 486 supranumerárias, só 134 são "Comum"). Match
+                # EXATO em "Comum" (lição NM-only: nunca substring). É flag/review,
+                # nunca bloqueio: a carta segue aparecendo.
+                if num > total and (card.rarity or "").strip() == "Comum":
                     card.oversized_collector_risk = True
                     self._stats["oversized_collector_risks"] += 1
                     log.info(
-                        f"  ⚠️ Oversized collector#: {card.name} "
-                        f"({num}>{total}) — provável variant SIR/HR/promo. "
-                        f"Sinalizado pra triagem visual."
+                        f"  ⚠️ Supranumerário + rarity='Comum': {card.name} "
+                        f"({num}>{total}) — RARIDADE provavelmente mal-rotulada "
+                        f"(real SIR/HR/SAR/ex marcado 'Comum'). Validar manual; "
+                        f"não confiar no label 'Comum'."
                     )
             except (ValueError, TypeError):
                 is_supranumerary = False  # unparseable, default to safe (no alarm)

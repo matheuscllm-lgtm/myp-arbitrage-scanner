@@ -1202,9 +1202,31 @@ def test_fallback_attribution():
     return True
 
 
+def test_rarity_mislabel_gate():
+    """2026-06-19: supranumerário + raridade 'Comum' = MYP provavelmente errou a
+    RARIDADE (review/não-confiar no label), NÃO carta falsa. Supranumerário com
+    raridade real (Rara/Hiper/etc.) = carta normal, sem flag. Match EXATO em 'Comum'."""
+    from myp_summary import is_rarity_mislabel
+    # Comum supranumerário -> flag (raridade provavelmente mal-rotulada)
+    assert is_rarity_mislabel("Zoroark ex do N (286/217)", "Comum")
+    assert is_rarity_mislabel("Mega Feraligatr ex (274/217)", "Comum")
+    # Supranumerário com raridade REAL -> NÃO flaga (carta real aprovada em scans)
+    assert not is_rarity_mislabel("Salamence ex (187/159)", "Rara")
+    assert not is_rarity_mislabel("Bellibolt ex da Kissera (188/159)", "Rara Hiper")
+    # In-range 'Comum' -> NÃO flaga (não é supranumerário)
+    assert not is_rarity_mislabel("Pikachu (058/078)", "Comum")
+    # EXATO em 'Comum': 'Incomum' NÃO casa (lição NM-only: nunca substring)
+    assert not is_rarity_mislabel("Froakie (088/086)", "Incomum")
+    # rarity ausente -> não casa
+    assert not is_rarity_mislabel("Psyduck (226/217)", None)
+    print("  rarity-mislabel gate: Comum-supr=flag, não-Comum-supr=real, exato ✓")
+    return True
+
+
 def main():
     tests = [
         ("threshold constant", test_threshold_constant),
+        ("rarity-mislabel gate (2026-06-19)", test_rarity_mislabel_gate),
         ("Jirachi ratio math", test_jirachi_ratio_math),
         ("parse_brl BR/US formats (v5.8.10)", test_parse_brl_formats),
         ("_last_brl extraction (v5.8.10)", test_last_brl),

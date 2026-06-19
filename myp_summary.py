@@ -116,6 +116,18 @@ def is_supranumerary(name: str | None) -> bool:
         return False
 
 
+def is_rarity_mislabel(name: str | None, rarity: str | None) -> bool:
+    """Supranumerário ('(N/M)' com N>M) E raridade EXATAMENTE 'Comum'.
+
+    Operador 2026-06-19: uma carta supranumerária costuma ser REAL — a MYP é que
+    às vezes erra a RARIDADE, marcando uma SIR/SAR/ex real como 'Comum'. Esse sinal
+    significa "não confie no rótulo 'Comum', valide", NÃO "deal falso". Uma carta
+    supranumerária com raridade real (Rara/Hiper/etc.) é normal e NÃO é flagada.
+    Match EXATO em 'Comum' (lição NM-only: nunca substring).
+    """
+    return is_supranumerary(name) and (str(rarity or "").strip() == "Comum")
+
+
 def fmt_brl(v) -> str:
     """Formata valor BRL pra display."""
     if v is None:
@@ -191,11 +203,14 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
     def _is_suspect(c) -> bool:
         return bool(c.get("⚠️ TCG Suspect"))
 
+    def _is_rarity_mislabel(c) -> bool:
+        return is_rarity_mislabel(c.get("Card Name"), c.get("Rarity"))
+
     deals_clean = [
         c for c in deals_sorted
-        if not is_supranumerary(c.get("Card Name")) and not _is_suspect(c)
+        if not _is_rarity_mislabel(c) and not _is_suspect(c)
     ]
-    deals_supranum = [c for c in deals_sorted if is_supranumerary(c.get("Card Name"))]
+    deals_supranum = [c for c in deals_sorted if _is_rarity_mislabel(c)]
     deals_suspect = [c for c in deals_sorted if _is_suspect(c)]
 
     truncations = [c for c in all_cards if c.get("⚠️ EN Trunc")]
@@ -270,11 +285,13 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
     lines.append("")
 
     # ── Deals com flag SIR (alto risco) ──
-    lines.append("## ⚠️ Deals com flag supranumerário (validar manualmente)")
+    lines.append("## ⚠️ Deals com raridade suspeita (supranumerário + 'Comum' — validar)")
     lines.append("")
-    lines.append("> Cards com `card_num > set_total` aparecem como rarity='Comum' no MYP mas o "
-                 "TCG pode estar refletindo a variant secret/illustration rare. Margens absurdas "
-                 "(>200%) são quase certamente artefato. Não confiar sem validar.")
+    lines.append("> `card_num > set_total` **com raridade 'Comum'** = a MYP provavelmente errou a "
+                 "RARIDADE (a carta costuma ser uma SIR/SAR/ex real marcada 'Comum'). **A carta/deal "
+                 "pode ser REAL** — o que NÃO se deve confiar é no rótulo 'Comum' (afeta valor/tier). "
+                 "Valide a raridade e o preço (Link TCG) antes de operar; não trate como falso "
+                 "automaticamente. Supranumerário com raridade real (Rara/Hiper/etc.) fica no bucket limpo.")
     lines.append("")
     if not deals_supranum:
         lines.append("> Nenhum deal com flag supranumerário nesta run.")
