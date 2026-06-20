@@ -116,10 +116,16 @@ só agendador.
 
 ## Saída e commit
 
-- Outputs vão pra `results/`. **O `.xlsx` é gitignored de propósito** (`*.xlsx`).
-  O que entra no repo é um **resumo markdown** (`results/<scope>-<data>.md`), no
-  padrão de `daily-*.md` / `manual-*.md`.
-- Workflow = **branch + PR** (não dê push direto em `main`; ele é gateado).
+- Outputs vão pra `results/` como **subproduto de trabalho local** — **tudo
+  gitignored de propósito**: o `.xlsx` (`*.xlsx`) **e** o resumo markdown
+  (`results/*.md`). **Repo é público + discreto (desde #47/#49):** dados de deal
+  (margens, preços, cartas) **NÃO entram no repo**. A **entrega é a tabela no
+  chat** (gerada pelo `myp_summary.py` — ver seção 📤 abaixo); o `.md` é só o
+  insumo que você cola/mostra, não um arquivo versionado. Resultados são
+  reproduzíveis re-rodando o scan localmente, então não há perda em não commitar.
+- Mudanças de **código/doc** (scanner, summary, este CLAUDE.md, etc.) seguem o
+  workflow normal = **branch + PR** (não dê push direto em `main`; ele é gateado).
+  Só **dados de scan** é que ficam fora do repo.
 
 ## Não confundir
 
