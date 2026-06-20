@@ -72,6 +72,19 @@ python myp_arbitrage_scanner.py --editions "Ascended Heroes" \
        #30). Toda run de workflow já usa — automático. *(Nota 2026-06-18: o
        operador decidiu **não** custear o GitHub Actions; o fluxo de CI fica
        inativo até regularizar billing — priorize o run LOCAL abaixo.)*
+       - 🛑 **CI dá preço FALLBACK, não real (achado 2026-06-20 — NÃO
+         re-investigue):** os runners do GitHub **não alcançam**
+         `api.pokemontcg.io` (o Cloudflare da API bloqueia/challenge os IPs de
+         datacenter do GitHub/Azure → toda chamada falha → cai no `.estat-tcg`).
+         Logo o workflow produz **cobertura completa do catálogo com preço
+         fallback** (margens infladas/artefato — 650%/407%), **mesmo com o
+         secret setado**. Confirmado: 0/1326 reais no workflow, e 0 também
+         forçando Python 3.11 (não é key nem Python — é o IP do runner). PC/
+         container comum **alcança** a API normal. Pra preço TCG **real** no
+         catálogo completo: rode o scanner **LOCAL**, **ou** rode o workflow
+         (cobertura) e enriqueça **local** com `python myp_enrich.py
+         <consolidado>.xlsx -o enr.xlsx --real-only-out enr_real.xlsx` →
+         `myp_summary.py enr_real.xlsx`.
     2. **Máquina local do operador (fluxo canônico — local-first):**
        `POKEMONTCG_API_KEY` setada como **variável de ambiente de usuário do
        Windows** (`[Environment]::SetEnvironmentVariable("POKEMONTCG_API_KEY",

@@ -84,34 +84,16 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Setup Python 3.11
+      - name: Setup Python 3.14
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.14'
           cache: 'pip'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-
-      - name: Diag pokemontcg.io reachability from runner
-        run: |
-          echo "Python: $(python --version)"
-          curl -s -o /tmp/p.json -w "curl PTCG -> HTTP %{http_code} time %{time_total}s\n" \
-            "https://api.pokemontcg.io/v2/cards/rsv10pt5-109" || echo "curl rc=$?"
-          echo "body head:"; head -c 200 /tmp/p.json 2>/dev/null || true; echo
-          python - <<'PY'
-          try:
-              import cloudscraper
-              s = cloudscraper.create_scraper(browser={"browser": "firefox", "platform": "windows"})
-              r = s.get("https://api.pokemontcg.io/v2/cards/rsv10pt5-109", timeout=20)
-              print("cloudscraper -> HTTP", r.status_code, "len", len(r.text))
-              p = ((r.json().get("data") or {}).get("tcgplayer") or {}).get("prices") or {}
-              print("prices keys:", list(p.keys()))
-          except Exception as e:
-              print("cloudscraper EXC", repr(e))
-          PY
 
       - name: Run scanner chunk ${{ matrix.chunk_index }}/${{ needs.plan.outputs.chunk_total }}
         env:
@@ -171,10 +153,10 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Setup Python 3.11
+      - name: Setup Python 3.14
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.14'
           cache: 'pip'
 
       - name: Install dependencies
