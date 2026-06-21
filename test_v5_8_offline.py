@@ -1004,6 +1004,10 @@ def test_delivery_table_format():
     clean = make_clean_deal()
     clean.name = "Charizard ex (125/191)"   # in-range (não supranumerário)
     clean.tcg_real_usd = 36.50      # v5.11.1: USD real exposto no XLSX
+    clean.tcg_source = "pokemontcg.io"  # v5.14.3: consistência — quem tem USD real
+                                        # tem source real (no scanner os dois andam
+                                        # juntos, L1398); senão o deal cai no balde
+                                        # fallback (preço não-confiável), não no limpo.
     cards = [clean, make_borderline_deal()]
 
     import tempfile as _tf, os as _os
@@ -1470,6 +1474,173 @@ def test_summary_deal_floor_matches_real_threshold():
     return True
 
 
+def _section_of(text: str, needle: str):
+    """Retorna o último header '## …' antes da 1ª ocorrência de `needle` (ou None)."""
+    section = None
+    for ln in text.splitlines():
+        if ln.startswith("## "):
+            section = ln.strip()
+        if needle in ln:
+            return section
+    return None
+
+
+def _fallback_deal(name, myp, estat_brl, rarity="Ultra Rara", last_sale=None):
+    """Deal com preço FALLBACK (.estat-tcg): sem USD real, source=myp_estat."""
+    return CardData(
+        name=name, edition="Surging Sparks", rarity=rarity,
+        product_url=f"https://myp/{name}", myp_lowest_en_nm=myp,
+        tcg_player_price=estat_brl, tcg_real_usd=None, tcg_source="myp_estat",
+        myp_last_sale_brl=last_sale, margin_pct=(estat_brl - myp) / myp,
+        margin_brl=estat_brl - myp, en_nm_sellers=3, last_updated="2026-06-20",
+    )
+
+
+def _real_deal(name, myp, tcg_brl, usd, rarity="Ultra Rara"):
+    """Deal com preço REAL (pokemontcg.io)."""
+    return CardData(
+        name=name, edition="Surging Sparks", rarity=rarity,
+        product_url=f"https://myp/{name}", myp_lowest_en_nm=myp,
+        tcg_player_price=tcg_brl, tcg_real_usd=usd, tcg_source="pokemontcg.io",
+        myp_last_sale_brl=myp, margin_pct=(tcg_brl - myp) / myp,
+        margin_brl=tcg_brl - myp, en_nm_sellers=3, last_updated="2026-06-20",
+    )
+
+
+def test_summary_fallback_deal_not_in_clean():
+    """v5.14.3 (BLOCKER reproduzido + corrigido): um deal com preço FALLBACK
+    inflado, SEM última venda (gate de suspect pulado), raridade não-Comum e em
+    range NÃO pode entrar no balde 'Top 50 deals limpos' — a margem é ilusória
+    (caso Darumaka R$2867 vs R$60 → 4678%). Deve ir pro balde FALLBACK dedicado."""
+    from myp_summary import build_markdown
+
+    darumaka = _fallback_deal("Darumaka", 60.0, 2867.0, rarity="Ultra Rara",
+                              last_sale=None)
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        xlsx = f.name
+    generate_xlsx([darumaka], xlsx, threshold=0.30)
+    with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as f:
+        md = f.name
+
+    rc = build_markdown(xlsx, md, scan_type="weekly", run_id="", repo="x/y")
+    assert rc == 0, f"build_markdown retornou {rc}"
+    text = Path(md).read_text(encoding="utf-8")
+    sec = _section_of(text, "Darumaka")
+    assert sec is not None and "FALLBACK" in sec, \
+        f"Darumaka (fallback) devia estar no balde FALLBACK, está em: {sec!r}\n{text[:900]}"
+    assert "limpos" not in (sec or "").lower(), \
+        f"BUG: fallback inflado vazou pro balde limpo: {sec!r}"
+    Path(xlsx).unlink(); Path(md).unlink()
+    print("  fallback-not-clean: Darumaka inflado sem last-sale → balde FALLBACK ✓")
+    return True
+
+
+def test_summary_real_deal_stays_clean():
+    """v5.14.3: um deal com preço REAL (pokemontcg.io) continua no balde limpo e
+    NÃO aparece no balde fallback."""
+    from myp_summary import build_markdown
+
+    real = _real_deal("Pikachu ex", 50.0, 120.0, 24.0)
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        xlsx = f.name
+    generate_xlsx([real], xlsx, threshold=0.30)
+    with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as f:
+        md = f.name
+
+    rc = build_markdown(xlsx, md, scan_type="weekly", run_id="", repo="x/y")
+    assert rc == 0
+    text = Path(md).read_text(encoding="utf-8")
+    sec = _section_of(text, "Pikachu ex")
+    assert sec is not None and "limpos" in sec.lower(), \
+        f"deal real devia estar no balde limpo, está em: {sec!r}"
+    assert "FALLBACK `.estat-tcg`" not in text or "Pikachu ex" not in \
+        text.split("FALLBACK `.estat-tcg`")[-1], "deal real não pode estar no balde fallback"
+    Path(xlsx).unlink(); Path(md).unlink()
+    print("  real-stays-clean: deal real → balde limpo (não fallback) ✓")
+    return True
+
+
+def test_summary_ci_all_fallback_zero_clean():
+    """v5.14.3: cenário CI (runners não alcançam pokemontcg.io → 100% fallback):
+    ZERO deals limpos + balde fallback populado. Não engana o operador."""
+    from myp_summary import build_markdown
+
+    cards = [_fallback_deal("Charizard ex", 80.0, 900.0),
+             _fallback_deal("Mewtwo ex", 60.0, 700.0)]
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        xlsx = f.name
+    generate_xlsx(cards, xlsx, threshold=0.30)
+    with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as f:
+        md = f.name
+
+    rc = build_markdown(xlsx, md, scan_type="weekly", run_id="", repo="x/y")
+    assert rc == 0
+    text = Path(md).read_text(encoding="utf-8")
+    # Bloco limpo presente mas vazio:
+    clean_block = text.split("## ⚠️")[0]
+    assert "Nenhum deal limpo nesta run" in clean_block, \
+        f"CI all-fallback devia dar 0 deals limpos:\n{clean_block[:600]}"
+    # Os 2 fallbacks listados no balde dedicado:
+    assert "FALLBACK `.estat-tcg`" in text, "balde fallback ausente"
+    assert _section_of(text, "Charizard ex") and "FALLBACK" in _section_of(text, "Charizard ex")
+    assert _section_of(text, "Mewtwo ex") and "FALLBACK" in _section_of(text, "Mewtwo ex")
+    Path(xlsx).unlink(); Path(md).unlink()
+    print("  ci-all-fallback: 0 limpos + 2 no balde fallback ✓")
+    return True
+
+
+def test_summary_mix_real_and_fallback_deals():
+    """v5.14.3: mix — 1 deal real + 1 fallback (ambos ≥threshold). Real → limpo;
+    fallback → balde fallback. Cada um no seu lugar."""
+    from myp_summary import build_markdown
+
+    cards = [_real_deal("Iron Hands ex", 50.0, 150.0, 30.0),
+             _fallback_deal("Roaring Moon", 70.0, 1200.0)]
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        xlsx = f.name
+    generate_xlsx(cards, xlsx, threshold=0.30)
+    with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as f:
+        md = f.name
+
+    rc = build_markdown(xlsx, md, scan_type="weekly", run_id="", repo="x/y")
+    assert rc == 0
+    text = Path(md).read_text(encoding="utf-8")
+    assert "limpos" in (_section_of(text, "Iron Hands ex") or "").lower(), \
+        "deal real devia estar no balde limpo"
+    assert "FALLBACK" in (_section_of(text, "Roaring Moon") or ""), \
+        "deal fallback devia estar no balde fallback"
+    Path(xlsx).unlink(); Path(md).unlink()
+    print("  mix: real→limpo, fallback→fallback ✓")
+    return True
+
+
+def test_summary_fallback_gate_old_xlsx():
+    """v5.14.3 + XLSX antigo (sem coluna 'TCG Source'): o gate de fallback usa a
+    inferência por 'TCG US$'. Deal antigo real (com USD) fica limpo; deal antigo
+    fallback (sem USD) vai pro balde fallback. Não regride leitura pré-v5.14."""
+    from myp_summary import build_markdown
+
+    cards = [_real_deal("Iron Hands ex", 50.0, 150.0, 30.0),
+             _fallback_deal("Roaring Moon", 70.0, 1200.0)]
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        xlsx = f.name
+    generate_xlsx(cards, xlsx, threshold=0.30)
+    _drop_all_en_column(xlsx, "TCG Source")   # XLSX "antigo"
+    with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as f:
+        md = f.name
+
+    rc = build_markdown(xlsx, md, scan_type="weekly", run_id="", repo="x/y")
+    assert rc == 0
+    text = Path(md).read_text(encoding="utf-8")
+    assert "limpos" in (_section_of(text, "Iron Hands ex") or "").lower(), \
+        "deal real (com USD) devia ficar limpo mesmo em XLSX antigo"
+    assert "FALLBACK" in (_section_of(text, "Roaring Moon") or ""), \
+        "deal fallback (sem USD) devia ir pro balde fallback em XLSX antigo"
+    Path(xlsx).unlink(); Path(md).unlink()
+    print("  fallback-gate (XLSX antigo): real→limpo, sem-USD→fallback ✓")
+    return True
+
+
 def _drop_all_en_column(xlsx_path: str, col_name: str):
     """Remove uma coluna da aba 'All EN Cards' (simula XLSX antigo sem ela)."""
     wb = load_workbook(xlsx_path)
@@ -1637,6 +1808,11 @@ def main():
         ("v5.14.2 cobertura infere XLSX antigo s/ TCG Source", test_summary_coverage_old_xlsx_inference),
         ("v5.14.2 cobertura exclui carta sem preço TCG", test_summary_coverage_excludes_unpriced_card),
         ("v5.14.2 cobertura ramo 'sem preço TCG' (≠ZERO)", test_summary_coverage_no_price_at_all_branch),
+        ("v5.14.3 fallback inflado NÃO entra em deals limpos (Darumaka)", test_summary_fallback_deal_not_in_clean),
+        ("v5.14.3 deal real continua limpo", test_summary_real_deal_stays_clean),
+        ("v5.14.3 CI all-fallback → 0 limpos + balde fallback", test_summary_ci_all_fallback_zero_clean),
+        ("v5.14.3 mix real/fallback → cada um no seu balde", test_summary_mix_real_and_fallback_deals),
+        ("v5.14.3 gate fallback em XLSX antigo (infere por USD)", test_summary_fallback_gate_old_xlsx),
     ]
     failed = 0
     for name, fn in tests:

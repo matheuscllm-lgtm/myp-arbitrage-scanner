@@ -1,5 +1,49 @@
 # Changelog
 
+## v5.14.3 — 2026-06-21 — Deal com preço FALLBACK sai do balde "limpos" (fix BLOCKER de honestidade)
+
+**Problema (BLOCKER reproduzido).** Um deal cujo preço TCG veio do **FALLBACK**
+`.estat-tcg` (não do preço real pokemontcg.io) podia entrar no balde **🟢 Top 50
+deals limpos** — apresentado ao operador como compra limpa e confiável — com uma
+**margem ILUSÓRIA**. Acontecia quando: o `.estat-tcg` mapeava a carta errada e
+inflava o "preço TCG" (ex. **Darumaka**: R$2867 vs MYP R$60 → **4678%**), a carta
+**não tinha última venda** (`myp_last_sale_brl=None` → o gate de `tcg_suspect`,
+que compara declarado/última-venda, é **pulado**), e a raridade não era "Comum"
+(escapa do balde supranumerário). Resultado: margem falsa no balde limpo — a
+classe de erro mais cara, e exatamente o que o preço real (v5.11) nasceu pra
+evitar. Viola a regra dura do CLAUDE.md: **"Nunca trate fallback como real"**.
+
+Causa-raiz: `myp_summary.py` montava `deals_clean` filtrando só por
+rarity-mislabel e tcg_suspect — **nunca por `TCG Source`** (real vs fallback).
+
+### Mudanças (só no `myp_summary.py` — entrega; o scanner já era honesto)
+
+1. **`deals_clean` exige preço REAL.** Um "deal limpo" agora precisa de
+   `_is_real(c)` (coluna `TCG Source = real (pokemontcg.io)`; XLSX antigo infere
+   por `TCG US$`). Deal com preço fallback **sai** do balde limpo.
+2. **Balde novo dedicado `⚠️ Deals com preço FALLBACK .estat-tcg`** (margem
+   NÃO-confiável — validar), com aviso em linguagem clara pro operador: o preço é
+   uma estimativa do MYP, a margem pode ser ilusória, valide no Link TCG ou
+   enriqueça com `myp_enrich.py`. (Runs de CI saem 100% aqui — runners não
+   alcançam a pokemontcg.io.)
+3. **Stat line honesta:** `Limpos` → `Limpos (preço real)` + novo contador
+   `Fallback`. O esclarecimento de cobertura (`deals_clarif`) deixa de ser
+   redundante (clean ⊆ real por construção) e passa a reportar os 2 números.
+4. **Nenhum deal real é ocultado** (real continua limpo; só fallback move) e o
+   **scanner NÃO foi tocado** — ele já grava `TCG Source` corretamente; o conserto
+   é o *consumidor* (entrega) respeitar essa coluna.
+5. **+5 testes**: Darumaka (fallback inflado sem last-sale → NÃO limpo, vai pro
+   balde fallback); deal real → continua limpo; CI all-fallback → 0 limpos +
+   balde fallback; mix real/fallback → cada um no seu balde; gate em XLSX antigo
+   (infere por `TCG US$`). Suíte **41/41**.
+
+> Decisão tomada em **revisão conjunta de 2 agentes** (bug-hunt achou + reproduzi;
+> domain-agent revisou o design e vetou mexer no gate `tcg_suspect` do scanner —
+> o sinal estrutural correto é `TCG Source`, que o scanner já expõe).
+> **Seguimento aberto** (outro repo): o scanner integrado (`normalize.py`) também
+> deve tratar `TCG Source = fallback` como margem não-confiável — hoje o mesmo
+> deal fallback vaza na tabela unificada do integrado.
+
 ## v5.14.1 — 2026-06-20 — Cobertura de preço real medida sobre o UNIVERSO de cartas EN
 
 **Problema.** A linha "Cobertura de preço TCG real" do `myp_summary.py` contava
