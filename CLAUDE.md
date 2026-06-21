@@ -5,12 +5,15 @@
 
 ## ▶️ Retomar de onde paramos (leia primeiro)
 
-Ao retomar, **leia antes de agir** o handoff canônico:
-[`SESSION-HANDOFF.md`](SESSION-HANDOFF.md). É o **único** handoff ativo (nome
-fixo, a verdade mora no `main`) — diz o que foi feito, onde paramos e o próximo
-passo. **Não crie um handoff datado por sessão** (`SESSION-HANDOFF-<data>.md`):
-atualize o `SESSION-HANDOFF.md` e deixe a verdade no `main` — branches/PRs são
-propostas. Depois use o resto deste arquivo pro "como rodar".
+Ao retomar, **se existir** um `SESSION-HANDOFF.md` na raiz, **leia-o antes de
+agir**: é o handoff canônico (nome fixo) — diz o que foi feito, onde paramos e o
+próximo passo. ⚠️ Esse arquivo é **local-only / gitignored** (`.gitignore`): foi
+tirado do repo no preparo de release público (#47) e **não vem num clone limpo**
+(ex.: sessão Claude Code na nuvem) — sua ausência é **esperada**, não é erro.
+Sem ele, a **fonte de verdade é o `main` + `CHANGELOG.md`** (o estado real mora
+no código mergeado; branches/PRs são propostas). **Não crie um handoff datado por
+sessão** (`SESSION-HANDOFF-<data>.md`): se for manter um handoff, atualize o
+`SESSION-HANDOFF.md` local. Depois use o resto deste arquivo pro "como rodar".
 
 ## Este é o repo canônico
 
@@ -162,12 +165,22 @@ sets de um scan local), há dois caminhos:
 ## Otimizar o scanner (loop iterativo)
 
 Pra otimizar (velocidade/correção/custo/qualidade) há **um caminho só**: o loop
-iterativo de dev documentado em
-[`docs/optimization-loop.md`](docs/optimization-loop.md) — *medir
-(`python bench.py`) → mudar → verificar (`python test_v5_8_offline.py`) →
-repetir*. Não improvise: o playbook tem o ciclo, as ferramentas por passo e o
-backlog priorizado. **Não** existe comando "loop engineering"; a skill `/loop` é
-só agendador.
+iterativo de dev — **medir → mudar → verificar → repetir**:
+
+1. **Medir** o baseline: `python bench.py > before.txt` (modo mockado, sem rede;
+   métrica-chave = `ptcg_calls`, os round-trips à pokemontcg.io). `--live` mede
+   tempo real contra o site + API.
+2. **Mudar** uma coisa por vez (uma otimização isolada).
+3. **Verificar**: `python bench.py > after.txt && diff before.txt after.txt`
+   (ganho mensurável?) **e** `python test_v5_8_offline.py` (36/36 verde —
+   nenhuma regressão).
+4. **Repetir**. Não improvise fora desse ciclo.
+
+> O playbook detalhado (`docs/optimization-loop.md`) e seu backlog priorizado são
+> **local-only / gitignored** (tirados do repo público no #47) — podem **não
+> existir** num clone limpo; sua ausência é esperada. O ciclo acima é o
+> essencial e basta. **Não** existe comando "loop engineering"; a skill `/loop` é
+> só agendador.
 
 ## Saída e commit
 
