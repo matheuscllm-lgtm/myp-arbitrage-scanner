@@ -1,0 +1,71 @@
+name: Probe TCG price sources (runner egress)
+
+# Passo 0 do spike "tcgcsv" (2026-06-21). Sonda de REDE — NÃO roda o scanner,
+# NÃO altera nada. Responde uma pergunta empírica, de DENTRO de um runner do
+# GitHub (mesmo tipo de runner dos workflows de scan):
+#
+#   1. O runner ALCANÇA o tcgcsv.com? (a fonte de preço ESTÁTICA do TCGPlayer
+#      que queremos adotar — dumps diários, 2 requests/set, sem 429.)
+#   2. O runner re-confere o bloqueio documentado à api.pokemontcg.io?
+#      (achado 2026-06-20: IPs de datacenter do GitHub não alcançam a API →
+#      o CI cai no preço FALLBACK `.estat-tcg` → margens infladas.)
+#
+# Por que isto importa: se o runner ALCANÇA o tcgcsv, o CI pode passar a servir
+# preço TCG REAL (hoje só o run LOCAL consegue). Este job é o GO/NO-GO dessa
+# mudança — antes de tocar no scanner. O spike LOCAL já provou que, acima do
+# piso ($10/R$50), tcgcsv e pokemontcg.io concordam em ~0–0.3% nas cartas chase.
+#
+# Resultado: job VERDE = runner alcança o tcgcsv (GO). VERMELHO = não alcança.
+# A sonda à pokemontcg.io é informativa (não derruba o job): warning se ela
+# voltar a responder 200 do runner (bloqueio mudou → reavaliar).
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/probe-price-sources.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: tcgcsv.com — alcançável do runner? (a fonte que queremos adotar)
+        run: |
+          set -uo pipefail
+          echo "== Sondando tcgcsv.com /tcgplayer/3/groups =="
+          # tcgcsv exige identificar a aplicação no User-Agent (senão responde 401).
+          code=$(curl -sS -o body.json -w '%{http_code}' --max-time 30 \
+            -H 'User-Agent: myp-arbitrage-scanner/probe (+github-actions)' \
+            'https://tcgcsv.com/tcgplayer/3/groups' || echo "000")
+          echo "HTTP: $code"
+          if [ "$code" != "200" ]; then
+            echo "::error::tcgcsv.com NÃO retornou 200 (got '$code') — o runner do GitHub NÃO alcança a fonte. NO-GO."
+            exit 1
+          fi
+          # 200 não basta: confirmar que é JSON DE VERDADE (não uma página de
+          # challenge da Cloudflare que também volta 200).
+          n=$(python3 -c "import json; d=json.load(open('body.json')); print(len(d.get('results', [])))" 2>/dev/null || echo "0")
+          echo "sets (groups) no payload: $n"
+          if [ "$n" -lt 1 ]; then
+            echo "::error::tcgcsv.com voltou 200 mas sem 'results' utilizáveis (challenge/HTML?). NO-GO."
+            exit 1
+          fi
+          echo "✅ GO: tcgcsv.com alcançável E servindo JSON real do runner do GitHub ($n sets)."
+
+      - name: api.pokemontcg.io — re-confere o bloqueio documentado (informativo)
+        run: |
+          set -uo pipefail
+          echo "== Sondando api.pokemontcg.io /v2/sets — esperado FALHAR/challenge no runner =="
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 \
+            -H 'User-Agent: myp-arbitrage-scanner/probe (+github-actions)' \
+            'https://api.pokemontcg.io/v2/sets?pageSize=1' || echo "erro-curl")
+          echo "HTTP/resultado: $code"
+          if [ "$code" = "200" ]; then
+            echo "::warning::pokemontcg.io respondeu 200 DO RUNNER — o bloqueio documentado (achado 2026-06-20) pode ter mudado; reavaliar o fluxo híbrido."
+          else
+            echo "ℹ️ pokemontcg.io não serviu 200 do runner (resultado: '$code') — consistente com o achado: o CI cai no fallback."
+          fi
