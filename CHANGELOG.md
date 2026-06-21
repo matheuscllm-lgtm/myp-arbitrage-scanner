@@ -1,5 +1,35 @@
 # Changelog
 
+## v5.14.4 — 2026-06-21 — `tcg_suspect` boundary inclusivo (`>=`): pega o exatamente-10x
+
+**Regressão de precisão minerada do eval asi-evolve.** O filtro `tcg_suspect`
+(preço `.estat-tcg` declarado >> última venda real = `.estat-tcg` mapeou a carta
+errada e inflou a margem) usava `ratio > TCG_SUSPECT_RATIO_THRESHOLD` (estrito).
+Um ratio **exatamente 10,0x** (ex.: declarado R$1000 / última venda R$100 —
+pares redondos COMUNS no `.estat-tcg`) **escapava** do filtro e ia pro balde de
+deals **limpos** com margem possivelmente falsa — o FP é a classe de erro CARA
+num scanner precision-first (a mesma que a v5.14.3 acabou de fechar como BLOCKER).
+
+**Como foi achado:** rodando o asi-evolve (`myp_match`) com a OpenAI recarregada,
+minerei o evaluator — o `initial_program` (espelho de uma produção anterior) usa
+`>= SUSPECT_RATIO`, tem um caso dedicado `Gengar exactly 10x` (gold = suspect) e
+um `PRECISION_FLOOR=1.0` que **exige** `>=` pra manter precisão 1,0. A produção
+havia regredido pra `>`. (A evolução em si platô no baseline — NO-PORT; o ganho
+veio de **minerar o eval**, não de portar código LLM.)
+
+### Mudança
+- `myp_arbitrage_scanner.py:1189`: `ratio > …` → `ratio >= TCG_SUSPECT_RATIO_THRESHOLD`.
+- Comentário do balde suspect (`myp_summary.py`) e doc: ">10x" → "≥10x".
+- `test_jirachi_ratio_math`: assert alinhado pra `>=` (espelha a produção).
+- **+1 teste de boundary**: ratio EXATAMENTE 10x (via `scrape_product` real, sem
+  preço real) → `tcg_suspect=True`, **fora** do balde limpo. Suíte **42/42**.
+
+> Decisão em **cross-review de 2 agentes** (eu + domain-agent): precision-first →
+> FP no balde limpo é caro, FN é barato (vai pra "validar manual" e o clear-on-real
+> desfaz o suspect quando há preço real); 10,0x é valor real (preços redondos), não
+> measure-zero; sem razão principled pra fresta de largura-zero em 10,00x. Não
+> quebra nenhum teste.
+
 ## v5.14.3 — 2026-06-21 — Deal com preço FALLBACK sai do balde "limpos" (fix BLOCKER de honestidade)
 
 **Problema (BLOCKER reproduzido).** Um deal cujo preço TCG veio do **FALLBACK**

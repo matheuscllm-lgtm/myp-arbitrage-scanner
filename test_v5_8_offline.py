@@ -463,8 +463,43 @@ def test_threshold_constant():
 def test_jirachi_ratio_math():
     """Sanity: ratio 1499/19.99 ≈ 75 deve disparar threshold 10."""
     ratio = 1499.00 / 19.99
-    assert ratio > TCG_SUSPECT_RATIO_THRESHOLD, f"Caso Jirachi não dispara: {ratio:.1f}x"
+    # v5.14.4: assert espelha o operador da produção (`>=`, boundary inclusivo).
+    assert ratio >= TCG_SUSPECT_RATIO_THRESHOLD, f"Caso Jirachi não dispara: {ratio:.1f}x"
     print(f"  Jirachi ratio = {ratio:.1f}x ✓")
+    return True
+
+
+def test_tcg_suspect_boundary_exactly_10x():
+    """v5.14.4: boundary INCLUSIVO via scrape_product real. Um ratio EXATAMENTE
+    10x (declarado `.estat-tcg` R$1000 / última venda R$100) DEVE disparar
+    tcg_suspect — com `>` ele escapava e virava deal "limpo" com margem possível-
+    mente falsa (FP, erro caro). SEM preço real (`_fetch_ptcg_usd → None`), pra o
+    clear-on-real não desfazer o suspect."""
+    from myp_arbitrage_scanner import MYPScraper
+
+    html = (
+        '<html><body><h1>Gengar (100/191)</h1>'
+        '<span class="estat-tcg">TCG Player: R$ 1.000,00</span>'
+        '<span class="estatistica-ultimo">Última venda: R$ 100,00</span>'
+        '<table class="table-striped table-bordered"><tbody>'
+        + _seller_row("Inglês", "NM - Quase nova", "120,00")
+        + _seller_row("Inglês", "NM - Quase nova", "130,00")
+        + '</tbody></table></body></html>'
+    )
+    sc = MYPScraper(delay=0.0, min_price=50.0)
+    sc.fx_usd_brl = 5.0
+    sc._fetch_ptcg_usd = lambda cid: None     # sem preço real → suspect sobrevive
+    sc._get = lambda url, save_debug=False: BeautifulSoup(html, "lxml")
+
+    card = sc.scrape_product("https://mypcards.com/pokemon/produto/9/gengar",
+                             "Surging Sparks")
+    assert card is not None
+    ratio = card.tcg_player_price / card.myp_last_sale_brl
+    assert abs(ratio - 10.0) < 1e-9, f"ratio deveria ser 10.0x, é {ratio}"
+    assert card.tcg_suspect is True, \
+        "BUG: ratio EXATAMENTE 10x escapou do filtro suspect (boundary não-inclusivo)"
+    assert sc._stats["tcg_suspects"] == 1, sc._stats["tcg_suspects"]
+    print("  tcg_suspect boundary: ratio exatamente 10x → suspect (inclusivo `>=`) ✓")
     return True
 
 
@@ -1775,6 +1810,7 @@ def main():
         ("threshold constant", test_threshold_constant),
         ("rarity-mislabel gate (2026-06-19)", test_rarity_mislabel_gate),
         ("Jirachi ratio math", test_jirachi_ratio_math),
+        ("v5.14.4 tcg_suspect boundary exatamente 10x", test_tcg_suspect_boundary_exactly_10x),
         ("parse_brl BR/US formats (v5.8.10)", test_parse_brl_formats),
         ("_last_brl extraction (v5.8.10)", test_last_brl),
         ("oversized/jumbo regex (v5.8.10)", test_oversized_regex),

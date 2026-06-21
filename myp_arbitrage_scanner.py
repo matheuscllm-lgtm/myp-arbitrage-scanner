@@ -17,8 +17,8 @@ Requisitos:
     pip install cloudscraper beautifulsoup4 openpyxl lxml
 
 Autor: Matheus Chillemi / Claude
-Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10) | 2026-06-07 (v5.10.1 → v5.11) | 2026-06-09 (v5.11.1) | 2026-06-10 (v5.11.2 → v5.11.3) | 2026-06-16 (v5.11.4 → v5.11.6) | 2026-06-13 (v5.11.7, doc-only) | 2026-06-17 (v5.11.8 — loop: timing + bench) | 2026-06-17 (v5.12 — batch pokemontcg.io por set) | 2026-06-17 (v5.13 — Iteração #2: atribuição de cobertura do fallback) | 2026-06-20 (v5.14 — coluna "TCG Source" explícita + enrich off-runner p/ preço real) | 2026-06-20 (v5.14.1 — cobertura de preço real no summary medida sobre o universo de cartas EN) | 2026-06-21 (v5.14.3 — deal com preço FALLBACK sai do balde "limpos" → balde dedicado; fix BLOCKER de honestidade)
-Versão: v5.14.3
+Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10) | 2026-06-07 (v5.10.1 → v5.11) | 2026-06-09 (v5.11.1) | 2026-06-10 (v5.11.2 → v5.11.3) | 2026-06-16 (v5.11.4 → v5.11.6) | 2026-06-13 (v5.11.7, doc-only) | 2026-06-17 (v5.11.8 — loop: timing + bench) | 2026-06-17 (v5.12 — batch pokemontcg.io por set) | 2026-06-17 (v5.13 — Iteração #2: atribuição de cobertura do fallback) | 2026-06-20 (v5.14 — coluna "TCG Source" explícita + enrich off-runner p/ preço real) | 2026-06-20 (v5.14.1 — cobertura de preço real no summary medida sobre o universo de cartas EN) | 2026-06-21 (v5.14.3 — deal com preço FALLBACK sai do balde "limpos" → balde dedicado; fix BLOCKER de honestidade) | 2026-06-21 (v5.14.4 — tcg_suspect boundary inclusivo `>=` (pega exatamente-10x); regressão de precisão minerada do eval asi-evolve)
+Versão: v5.14.4
 
 Changelog v5.1 (2026-05-12 — auditoria C/H/M, mesma metodologia do CT scanner):
   - C1: --threshold < 1.0 auto-converte com warning (UX guard contra trap
@@ -1186,8 +1186,16 @@ class MYPScraper:
         # ratio a checar (e evita TypeError sobre None).
         if card.tcg_player_price and card.myp_last_sale_brl and card.myp_last_sale_brl > 0:
             ratio = card.tcg_player_price / card.myp_last_sale_brl
-            if ratio > TCG_SUSPECT_RATIO_THRESHOLD:
-                # TCG declarado é >Nx última venda → MYP bug provável
+            # v5.14.4: boundary INCLUSIVO (`>=`). Um ratio EXATAMENTE 10x (ex.
+            # declarado R$1000 / última venda R$100 — números redondos comuns no
+            # `.estat-tcg`) é anomalia tão forte quanto 10,01x; com `>` ele escapava
+            # e virava deal "limpo" com margem possivelmente falsa (FP = erro caro
+            # num scanner precision-first). FN é barato (vai pra "validar manual" e
+            # o clear-on-real desfaz o suspect quando há preço real). Decisão
+            # conjunta de 2 revisores; alinha com o eval asi-evolve (caso 10x = gold
+            # suspect, PRECISION_FLOOR=1.0).
+            if ratio >= TCG_SUSPECT_RATIO_THRESHOLD:
+                # TCG declarado é ≥Nx última venda → MYP bug provável
                 card.tcg_suspect = True
                 self._stats["tcg_suspects"] += 1
                 log.warning(
