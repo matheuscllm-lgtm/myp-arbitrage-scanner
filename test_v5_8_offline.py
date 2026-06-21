@@ -1338,8 +1338,95 @@ def test_summary_real_coverage_signal():
     text = Path(md).read_text(encoding="utf-8")
     assert "Cobertura de preço TCG real" in text, "linha de cobertura ausente"
     assert "ZERO preço real" in text, f"esperava alerta de zero real:\n{text[:600]}"
+    # v5.14.1: cobertura é medida sobre o UNIVERSO de cartas EN (2 cartas), não
+    # sobre o subconjunto de deals. Ambas são fallback → 0/2 cartas EN reais.
+    assert "0/2 cartas EN" in text, f"cobertura deve ser sobre o universo (0/2):\n{text[:600]}"
     Path(xlsx).unlink(); Path(md).unlink()
     print("  summary real-coverage: '🛑 ZERO preço real' quando tudo é fallback ✓")
+    return True
+
+
+def test_summary_coverage_real_universe_with_zero_deals():
+    """v5.14.1: o BUG corrigido. Quando o catálogo EN tem preço 100% REAL mas
+    NENHUMA carta bate o threshold (0 deals limpos ≥30%), o resumo NÃO pode
+    gritar '🛑 ZERO' nem '0/0' — isso fazia o operador (médico, não-programador)
+    achar que a key falhou. A cobertura deve refletir TODAS as cartas EN
+    (`TCG Source`), não o balde de deals.
+
+    Caso: 3 cartas EN com preço REAL (pokemontcg.io), margens baixas (sem deal
+    ≥30%). Esperado: '✅ 3/3 cartas EN com preço REAL' + nota de 0 deals limpos.
+    """
+    from myp_summary import build_markdown
+
+    def _real_lowmargin(name, myp, usd, ed="Surging Sparks"):
+        return CardData(
+            name=name, edition=ed, rarity="Ultra Rara",
+            product_url=f"https://myp/{name}", myp_lowest_en_nm=myp,
+            tcg_player_price=myp * 1.05,   # margem ~5% → NÃO é deal ≥30%
+            tcg_real_usd=usd, tcg_source="pokemontcg.io",
+            myp_last_sale_brl=myp, margin_pct=0.05, margin_brl=myp * 0.05,
+            en_nm_sellers=3, last_updated="2026-06-20",
+        )
+
+    cards = [
+        _real_lowmargin("Charizard ex", 80.0, 16.0),
+        _real_lowmargin("Pikachu ex", 60.0, 12.0),
+        _real_lowmargin("Mewtwo ex", 90.0, 18.0),
+    ]
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        xlsx = f.name
+    generate_xlsx(cards, xlsx, threshold=0.30)
+    with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as f:
+        md = f.name
+
+    rc = build_markdown(xlsx, md, scan_type="weekly", run_id="", repo="x/y")
+    assert rc == 0, f"build_markdown retornou {rc}"
+    text = Path(md).read_text(encoding="utf-8")
+    # NÃO pode falsear ZERO nem 0/0 quando o universo é 100% real.
+    assert "ZERO preço real" not in text, \
+        f"BUG: gritou ZERO com universo 100% real:\n{text[:700]}"
+    assert "0/0" not in text, f"BUG: imprimiu '0/0' enganoso:\n{text[:700]}"
+    assert "3/3 cartas EN com preço REAL" in text, \
+        f"cobertura do universo (3/3 real) ausente:\n{text[:700]}"
+    # E deixa claro que não houve deal ≥threshold (sem confundir com cobertura).
+    assert "nenhum deal limpo" in text, \
+        f"esclarecimento de 0 deals ausente:\n{text[:700]}"
+    Path(xlsx).unlink(); Path(md).unlink()
+    print("  summary coverage: universo 100% real + 0 deals → '✅ 3/3', não ZERO ✓")
+    return True
+
+
+def test_summary_coverage_mixed_real_fallback():
+    """v5.14.1: cobertura parcial sobre o universo. Mix real/fallback nas cartas
+    EN → '⚠️ N/M cartas EN com preço REAL' contando TODAS, não só os deals."""
+    from myp_summary import build_markdown
+
+    real = CardData(
+        name="Charizard ex", edition="Surging Sparks", rarity="SIR",
+        product_url="https://myp/r", myp_lowest_en_nm=80.0, tcg_player_price=200.0,
+        tcg_real_usd=36.0, tcg_source="pokemontcg.io", myp_last_sale_brl=180.0,
+        margin_pct=1.5, margin_brl=120.0, en_nm_sellers=3, last_updated="2026-06-20",
+    )
+    fb = CardData(
+        name="Pikachu ex", edition="Surging Sparks", rarity="Ultra Rara",
+        product_url="https://myp/f", myp_lowest_en_nm=60.0, tcg_player_price=150.0,
+        tcg_real_usd=None, tcg_source="myp_estat", myp_last_sale_brl=140.0,
+        margin_pct=1.5, margin_brl=90.0, en_nm_sellers=2, last_updated="2026-06-20",
+    )
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        xlsx = f.name
+    generate_xlsx([real, fb], xlsx, threshold=0.30)
+    with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as f:
+        md = f.name
+
+    rc = build_markdown(xlsx, md, scan_type="weekly", run_id="", repo="x/y")
+    assert rc == 0, f"build_markdown retornou {rc}"
+    text = Path(md).read_text(encoding="utf-8")
+    assert "1/2 cartas EN com preço REAL" in text, \
+        f"cobertura mista (1/2) ausente:\n{text[:700]}"
+    assert "ZERO preço real" not in text, "não é zero, é parcial"
+    Path(xlsx).unlink(); Path(md).unlink()
+    print("  summary coverage: mix real/fallback → '⚠️ 1/2 cartas EN' ✓")
     return True
 
 
@@ -1375,6 +1462,8 @@ def main():
         ("v5.14 coluna TCG Source explícita", test_tcg_source_column_explicit),
         ("v5.14 TCG Source round-trip aggregate", test_tcg_source_roundtrip_aggregate),
         ("v5.14 sinal de cobertura real no resumo", test_summary_real_coverage_signal),
+        ("v5.14.1 cobertura sobre universo EN c/ 0 deals", test_summary_coverage_real_universe_with_zero_deals),
+        ("v5.14.1 cobertura mista real/fallback (universo)", test_summary_coverage_mixed_real_fallback),
     ]
     failed = 0
     for name, fn in tests:

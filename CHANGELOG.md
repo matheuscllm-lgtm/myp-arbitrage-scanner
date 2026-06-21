@@ -1,5 +1,37 @@
 # Changelog
 
+## v5.14.1 — 2026-06-20 — Cobertura de preço real medida sobre o UNIVERSO de cartas EN
+
+**Problema.** A linha "Cobertura de preço TCG real" do `myp_summary.py` contava
+apenas o balde de **deals ≥threshold** (≥30%), não o universo de cartas EN.
+Consequência: quando 0 cartas batiam o threshold (mas o catálogo inteiro tinha
+preço REAL), o resumo imprimia `✅ 0/0 deals limpos` ou — pior — podia gritar
+`🛑 ZERO preço real` **falso**, fazendo o operador (médico, não-programador)
+achar que a `POKEMONTCG_API_KEY` havia falhado quando na verdade a cobertura era
+100%. "O preço usado é de verdade?" (cobertura) e "a margem bate 30%?" (deal) são
+dois números distintos e estavam colapsados num só denominador.
+
+### Mudanças
+
+1. **Cobertura sobre `All EN Cards` (não sobre deals).** A métrica agora conta
+   `TCG Source = real (pokemontcg.io)` vs `fallback (.estat-tcg)` sobre **todas**
+   as cartas EN com preço TCG (universo), não sobre o subconjunto de deals. O
+   denominador é o nº de cartas EN com algum preço TCG (cartas sem nenhum preço
+   não entram — não há o que ser real/fallback nelas). Emojis honestos mantidos:
+   `🛑 ZERO` (0 reais) / `⚠️ N/M` (parcial) / `✅ M/M` (100%).
+2. **Texto distingue os dois números.** A linha de cobertura agora esclarece, em
+   sufixo, quantos dos deals limpos ≥threshold têm preço real — sem confundir
+   "cobertura de preço real" (universo) com "deals ≥30%" (subconjunto).
+3. **`datetime.utcnow()` → `datetime.now(timezone.utc)`** no `myp_summary.py`
+   (remove o deprecation do Python 3.12+).
+4. **Testes.** +2 testes offline: universo 100% real com 0 deals ≥threshold
+   **não** grita ZERO (reporta `✅ 3/3 cartas EN`); mix real/fallback reporta
+   `⚠️ 1/2 cartas EN`. O teste existente passou a assertar a contagem sobre o
+   universo (`0/2 cartas EN`).
+
+> Não toca no caminho de preço real em si (que já funciona) — só a **métrica de
+> cobertura** no resumo. Threshold/editions de produção inalterados.
+
 ## v5.14 — 2026-06-20 — Preço TCG real off-runner + sinal de honestidade explícito
 
 **Problema (achado 2026-06-20).** Os runners do GitHub Actions **não alcançam**
