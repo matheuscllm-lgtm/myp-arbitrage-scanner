@@ -415,7 +415,7 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
     if deals_suspect:
         lines.append("## 🚨 TCG Suspect (campo .estat-tcg inflado pelo MYP)")
         lines.append("")
-        lines.append("> Cards onde TCG declarado pelo MYP é >10x a última venda real "
+        lines.append("> Cards onde TCG declarado pelo MYP é ≥10x a última venda real "
                      "do próprio MYP. Provável bug do `.estat-tcg`. Caso Jirachi "
                      "PR-SM_SM161: MYP declarava R$1499 vs última venda R$19,99 (75x). "
                      "Margens absurdas aqui são quase certamente artefato. **Já excluídos "
