@@ -72,9 +72,12 @@ python myp_arbitrage_scanner.py --editions "Ascended Heroes" \
     1. **CI (workflows):** secret do GitHub Actions `POKEMONTCG_API_KEY`
        (*Settings → Secrets and variables → Actions*). Os 3 workflows
        (daily/weekly/quick) injetam no `env` do step de scan sozinhos (desde
-       #30). Toda run de workflow já usa — automático. *(Nota 2026-06-18: o
-       operador decidiu **não** custear o GitHub Actions; o fluxo de CI fica
-       inativo até regularizar billing — priorize o run LOCAL abaixo.)*
+       #30). Toda run de workflow já usa — automático. *(Atualização
+       2026-06-20: os repos foram tornados **públicos** → minutos de GitHub
+       Actions são gratuitos; a nota anterior de "inativo por billing" não vale
+       mais. **MAS rodar ≠ servir preço real** — ver o 🛑 abaixo: o CI roda, só
+       que devolve preço FALLBACK. O run LOCAL segue como caminho pro preço
+       real.)*
        - 🛑 **CI dá preço FALLBACK, não real (achado 2026-06-20 — NÃO
          re-investigue):** os runners do GitHub **não alcançam**
          `api.pokemontcg.io` (o Cloudflare da API bloqueia/challenge os IPs de
