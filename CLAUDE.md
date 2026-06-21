@@ -72,6 +72,21 @@ python myp_arbitrage_scanner.py --editions "Ascended Heroes" \
        #30). Toda run de workflow já usa — automático. *(Nota 2026-06-18: o
        operador decidiu **não** custear o GitHub Actions; o fluxo de CI fica
        inativo até regularizar billing — priorize o run LOCAL abaixo.)*
+       - 🛑 **CI dá preço FALLBACK, não real (achado 2026-06-20 — NÃO
+         re-investigue):** os runners do GitHub **não alcançam**
+         `api.pokemontcg.io` (o Cloudflare da API bloqueia/challenge os IPs de
+         datacenter do GitHub/Azure → toda chamada falha → cai no `.estat-tcg`).
+         Logo o workflow produz **cobertura completa do catálogo com preço
+         fallback** (margens infladas/artefato — 650%/407%), **mesmo com o
+         secret setado**. Confirmado: 0/1326 reais no workflow, e 0 também
+         forçando Python 3.11 (não é key nem Python — é o IP do runner). PC/
+         container comum **alcança** a API normal. **Como obter preço real:**
+         rode o scanner **LOCAL** (preço já nasce real), **ou** use o **fluxo
+         híbrido** abaixo (workflow p/ cobertura → `myp_enrich.py` local p/
+         preço real). O sinal real-vs-fallback é **explícito** desde v5.14: a
+         coluna `TCG Source` no XLSX e a linha "Cobertura de preço TCG real" no
+         resumo do `myp_summary.py` dizem, por card, se o preço é real
+         (`pokemontcg.io`) ou fallback (`.estat-tcg`) — o CI nunca mais finge.
     2. **Máquina local do operador (fluxo canônico — local-first):**
        `POKEMONTCG_API_KEY` setada como **variável de ambiente de usuário do
        Windows** (`[Environment]::SetEnvironmentVariable("POKEMONTCG_API_KEY",
@@ -103,6 +118,43 @@ python myp_arbitrage_scanner.py --editions "Ascended Heroes" \
   artifact + `results/latest-quick.md` commitado. Edições custom: input
   `editions` (multi-palavra entre aspas — o quick parseia certo via `eval
   set --`; o weekly tem bug latente com multi-palavra no `$ARGS` cru).
+
+## 🔀 Fluxo híbrido — preço TCG REAL no catálogo COMPLETO (v5.14)
+
+> Em português simples: o **workflow do GitHub é rápido mas só sabe dar uma
+> estimativa de preço** (o "fallback"), porque os computadores do GitHub não
+> conseguem falar com o site de preços (pokemontcg.io). O **seu PC consegue**.
+> Então a gente usa os dois: o GitHub levanta a lista completa de cartas rápido,
+> e o seu PC preenche o preço de verdade depois. No fim, o resultado **diz claramente**
+> quais preços são de verdade e quais ficaram na estimativa — nada é mascarado.
+
+Quando você precisa de **preço TCG real no catálogo inteiro** (não só nos hot
+sets de um scan local), há dois caminhos:
+
+- **Simples:** rode o scanner **LOCAL** (`python myp_arbitrage_scanner.py …`) —
+  o preço já nasce real (o PC alcança a pokemontcg.io). Pode passar de 1h num
+  scan largo; rode detached.
+- **Híbrido (rápido + completo):** deixe o **workflow** levantar a cobertura e
+  enriqueça **local** com `myp_enrich.py`:
+
+  ```bash
+  # 1) workflow (cobertura do catálogo, ~2h em 20 runners) → baixe o XLSX consolidado
+  # 2) LOCAL (onde a pokemontcg.io responde), injete o preço REAL:
+  python myp_enrich.py myp_arbitrage_<stamp>.xlsx -o enr.xlsx \
+    --real-only-out enr_real.xlsx --min-price 50
+  # 3) entregue via myp_summary.py SOBRE o XLSX só-real (margem confiável):
+  python myp_summary.py enr_real.xlsx --type weekly -o results/<scope>-<data>.md
+  ```
+
+  - `myp_enrich.py` reusa `_real_tcg_brl`/`fetch_usd_brl`/`generate_xlsx` do
+    scanner (mesmo cálculo), busca preço real nos candidatos (EN-NM ≥
+    `--min-price`, default 50), e **reporta a cobertura** (`X/Y reais, Z em
+    fallback`). Requer `POKEMONTCG_API_KEY` no ambiente.
+  - **Honestidade (regra dura):** a coluna `TCG Source` do XLSX e a linha
+    "Cobertura de preço TCG real" do `myp_summary.py` declaram, por card, se o
+    preço é **real** (`pokemontcg.io`) ou **fallback** (`.estat-tcg`, margem
+    NÃO-confiável). O `--real-only-out` separa só os de preço real pra entrega.
+    **Nunca** trate fallback como real — o output não deixa.
 
 ## Otimizar o scanner (loop iterativo)
 

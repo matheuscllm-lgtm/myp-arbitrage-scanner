@@ -346,8 +346,11 @@ def test_tcg_url_column():
 
     ws = wb["All EN Cards"]
     hdr = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
-    assert len(hdr) == 17, f"esperava 17 colunas, veio {len(hdr)}: {hdr}"
+    # v5.14: +1 coluna "TCG Source" (real/fallback) → 18 colunas. "TCG URL"
+    # segue sendo a última (o source foi inserido no meio, após "TCG US$").
+    assert len(hdr) == 18, f"esperava 18 colunas, veio {len(hdr)}: {hdr}"
     assert hdr[-1] == "TCG URL", f"última coluna deveria ser 'TCG URL': {hdr[-1]!r}"
+    assert "TCG Source" in hdr, f"coluna 'TCG Source' (v5.14) ausente: {hdr}"
     url_col = hdr.index("TCG URL") + 1
     tcg_price_col = hdr.index("TCG Player (R$)") + 1
     name_col = hdr.index("Card Name") + 1
@@ -374,7 +377,7 @@ def test_tcg_url_column():
     assert rows_checked == 2, f"esperava 2 rows, vi {rows_checked}"
 
     Path(out).unlink()
-    print(f"  Coluna 'TCG URL' (17ª) OK: direct + fallback ✓")
+    print(f"  Coluna 'TCG URL' (última, 18 cols) OK: direct + fallback ✓")
     return True
 
 
@@ -1223,6 +1226,123 @@ def test_rarity_mislabel_gate():
     return True
 
 
+def test_tcg_source_column_explicit():
+    """v5.14: coluna "TCG Source" declara EXPLICITAMENTE real vs fallback por card.
+
+    Elimina a degradação silenciosa: antes, real-vs-fallback era inferido pela
+    presença de "TCG US$". Agora cada row diz `real (pokemontcg.io)` ou
+    `fallback (.estat-tcg)`. Honestidade do sinal = regra dura do projeto."""
+    real = CardData(
+        name="Iron Crown ex (081/162)", edition="Temporal Forces", rarity="Ultra Rara",
+        product_url="https://mypcards.com/x/iron-crown", myp_lowest_en_nm=100.0,
+        tcg_player_price=200.0, tcg_real_usd=37.0, tcg_source="pokemontcg.io",
+        myp_last_sale_brl=190.0, margin_pct=1.0, margin_brl=100.0, en_nm_sellers=3,
+    )
+    fb = CardData(
+        name="Pikachu Comum", edition="Set Antigo", rarity="Comum",
+        product_url="https://mypcards.com/x/pika", myp_lowest_en_nm=60.0,
+        tcg_player_price=150.0, tcg_real_usd=None, tcg_source="myp_estat",
+        myp_last_sale_brl=140.0, margin_pct=1.5, margin_brl=90.0, en_nm_sellers=2,
+    )
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        out = f.name
+    generate_xlsx([real, fb], out, threshold=0.25)
+    wb = load_workbook(out)
+    ws = wb["All EN Cards"]
+    hdr = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+    assert "TCG Source" in hdr, f"coluna 'TCG Source' ausente: {hdr}"
+    src_col = hdr.index("TCG Source") + 1
+    name_col = hdr.index("Card Name") + 1
+    by_name = {}
+    for r in range(2, ws.max_row + 1):
+        nv = ws.cell(row=r, column=name_col).value
+        if nv:
+            by_name[str(nv)] = ws.cell(row=r, column=src_col).value
+    assert "pokemontcg" in str(by_name["Iron Crown ex (081/162)"]).lower(), by_name
+    assert "fallback" in str(by_name["Pikachu Comum"]).lower(), by_name
+    assert "estat" in str(by_name["Pikachu Comum"]).lower(), by_name
+    Path(out).unlink()
+    print("  TCG Source col: real=pokemontcg.io, fallback=.estat-tcg explícito ✓")
+    return True
+
+
+def test_tcg_source_roundtrip_aggregate():
+    """v5.14: o aggregate/round-trip PRESERVA a fonte (real/fallback). Sem isso,
+    o enrich não saberia o que é real ao reler o XLSX. Inclui o fallback de
+    inferência p/ XLSX antigos (sem a coluna 'TCG Source')."""
+    from myp_aggregate import card_from_row, load_chunk_cards
+
+    # Com a coluna nova: respeita o rótulo escrito.
+    hdr = ["Card Name", "Edition", "Rarity", "MYP EN NM (R$)", "TCG Player (R$)",
+           "TCG US$", "TCG Source", "MYP Last Sale (R$)", "Margin %", "Diff (R$)",
+           "NM Sellers", "⚠️ EN Trunc", "⚠️ TCG Suspect", "⚠️ Single Seller",
+           "⚠️ COLLECTOR#", "URL", "Updated", "TCG URL"]
+    real_row = ("Charizard ex", "Surging Sparks", "SIR", 80.0, 200.0, 37.0,
+                "real (pokemontcg.io)", 180.0, 1.5, 120.0, 4, "", "", "", "",
+                "http://myp/x", "2026-06-20", "http://tcg/x")
+    fb_row = ("Pikachu", "Velho", "Comum", 60.0, 150.0, None,
+              "fallback (.estat-tcg)", 140.0, 1.5, 90.0, 2, "", "", "", "",
+              "http://myp/y", "2026-06-20", "http://tcg/y")
+    cr = card_from_row(hdr, real_row)
+    cf = card_from_row(hdr, fb_row)
+    assert cr.tcg_source == "pokemontcg.io", cr.tcg_source
+    assert cf.tcg_source == "myp_estat", cf.tcg_source
+
+    # Round-trip completo: generate_xlsx -> load_chunk_cards preserva a fonte.
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        out = f.name
+    generate_xlsx([cr, cf], out, threshold=0.25)
+    reloaded = {c.name: c.tcg_source for c in load_chunk_cards(Path(out))}
+    assert reloaded["Charizard ex"] == "pokemontcg.io", reloaded
+    assert reloaded["Pikachu"] == "myp_estat", reloaded
+    Path(out).unlink()
+
+    # XLSX ANTIGO (sem 'TCG Source'): infere pela presença de "TCG US$" — NÃO
+    # mascara fallback como real (USD ausente => fallback).
+    old_hdr = [h for h in hdr if h != "TCG Source"]
+    old_real = tuple(v for h, v in zip(hdr, real_row) if h != "TCG Source")
+    old_fb = tuple(v for h, v in zip(hdr, fb_row) if h != "TCG Source")
+    assert card_from_row(old_hdr, old_real).tcg_source == "pokemontcg.io"
+    assert card_from_row(old_hdr, old_fb).tcg_source == "myp_estat"
+    print("  TCG Source round-trip: preserva real/fallback + infere XLSX antigo ✓")
+    return True
+
+
+def test_summary_real_coverage_signal():
+    """v5.14: o resumo de entrega TORNA VISÍVEL a cobertura de preço real. Se
+    todos os deals limpos forem fallback, marca '🛑 ZERO preço real' (degradação
+    do CI). Honestidade do sinal na ENTREGA, não só no XLSX."""
+    from myp_summary import build_markdown
+
+    # XLSX com 2 deals limpos, ambos FALLBACK (sem preço real) → deve gritar.
+    fb1 = CardData(
+        name="Charizard ex Holo", edition="Surging Sparks", rarity="SIR",
+        product_url="https://myp/c1", myp_lowest_en_nm=80.0, tcg_player_price=200.0,
+        tcg_real_usd=None, tcg_source="myp_estat", myp_last_sale_brl=190.0,
+        margin_pct=1.5, margin_brl=120.0, en_nm_sellers=3, last_updated="2026-06-20",
+    )
+    fb2 = CardData(
+        name="Pikachu ex Holo", edition="Surging Sparks", rarity="Ultra Rara",
+        product_url="https://myp/c2", myp_lowest_en_nm=60.0, tcg_player_price=150.0,
+        tcg_real_usd=None, tcg_source="myp_estat", myp_last_sale_brl=140.0,
+        margin_pct=1.5, margin_brl=90.0, en_nm_sellers=2, last_updated="2026-06-20",
+    )
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        xlsx = f.name
+    generate_xlsx([fb1, fb2], xlsx, threshold=0.25)
+    with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as f:
+        md = f.name
+
+    rc = build_markdown(xlsx, md, scan_type="weekly", run_id="", repo="x/y")
+    assert rc == 0, f"build_markdown retornou {rc}"
+    text = Path(md).read_text(encoding="utf-8")
+    assert "Cobertura de preço TCG real" in text, "linha de cobertura ausente"
+    assert "ZERO preço real" in text, f"esperava alerta de zero real:\n{text[:600]}"
+    Path(xlsx).unlink(); Path(md).unlink()
+    print("  summary real-coverage: '🛑 ZERO preço real' quando tudo é fallback ✓")
+    return True
+
+
 def main():
     tests = [
         ("threshold constant", test_threshold_constant),
@@ -1252,6 +1372,9 @@ def main():
         ("scan resume skips done editions (v5.11.4)", test_scan_resume_skips_done_editions),
         ("v5.12 prefill batch pokemontcg.io por set", test_prefill_ptcg_set_batch),
         ("v5.13 atribuição de cobertura do fallback", test_fallback_attribution),
+        ("v5.14 coluna TCG Source explícita", test_tcg_source_column_explicit),
+        ("v5.14 TCG Source round-trip aggregate", test_tcg_source_roundtrip_aggregate),
+        ("v5.14 sinal de cobertura real no resumo", test_summary_real_coverage_signal),
     ]
     failed = 0
     for name, fn in tests:
