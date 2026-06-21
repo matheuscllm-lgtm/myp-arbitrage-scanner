@@ -1470,6 +1470,135 @@ def test_summary_deal_floor_matches_real_threshold():
     return True
 
 
+def _drop_all_en_column(xlsx_path: str, col_name: str):
+    """Remove uma coluna da aba 'All EN Cards' (simula XLSX antigo sem ela)."""
+    wb = load_workbook(xlsx_path)
+    ws = wb["All EN Cards"]
+    hdr = [c.value for c in ws[1]]
+    if col_name in hdr:
+        ws.delete_cols(hdr.index(col_name) + 1, 1)
+    wb.save(xlsx_path)
+    wb.close()
+
+
+def _blank_all_en_cells(xlsx_path: str, card_name: str, cols):
+    """Apaga (None) células `cols` da linha de `card_name` na aba 'All EN Cards'."""
+    wb = load_workbook(xlsx_path)
+    ws = wb["All EN Cards"]
+    hdr = [c.value for c in ws[1]]
+    idx = {h: i + 1 for i, h in enumerate(hdr)}
+    for row in ws.iter_rows(min_row=2):
+        if row[idx["Card Name"] - 1].value == card_name:
+            for col in cols:
+                if col in idx:
+                    ws.cell(row=row[0].row, column=idx[col]).value = None
+    wb.save(xlsx_path)
+    wb.close()
+
+
+def test_summary_coverage_old_xlsx_inference():
+    """v5.14.1 (gap fechado): cobertura medida no `build_markdown` sobre um XLSX
+    ANTIGO (sem a coluna 'TCG Source'). `_is_real` deve INFERIR real/fallback pela
+    presença de 'TCG US$' (que só o preço real preenche). Exercita o ramo de
+    inferência DENTRO do summary (o round-trip aggregate cobria outro caminho)."""
+    from myp_summary import build_markdown
+
+    real = CardData(
+        name="Charizard ex", edition="Surging Sparks", rarity="SIR",
+        product_url="https://myp/r", myp_lowest_en_nm=80.0, tcg_player_price=200.0,
+        tcg_real_usd=36.0, tcg_source="pokemontcg.io", myp_last_sale_brl=180.0,
+        margin_pct=1.5, margin_brl=120.0, en_nm_sellers=3, last_updated="2026-06-20",
+    )
+    fb = CardData(
+        name="Pikachu ex", edition="Surging Sparks", rarity="Ultra Rara",
+        product_url="https://myp/f", myp_lowest_en_nm=60.0, tcg_player_price=150.0,
+        tcg_real_usd=None, tcg_source="myp_estat", myp_last_sale_brl=140.0,
+        margin_pct=1.5, margin_brl=90.0, en_nm_sellers=2, last_updated="2026-06-20",
+    )
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        xlsx = f.name
+    generate_xlsx([real, fb], xlsx, threshold=0.30)
+    _drop_all_en_column(xlsx, "TCG Source")   # → XLSX "antigo"
+    with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as f:
+        md = f.name
+
+    rc = build_markdown(xlsx, md, scan_type="weekly", run_id="", repo="x/y")
+    assert rc == 0, f"build_markdown retornou {rc}"
+    text = Path(md).read_text(encoding="utf-8")
+    # Inferido só por 'TCG US$': real tem USD, fallback não → 1/2.
+    assert "1/2 cartas EN com preço REAL" in text, \
+        f"inferência de XLSX antigo (1/2) ausente:\n{text[:700]}"
+    Path(xlsx).unlink(); Path(md).unlink()
+    print("  summary coverage: XLSX antigo s/ 'TCG Source' infere por 'TCG US$' → 1/2 ✓")
+    return True
+
+
+def test_summary_coverage_excludes_unpriced_card():
+    """v5.14.1 (gap fechado): uma carta SEM nenhum preço TCG (sem USD, sem R$ e
+    sem 'TCG Source') NÃO entra no denominador de cobertura — não há o que ser
+    real/fallback nela. Mix: 1 real + 1 sem-preço → '1/1 cartas EN', não 1/2."""
+    from myp_summary import build_markdown
+
+    real = CardData(
+        name="Charizard ex", edition="Surging Sparks", rarity="SIR",
+        product_url="https://myp/r", myp_lowest_en_nm=80.0, tcg_player_price=200.0,
+        tcg_real_usd=36.0, tcg_source="pokemontcg.io", myp_last_sale_brl=180.0,
+        margin_pct=1.5, margin_brl=120.0, en_nm_sellers=3, last_updated="2026-06-20",
+    )
+    noprice = CardData(
+        name="Pikachu ex", edition="Surging Sparks", rarity="Ultra Rara",
+        product_url="https://myp/f", myp_lowest_en_nm=60.0, tcg_player_price=150.0,
+        tcg_real_usd=None, tcg_source="myp_estat", myp_last_sale_brl=140.0,
+        margin_pct=1.5, margin_brl=90.0, en_nm_sellers=2, last_updated="2026-06-20",
+    )
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        xlsx = f.name
+    generate_xlsx([real, noprice], xlsx, threshold=0.30)
+    # Tira TODO preço TCG da 2ª carta → fica fora do universo de cobertura.
+    _blank_all_en_cells(xlsx, "Pikachu ex",
+                        ["TCG US$", "TCG Player (R$)", "TCG Source"])
+    with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as f:
+        md = f.name
+
+    rc = build_markdown(xlsx, md, scan_type="weekly", run_id="", repo="x/y")
+    assert rc == 0, f"build_markdown retornou {rc}"
+    text = Path(md).read_text(encoding="utf-8")
+    assert "1/1 cartas EN com preço REAL" in text, \
+        f"carta sem preço deve sair do denominador (1/1, não 1/2):\n{text[:700]}"
+    Path(xlsx).unlink(); Path(md).unlink()
+    print("  summary coverage: carta sem preço TCG fora do denominador → 1/1 ✓")
+    return True
+
+
+def test_summary_coverage_no_price_at_all_branch():
+    """v5.14.1 (gap fechado): universo SEM nenhum preço TCG (total_priced == 0)
+    → ramo '⚠️ Sem preço TCG', nunca um falso ZERO nem '0/0'."""
+    from myp_summary import build_markdown
+
+    card = CardData(
+        name="Charizard ex", edition="Surging Sparks", rarity="SIR",
+        product_url="https://myp/r", myp_lowest_en_nm=80.0, tcg_player_price=200.0,
+        tcg_real_usd=36.0, tcg_source="pokemontcg.io", myp_last_sale_brl=180.0,
+        margin_pct=1.5, margin_brl=120.0, en_nm_sellers=3, last_updated="2026-06-20",
+    )
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        xlsx = f.name
+    generate_xlsx([card], xlsx, threshold=0.30)
+    _blank_all_en_cells(xlsx, "Charizard ex",
+                        ["TCG US$", "TCG Player (R$)", "TCG Source"])
+    with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as f:
+        md = f.name
+
+    rc = build_markdown(xlsx, md, scan_type="weekly", run_id="", repo="x/y")
+    assert rc == 0, f"build_markdown retornou {rc}"
+    text = Path(md).read_text(encoding="utf-8")
+    assert "Sem preço TCG" in text, f"ramo 'Sem preço TCG' ausente:\n{text[:700]}"
+    assert "ZERO preço real" not in text, "sem preço ≠ ZERO real (não pode confundir)"
+    Path(xlsx).unlink(); Path(md).unlink()
+    print("  summary coverage: universo sem preço → '⚠️ Sem preço TCG', não ZERO ✓")
+    return True
+
+
 def main():
     tests = [
         ("threshold constant", test_threshold_constant),
@@ -1505,6 +1634,9 @@ def main():
         ("v5.14.1 cobertura sobre universo EN c/ 0 deals", test_summary_coverage_real_universe_with_zero_deals),
         ("v5.14.1 cobertura mista real/fallback (universo)", test_summary_coverage_mixed_real_fallback),
         ("v5.14.1 piso de deal casa threshold real (não 0.25)", test_summary_deal_floor_matches_real_threshold),
+        ("v5.14.2 cobertura infere XLSX antigo s/ TCG Source", test_summary_coverage_old_xlsx_inference),
+        ("v5.14.2 cobertura exclui carta sem preço TCG", test_summary_coverage_excludes_unpriced_card),
+        ("v5.14.2 cobertura ramo 'sem preço TCG' (≠ZERO)", test_summary_coverage_no_price_at_all_branch),
     ]
     failed = 0
     for name, fn in tests:
