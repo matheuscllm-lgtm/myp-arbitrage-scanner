@@ -218,9 +218,32 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
     def _is_rarity_mislabel(c) -> bool:
         return is_rarity_mislabel(c.get("Card Name"), c.get("Rarity"))
 
+    # v5.14.3: "o preço é de verdade?" — fonte canônica = coluna "TCG Source"
+    # (real `pokemontcg.io` vs fallback `.estat-tcg`); XLSX antigo (pré-v5.14, sem
+    # a coluna) infere pela presença de "TCG US$" (que só o preço real preenche).
+    # Definido AQUI (e não mais abaixo, na cobertura) porque agora gateia também
+    # `deals_clean`. Definição ÚNICA — não duplicar.
+    def _is_real(c) -> bool:
+        src = c.get("TCG Source")
+        if src is not None and str(src).strip() != "":
+            return "pokemontcg" in str(src).lower()
+        return c.get("TCG US$") not in (None, "", "—")
+
+    # v5.14.3 (fix BLOCKER de honestidade): um "deal limpo" precisa de preço REAL.
+    # Um preço FALLBACK (.estat-tcg) tem margem NÃO-confiável por definição (o
+    # próprio v5.11 nasceu pra não confiar nele). Um fallback inflado SEM última
+    # venda (o gate de `tcg_suspect` é pulado quando não há última venda) vazava
+    # pro Top-50 como compra "limpa" com margem ilusória (caso Darumaka: .estat-tcg
+    # R$2867 vs MYP R$60 → 4678%). Agora fallback sai do balde limpo e vai pro
+    # balde dedicado `deals_fallback` ("validar manualmente"). Regra dura do
+    # CLAUDE.md: "Nunca trate fallback como real".
     deals_clean = [
         c for c in deals_sorted
-        if not _is_rarity_mislabel(c) and not _is_suspect(c)
+        if not _is_rarity_mislabel(c) and not _is_suspect(c) and _is_real(c)
+    ]
+    deals_fallback = [
+        c for c in deals_sorted
+        if not _is_rarity_mislabel(c) and not _is_suspect(c) and not _is_real(c)
     ]
     deals_supranum = [c for c in deals_sorted if _is_rarity_mislabel(c)]
     deals_suspect = [c for c in deals_sorted if _is_suspect(c)]
@@ -247,7 +270,8 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
     deals_n = summary_data.get("Deals Found (clean)", summary_data.get("Deals Found", len(deals)))
     threshold = summary_data.get("Margin Threshold", "25%")
     lines.append(f"**Cards EN escaneados:** {total} | **Deals (≥{threshold}):** {deals_n} | "
-                 f"**Limpos:** {len(deals_clean)} | "
+                 f"**Limpos (preço real):** {len(deals_clean)} | "
+                 f"**Fallback:** {len(deals_fallback)} | "
                  f"**🚨 TCG suspects:** {len(deals_suspect)} | "
                  f"**Truncation:** {len(truncations)}")
     lines.append("")
@@ -266,11 +290,7 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
     # falso — fazendo o operador achar que a key falhou quando estava tudo certo.
     # Cobertura ("o preço usado é de verdade?") e deals ("a margem bate 30%?") são
     # dois números distintos; agora cada um vem do seu universo correto.
-    def _is_real(c) -> bool:
-        src = c.get("TCG Source")
-        if src is not None and str(src).strip() != "":
-            return "pokemontcg" in str(src).lower()
-        return c.get("TCG US$") not in (None, "", "—")
+    # (`_is_real` é definido acima, junto da partição de deals — definição única.)
 
     # Universo = cartas EN que de fato têm ALGUM preço TCG (real ou fallback). Uma
     # carta sem nenhum preço TCG não entra no denominador de cobertura (não há o
@@ -283,11 +303,17 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
     total_priced = len(priced)
     fb_n = total_priced - real_n
 
-    # Subconjunto: deals limpos com preço real (esclarece o número, não define o emoji).
-    real_clean = sum(1 for c in deals_clean if _is_real(c))
-    deals_clarif = (f" — dos {len(deals_clean)} deals limpos (≥{threshold}), "
-                    f"{real_clean} com preço real.") if deals_clean else \
-                   f" — nenhum deal limpo ≥{threshold} nesta run."
+    # v5.14.3: `deals_clean` já é 100% preço real por construção (o fallback foi
+    # pro balde `deals_fallback`), então não há mais "X de N com preço real" a
+    # reportar. O esclarecimento agora diz quantos deals limpos (preço real) há e,
+    # se houver, quantos ficaram só com preço fallback (em balde à parte).
+    deals_clarif = (f" — {len(deals_clean)} deal(s) limpo(s) ≥{threshold} (preço real)"
+                    if deals_clean else
+                    f" — nenhum deal limpo ≥{threshold} nesta run")
+    if deals_fallback:
+        deals_clarif += (f"; {len(deals_fallback)} deal(s) só com preço fallback "
+                         f"`.estat-tcg` (margem NÃO-confiável — em balde à parte)")
+    deals_clarif += "."
 
     if total_priced == 0:
         cov_note = ("⚠️ **Sem preço TCG** — nenhuma carta EN com preço TCGplayer "
@@ -413,6 +439,46 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
                 tcg_url=c.get("TCG URL"),
             )
             lines.append(f"| {i} | {carta} | {ed} | {myp} | {tcg} | {last} | {margin} | {links} |")
+        lines.append("")
+
+    # ── Deals com preço FALLBACK (v5.14.3 — margem NÃO-confiável) ──
+    # Deals ≥threshold cujo preço TCG veio do FALLBACK `.estat-tcg` (não do preço
+    # real pokemontcg.io). A margem aqui pode ser ILUSÓRIA — o `.estat-tcg` às
+    # vezes mapeia a carta errada e infla o "preço TCG" (caso Darumaka). Saem do
+    # balde limpo de propósito; ficam aqui pra validação manual.
+    if deals_fallback:
+        lines.append("## ⚠️ Deals com preço FALLBACK `.estat-tcg` (margem NÃO-confiável — validar)")
+        lines.append("")
+        lines.append("> O preço TCG destes deals é uma **estimativa do próprio MYP** "
+                     "(`.estat-tcg`), **não** o preço real do TCGplayer (pokemontcg.io). "
+                     "Essa estimativa às vezes aponta pra carta errada e **infla a margem** "
+                     "— ou seja, a margem abaixo **pode ser ilusória**. Por isso estes deals "
+                     "**NÃO** entram no balde 'limpos'. **Antes de operar:** confira o preço "
+                     "NM no Link TCG, ou rode `myp_enrich.py` local pra obter o preço real. "
+                     "(Coberturas de CI saem 100% aqui — os runners não alcançam a "
+                     "pokemontcg.io.)")
+        lines.append("")
+        lines.append("| # | Margem (estimada) | MYP R$ | TCG est. R$ | Dif (est.) | Carta | Set | Raridade | Cond | Qtd | Links |")
+        lines.append("|---|---:|---:|---:|---:|---|---|---|---|---:|---|")
+        for i, c in enumerate(deals_fallback[:50], 1):
+            name = c.get("Card Name")
+            carta = carta_label(name)
+            ed = (c.get("Edition") or "").strip()
+            rarity = (c.get("Rarity") or "").strip() or "—"
+            myp = fmt_brl(c.get("MYP EN NM (R$)"))
+            tcg = fmt_brl(c.get("TCG Player (R$)"))
+            margin = fmt_pct(c.get("Margin %"))
+            diff = fmt_brl(c.get("Diff (R$)"))
+            qty = c.get("NM Sellers") or 0
+            links = delivery_links(
+                c.get("URL"), name, ed,
+                oversized=bool(c.get("⚠️ COLLECTOR#")),
+                tcg_url=c.get("TCG URL"),
+            )
+            lines.append(
+                f"| {i} | {margin} | {myp} | {tcg} | {diff} | "
+                f"{carta} | {ed} | {rarity} | NM | {qty} | {links} |"
+            )
         lines.append("")
 
     # ── Truncation risks ──

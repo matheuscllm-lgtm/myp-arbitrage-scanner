@@ -232,10 +232,12 @@ nunca improvisa um formato diferente.
 
 #### O que o `myp_summary.py` gera (e que você entrega assim, sem mexer)
 
-São **três tabelas**, e **TODAS as três** trazem a coluna **`Carta`** (nome +
-número) e a coluna **`Links`** (`[oferta](url_MYP) · [TCG](url_TCGplayer)`):
+São até **quatro tabelas** (a 4ª só aparece se houver deals com preço fallback),
+e **TODAS** trazem a coluna **`Carta`** (nome + número) e a coluna **`Links`**
+(`[oferta](url_MYP) · [TCG](url_TCGplayer)`):
 
-1. **🟢 Top 50 deals limpos** (sem flag SIR/HR/SAR — os confiáveis). Colunas, nesta ordem:
+1. **🟢 Top 50 deals limpos** (sem flag SIR/HR/SAR **e com preço REAL** — os
+   confiáveis). Colunas, nesta ordem:
    ```
    | # | Margem % | MYP R$ | TCG US$ | Dif | Carta | Set | Raridade | Cond | Qtd | Links |
    ```
@@ -250,6 +252,13 @@ número) e a coluna **`Links`** (`[oferta](url_MYP) · [TCG](url_TCGplayer)`):
    Colunas:
    ```
    | # | Carta | Edição | MYP R$ | TCG decl R$ | Última venda R$ | Margem (fake) | Links |
+   ```
+4. **⚠️ Deals com preço FALLBACK `.estat-tcg`** (v5.14.3 — preço TCG é estimativa
+   do MYP, **não** o real do TCGplayer; margem pode ser ILUSÓRIA). Saem do balde
+   limpo de propósito; **"(validar manualmente)"**. Em CI (runners sem
+   pokemontcg.io) **todos** os deals caem aqui. Colunas:
+   ```
+   | # | Margem (estimada) | MYP R$ | TCG est. R$ | Dif (est.) | Carta | Set | Raridade | Cond | Qtd | Links |
    ```
 
 Significado das colunas:
