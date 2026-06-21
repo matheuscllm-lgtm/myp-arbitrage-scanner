@@ -1,5 +1,48 @@
 # Changelog
 
+## v5.14.1 — 2026-06-20 — Cobertura de preço real medida sobre o UNIVERSO de cartas EN
+
+**Problema.** A linha "Cobertura de preço TCG real" do `myp_summary.py` contava
+apenas o balde de **deals ≥threshold** (≥30%), não o universo de cartas EN.
+Consequência: quando 0 cartas batiam o threshold (mas o catálogo inteiro tinha
+preço REAL), o resumo imprimia `✅ 0/0 deals limpos` ou — pior — podia gritar
+`🛑 ZERO preço real` **falso**, fazendo o operador (médico, não-programador)
+achar que a `POKEMONTCG_API_KEY` havia falhado quando na verdade a cobertura era
+100%. "O preço usado é de verdade?" (cobertura) e "a margem bate 30%?" (deal) são
+dois números distintos e estavam colapsados num só denominador.
+
+### Mudanças
+
+1. **Cobertura sobre `All EN Cards` (não sobre deals).** A métrica agora conta
+   `TCG Source = real (pokemontcg.io)` vs `fallback (.estat-tcg)` sobre **todas**
+   as cartas EN com preço TCG (universo), não sobre o subconjunto de deals. O
+   denominador é o nº de cartas EN com algum preço TCG (cartas sem nenhum preço
+   não entram — não há o que ser real/fallback nelas). Emojis honestos mantidos:
+   `🛑 ZERO` (0 reais) / `⚠️ N/M` (parcial) / `✅ M/M` (100%).
+2. **Texto distingue os dois números.** A linha de cobertura agora esclarece, em
+   sufixo, quantos dos deals limpos ≥threshold têm preço real — sem confundir
+   "cobertura de preço real" (universo) com "deals ≥30%" (subconjunto).
+3. **`datetime.utcnow()` → `datetime.now(timezone.utc)`** no `myp_summary.py`
+   (remove o deprecation do Python 3.12+).
+4. **Piso de "deal limpo" casa o threshold REAL do scan (não 0.25 hardcoded).**
+   `myp_summary.py` recomputa `deals` da aba `All EN Cards` com um piso que era
+   `>= 0.25` hardcoded (default legado de quando o threshold era 25%; hoje é
+   30%). Com o novo sufixo de esclarecimento (item 2) rotulando a contagem como
+   `deals limpos (≥30%)`, cards na banda 25–30% vazavam para o Top-50 **e** eram
+   impressos como `≥30%` — uma afirmação **falsa**. Agora o piso é lido do XLSX
+   (`Margin Threshold`, ex. `"30%"` → `0.30`); XLSX antigo sem o campo cai no
+   default `0.25` (preserva o comportamento histórico). Alinha o Top-50 com o
+   threshold exibido e com o `Deals Found (clean)` do próprio scanner.
+5. **Testes.** +3 testes offline: universo 100% real com 0 deals ≥threshold
+   **não** grita ZERO (reporta `✅ 3/3 cartas EN`); mix real/fallback reporta
+   `⚠️ 1/2 cartas EN`; carta de 27% sob scan de threshold 30% **não** é contada
+   nem impressa como `deal limpo (≥30%)`. O teste existente passou a assertar a
+   contagem sobre o universo (`0/2 cartas EN`).
+
+> Não toca no caminho de preço real em si (que já funciona) — só a **métrica de
+> cobertura** e o **piso de deal** no resumo. Threshold/editions de produção
+> inalterados (o piso passa a SEGUIR o threshold real em vez de um 0.25 fixo).
+
 ## v5.14 — 2026-06-20 — Preço TCG real off-runner + sinal de honestidade explícito
 
 **Problema (achado 2026-06-20).** Os runners do GitHub Actions **não alcançam**

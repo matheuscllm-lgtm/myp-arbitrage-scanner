@@ -87,6 +87,9 @@ python myp_arbitrage_scanner.py --editions "Ascended Heroes" \
          coluna `TCG Source` no XLSX e a linha "Cobertura de preço TCG real" no
          resumo do `myp_summary.py` dizem, por card, se o preço é real
          (`pokemontcg.io`) ou fallback (`.estat-tcg`) — o CI nunca mais finge.
+         A linha de cobertura é medida sobre **todas** as cartas EN (universo,
+         aba `All EN Cards`), **não** sobre o balde de deals ≥threshold (corrigido
+         em v5.14.1): "preço de verdade?" (cobertura) ≠ "margem ≥30%?" (deal).
     2. **Máquina local do operador (fluxo canônico — local-first):**
        `POKEMONTCG_API_KEY` setada como **variável de ambiente de usuário do
        Windows** (`[Environment]::SetEnvironmentVariable("POKEMONTCG_API_KEY",

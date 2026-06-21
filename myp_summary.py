@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 if sys.stdout.encoding.lower() != "utf-8":
@@ -194,7 +194,19 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
     # segura o arquivo em read_only até fechar — relevante p/ testes/uso in-process).
     wb.close()
 
-    deals = [c for c in all_cards if c.get("Margin %") and c["Margin %"] >= 0.25]
+    # v5.14.1 (fix): o piso de "deal" no summary tem de casar o threshold REAL do
+    # scan (lido do XLSX `Margin Threshold`), NÃO um 0.25 hardcoded legado (o
+    # default era 25% até v5.10; hoje é 30%). Sem isso, cards na banda 25–30%
+    # vazavam para o balde de "deals limpos" (Top-50) e — pior, com o novo
+    # `deals_clarif` desta versão — eram impressos como "deals limpos (≥30%)",
+    # uma afirmação falsa (carta de 27% rotulada como ≥30%). XLSX antigo sem o
+    # campo cai no default 0.25 (preserva comportamento histórico).
+    _thr_raw = summary_data.get("Margin Threshold", "25%")
+    try:
+        deal_floor = float(str(_thr_raw).strip().rstrip("%")) / 100.0
+    except (TypeError, ValueError):
+        deal_floor = 0.25
+    deals = [c for c in all_cards if c.get("Margin %") and c["Margin %"] >= deal_floor]
     deals_sorted = sorted(deals, key=lambda c: c.get("Margin %") or 0, reverse=True)
 
     # v5.8 (2026-05-16): Top 15 "limpos" exclui agora 3 buckets: supranumerários,
@@ -215,7 +227,7 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
 
     truncations = [c for c in all_cards if c.get("⚠️ EN Trunc")]
 
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     scan_type_label = "Daily Quick" if args.type == "daily" else "Weekly Full"
 
     # ── Build markdown ──
@@ -240,32 +252,60 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
                  f"**Truncation:** {len(truncations)}")
     lines.append("")
 
-    # ── Sinal de honestidade: cobertura de preço REAL (v5.14) ──
-    # Quantos deals limpos têm preço TCGplayer REAL (pokemontcg.io) vs FALLBACK
+    # ── Sinal de honestidade: cobertura de preço REAL (v5.14, corrigido v5.14.1) ──
+    # Quantas cartas EN têm preço TCGplayer REAL (pokemontcg.io) vs FALLBACK
     # (.estat-tcg, margem NÃO-confiável). Torna VISÍVEL a degradação silenciosa
     # do CI (runners não alcançam a pokemontcg.io → tudo fallback). A fonte é a
     # coluna "TCG Source" (canônica); fallback p/ presença de "TCG US$" em XLSX
     # antigos (pré-v5.14, sem a coluna).
+    #
+    # v5.14.1: a cobertura é medida sobre o UNIVERSO de cartas EN (aba
+    # `All EN Cards`), NÃO sobre o subconjunto de deals ≥threshold. O bug anterior
+    # contava só `deals_clean`: quando 0 cartas batiam o threshold (mas o catálogo
+    # inteiro tinha preço real), o resumo imprimia "✅ 0/0" ou, pior, "🛑 ZERO"
+    # falso — fazendo o operador achar que a key falhou quando estava tudo certo.
+    # Cobertura ("o preço usado é de verdade?") e deals ("a margem bate 30%?") são
+    # dois números distintos; agora cada um vem do seu universo correto.
     def _is_real(c) -> bool:
         src = c.get("TCG Source")
         if src is not None and str(src).strip() != "":
             return "pokemontcg" in str(src).lower()
         return c.get("TCG US$") not in (None, "", "—")
 
+    # Universo = cartas EN que de fato têm ALGUM preço TCG (real ou fallback). Uma
+    # carta sem nenhum preço TCG não entra no denominador de cobertura (não há o
+    # que ser "real" ou "fallback"); seria ruído contar como se a key tivesse
+    # falhado nela.
+    priced = [c for c in all_cards
+              if _is_real(c) or c.get("TCG Player (R$)") not in (None, "", "—")
+              or c.get("TCG US$") not in (None, "", "—")]
+    real_n = sum(1 for c in priced if _is_real(c))
+    total_priced = len(priced)
+    fb_n = total_priced - real_n
+
+    # Subconjunto: deals limpos com preço real (esclarece o número, não define o emoji).
     real_clean = sum(1 for c in deals_clean if _is_real(c))
-    fb_clean = len(deals_clean) - real_clean
-    if fb_clean and not real_clean:
-        cov_note = ("🛑 **ZERO preço real** — todos os deals usam fallback "
-                    "`.estat-tcg` (margens NÃO-confiáveis). Provável run em "
-                    "runner do GitHub (que não alcança a pokemontcg.io): "
-                    "enriqueça LOCAL com `myp_enrich.py` antes de operar.")
-    elif fb_clean:
-        cov_note = (f"⚠️ **{real_clean}/{len(deals_clean)} deals limpos com preço REAL** "
-                    f"(pokemontcg.io); {fb_clean} em fallback `.estat-tcg` (margem "
-                    f"NÃO-confiável — validar manual ou enriquecer com `myp_enrich.py`).")
+    deals_clarif = (f" — dos {len(deals_clean)} deals limpos (≥{threshold}), "
+                    f"{real_clean} com preço real.") if deals_clean else \
+                   f" — nenhum deal limpo ≥{threshold} nesta run."
+
+    if total_priced == 0:
+        cov_note = ("⚠️ **Sem preço TCG** — nenhuma carta EN com preço TCGplayer "
+                    "(real ou fallback). Nada a reportar de cobertura.")
+    elif real_n == 0:
+        cov_note = (f"🛑 **ZERO preço real** — 0/{total_priced} cartas EN com preço "
+                    f"REAL (pokemontcg.io); todas em fallback `.estat-tcg` (margens "
+                    f"NÃO-confiáveis). Provável run em runner do GitHub (que não "
+                    f"alcança a pokemontcg.io): enriqueça LOCAL com `myp_enrich.py` "
+                    f"antes de operar.{deals_clarif}")
+    elif fb_n:
+        cov_note = (f"⚠️ **{real_n}/{total_priced} cartas EN com preço REAL** "
+                    f"(pokemontcg.io); {fb_n} em fallback `.estat-tcg` (margem "
+                    f"NÃO-confiável — validar manual ou enriquecer com "
+                    f"`myp_enrich.py`).{deals_clarif}")
     else:
-        cov_note = (f"✅ **{len(deals_clean)}/{len(deals_clean)} deals limpos com preço REAL** "
-                    f"(pokemontcg.io).")
+        cov_note = (f"✅ **{real_n}/{total_priced} cartas EN com preço REAL** "
+                    f"(pokemontcg.io).{deals_clarif}")
     lines.append(f"**Cobertura de preço TCG real:** {cov_note}")
     lines.append("")
 
@@ -394,7 +434,7 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
 
     lines.append("---")
     lines.append("")
-    lines.append(f"*Gerado em {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')} via "
+    lines.append(f"*Gerado em {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} via "
                  f"`myp_summary.py` (single source: XLSX consolidado).*")
 
     out_path = Path(args.output)
