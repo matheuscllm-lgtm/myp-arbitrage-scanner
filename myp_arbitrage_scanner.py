@@ -17,8 +17,8 @@ Requisitos:
     pip install cloudscraper beautifulsoup4 openpyxl lxml
 
 Autor: Matheus Chillemi / Claude
-Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10) | 2026-06-07 (v5.10.1 → v5.11) | 2026-06-09 (v5.11.1) | 2026-06-10 (v5.11.2 → v5.11.3) | 2026-06-16 (v5.11.4 → v5.11.6) | 2026-06-13 (v5.11.7, doc-only) | 2026-06-17 (v5.11.8 — loop: timing + bench) | 2026-06-17 (v5.12 — batch pokemontcg.io por set) | 2026-06-17 (v5.13 — Iteração #2: atribuição de cobertura do fallback)
-Versão: v5.13
+Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10) | 2026-06-07 (v5.10.1 → v5.11) | 2026-06-09 (v5.11.1) | 2026-06-10 (v5.11.2 → v5.11.3) | 2026-06-16 (v5.11.4 → v5.11.6) | 2026-06-13 (v5.11.7, doc-only) | 2026-06-17 (v5.11.8 — loop: timing + bench) | 2026-06-17 (v5.12 — batch pokemontcg.io por set) | 2026-06-17 (v5.13 — Iteração #2: atribuição de cobertura do fallback) | 2026-06-20 (v5.14 — coluna "TCG Source" explícita + enrich off-runner p/ preço real)
+Versão: v5.14
 
 Changelog v5.1 (2026-05-12 — auditoria C/H/M, mesma metodologia do CT scanner):
   - C1: --threshold < 1.0 auto-converte com warning (UX guard contra trap
@@ -1764,22 +1764,31 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
     # link TCGplayer já era computado pro hyperlink da célula "TCG Player (R$)",
     # mas hyperlink de célula não sobrevive a leitores dict-by-name (pandas/
     # openpyxl values-only). O scanner integrado consome esta coluna.
+    # v5.14 (2026-06-20): coluna "TCG Source" EXPLÍCITA logo após o preço.
+    # POR QUE: a distinção real-vs-fallback era IMPLÍCITA (presença de "TCG US$").
+    # Isso mascarava a degradação silenciosa do CI (runners do GitHub não
+    # alcançam api.pokemontcg.io → toda chamada cai no fallback `.estat-tcg`,
+    # mas o XLSX não dizia "fallback" em lugar nenhum). Agora cada card declara
+    # a fonte do preço usado na margem: `pokemontcg.io` (TCGplayer REAL) ou
+    # `myp_estat` (fallback do campo MYP, margem NÃO-confiável). É a fonte de
+    # verdade do sinal de honestidade — não inferir por presença de outra coluna.
     headers = [
         "Card Name", "Edition", "Rarity",
-        "MYP EN NM (R$)", "TCG Player (R$)", "TCG US$", "MYP Last Sale (R$)",
+        "MYP EN NM (R$)", "TCG Player (R$)", "TCG US$", "TCG Source", "MYP Last Sale (R$)",
         "Margin %", "Diff (R$)", "NM Sellers",
         "⚠️ EN Trunc", "⚠️ TCG Suspect", "⚠️ Single Seller", "⚠️ COLLECTOR#",
         "URL", "Updated", "TCG URL",
     ]
-    widths = [38, 32, 16, 16, 16, 12, 17, 11, 13, 10, 11, 14, 14, 14, 55, 16, 55]
-    PRICE_COLS = {4, 5, 7, 9}       # MYP EN NM, TCG Player, Last Sale, Diff
+    widths = [38, 32, 16, 16, 16, 12, 14, 17, 11, 13, 10, 11, 14, 14, 14, 55, 16, 55]
+    PRICE_COLS = {4, 5, 8, 10}      # MYP EN NM, TCG Player, Last Sale, Diff
     MYP_PRICE_COL = 4               # v5.8.8: hyperlink → página produto MYP
     TCG_PRICE_COL = 5               # v5.8.8: hyperlink → busca TCGplayer por nome
-    MARGIN_COL = 8
-    EN_TRUNC_COL = 11
-    TCG_SUSPECT_COL = 12
-    SINGLE_SELLER_COL = 13
-    COLLECTOR_COL = 14
+    TCG_SOURCE_COL = 7              # v5.14: fonte do preço (real/fallback)
+    MARGIN_COL = 9
+    EN_TRUNC_COL = 12
+    TCG_SUSPECT_COL = 13
+    SINGLE_SELLER_COL = 14
+    COLLECTOR_COL = 15
 
     def write_headers(ws):
         for col, h in enumerate(headers, 1):
@@ -1814,9 +1823,13 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
             )
             or tcg_search_url(card.name)
         )
+        # v5.14: rótulo legível da fonte do preço. `pokemontcg.io` = REAL;
+        # `myp_estat` (ou vazio) = FALLBACK (.estat-tcg do MYP, margem suspeita).
+        tcg_source_label = "real (pokemontcg.io)" if card.tcg_source == "pokemontcg.io" else "fallback (.estat-tcg)"
         vals = [
             card.name, card.edition, card.rarity,
             card.myp_lowest_en_nm, card.tcg_player_price, card.tcg_real_usd,
+            tcg_source_label,
             card.myp_last_sale_brl,
             card.margin_pct, diff, card.en_nm_sellers,
             trunc_flag, suspect_flag, single_flag, collector_flag,
@@ -1851,6 +1864,10 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
                     c.fill = yellow_fill
                 elif v and v < 0:
                     c.fill = red_fill
+            if col == TCG_SOURCE_COL and card.tcg_source != "pokemontcg.io":
+                # Fallback = preço NÃO-real → sinaliza visualmente (margem suspeita).
+                c.fill = yellow_fill
+                c.alignment = Alignment(horizontal="center")
             if col == EN_TRUNC_COL and card.en_truncation_risk:
                 c.fill = red_fill
                 c.alignment = Alignment(horizontal="center")

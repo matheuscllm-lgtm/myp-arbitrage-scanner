@@ -240,6 +240,35 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
                  f"**Truncation:** {len(truncations)}")
     lines.append("")
 
+    # ── Sinal de honestidade: cobertura de preço REAL (v5.14) ──
+    # Quantos deals limpos têm preço TCGplayer REAL (pokemontcg.io) vs FALLBACK
+    # (.estat-tcg, margem NÃO-confiável). Torna VISÍVEL a degradação silenciosa
+    # do CI (runners não alcançam a pokemontcg.io → tudo fallback). A fonte é a
+    # coluna "TCG Source" (canônica); fallback p/ presença de "TCG US$" em XLSX
+    # antigos (pré-v5.14, sem a coluna).
+    def _is_real(c) -> bool:
+        src = c.get("TCG Source")
+        if src is not None and str(src).strip() != "":
+            return "pokemontcg" in str(src).lower()
+        return c.get("TCG US$") not in (None, "", "—")
+
+    real_clean = sum(1 for c in deals_clean if _is_real(c))
+    fb_clean = len(deals_clean) - real_clean
+    if fb_clean and not real_clean:
+        cov_note = ("🛑 **ZERO preço real** — todos os deals usam fallback "
+                    "`.estat-tcg` (margens NÃO-confiáveis). Provável run em "
+                    "runner do GitHub (que não alcança a pokemontcg.io): "
+                    "enriqueça LOCAL com `myp_enrich.py` antes de operar.")
+    elif fb_clean:
+        cov_note = (f"⚠️ **{real_clean}/{len(deals_clean)} deals limpos com preço REAL** "
+                    f"(pokemontcg.io); {fb_clean} em fallback `.estat-tcg` (margem "
+                    f"NÃO-confiável — validar manual ou enriquecer com `myp_enrich.py`).")
+    else:
+        cov_note = (f"✅ **{len(deals_clean)}/{len(deals_clean)} deals limpos com preço REAL** "
+                    f"(pokemontcg.io).")
+    lines.append(f"**Cobertura de preço TCG real:** {cov_note}")
+    lines.append("")
+
     if args.run_id:
         lines.append(f"**Artifact XLSX:** [`myp-{args.type}-consolidated-{args.run_id}`](https://github.com/{args.repo}/actions/runs/{args.run_id})")
         lines.append("")

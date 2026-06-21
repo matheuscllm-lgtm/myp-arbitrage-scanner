@@ -1,5 +1,51 @@
 # Changelog
 
+## v5.14 — 2026-06-20 — Preço TCG real off-runner + sinal de honestidade explícito
+
+**Problema (achado 2026-06-20).** Os runners do GitHub Actions **não alcançam**
+`api.pokemontcg.io` (o Cloudflare da API bloqueia/challenge os IPs de datacenter
+do GitHub/Azure → toda chamada falha → cai no fallback `.estat-tcg`). Resultado:
+o weekly/daily no CI saía **verde mas com preço TCG real = 0** em todos os chunks
+(`0/1326` reais; margens infladas tipo 650%/407%). A feature v5.11 (preço
+TCGplayer real = base de margem confiável) estava **silenciosamente morta no CI**.
+A key `POKEMONTCG_API_KEY` é válida e está no secret — o problema é **rede, não
+key** (confirmado forçando Python 3.11 → ainda 0). PC/container comum alcança a
+API normal.
+
+### Mudanças
+
+1. **Coluna `TCG Source` no XLSX (honestidade explícita).** `generate_xlsx`
+   ganha uma coluna que declara, por card, a fonte do preço usado na margem:
+   `real (pokemontcg.io)` ou `fallback (.estat-tcg)` (com fill amarelo no
+   fallback). Antes, real-vs-fallback era **inferido** pela presença de `TCG US$`
+   — implícito, mascarava a degradação do CI. Agora o output **diz**. Regra dura
+   do projeto: se o preço real não foi obtido, o output marca isso, nunca finge.
+2. **`myp_enrich.py` (fluxo híbrido, finalizado).** Roda **LOCAL** (onde a
+   pokemontcg.io responde): lê o XLSX consolidado do workflow, busca preço real
+   nos candidatos (gate EN-NM ≥ `--min-price`, default 50), reescreve
+   `tcg_player_price`/`tcg_real_usd`/`tcg_source`, limpa `tcg_suspect` quando
+   vira real, recomputa margem **bruta pura** e reporta a **cobertura real/
+   fallback**. `--real-only-out` emite um XLSX só com os cards de preço REAL
+   (filtra por `tcg_source`, não por presença de USD). Reusa
+   `_real_tcg_brl`/`fetch_usd_brl`/`generate_xlsx` (sem reinventar cálculo).
+3. **`myp_summary.py` — sinal de cobertura na ENTREGA.** A tabela de entrega
+   ganha a linha **"Cobertura de preço TCG real"**: `🛑 ZERO preço real` quando
+   todos os deals limpos são fallback (degradação do CI), `⚠️ N/M reais` parcial,
+   `✅` quando 100% real. Torna a degradação **visível** no que o operador lê.
+4. **`myp_aggregate.py` — round-trip da fonte + fix de file-handle.**
+   `card_from_row` preserva `tcg_source` entre chunks (infere pela presença de
+   `TCG US$` em XLSX antigos sem a coluna — sem mascarar fallback como real).
+   `load_chunk_cards` agora **fecha** o workbook `read_only` (sem isso o Windows
+   travava reescrita/`unlink` do XLSX — bloqueava o próprio enrich).
+5. **Testes (+3, 30/30 verdes).** `test_tcg_source_column_explicit` (rótulo
+   real/fallback no XLSX), `test_tcg_source_roundtrip_aggregate` (preserva a
+   fonte + infere XLSX antigo), `test_summary_real_coverage_signal` (resumo grita
+   quando tudo é fallback). `bench.py` inalterado (`deals 16`, `tcg_from_real 16`).
+
+**Como o operador roda (preço real no catálogo completo):** ver `CLAUDE.md` §
+"fluxo híbrido". Resumo: workflow dá cobertura (margem fallback) → `myp_enrich.py`
+**local** injeta o preço real → `myp_summary.py` no XLSX `--real-only-out`.
+
 ## v5.13 — 2026-06-17 — Atribuição de cobertura do fallback (Iteração #2 do loop)
 
 Fundação da Iteração #2 (correção / falso-positivo). **Não muda comportamento** —

@@ -55,6 +55,16 @@ def card_from_row(headers: list[str], row: tuple) -> CardData | None:
     # v5.11.1 (2026-06-09): preservar preço real em USD entre chunks pra a
     # tabela de ENTREGA (myp_summary.py). .get() → None em chunks antigos.
     card.tcg_real_usd = rec.get("TCG US$")
+    # v5.14 (2026-06-20): preservar a FONTE do preço entre chunks/round-trips
+    # (real pokemontcg.io vs fallback .estat-tcg). É o sinal de honestidade do
+    # output. Chunks antigos não têm a coluna "TCG Source" → infere pela
+    # presença de "TCG US$" (real só era populado no caminho pokemontcg.io),
+    # mantendo o comportamento legado sem mascarar fallback como real.
+    _src = rec.get("TCG Source")
+    if _src:
+        card.tcg_source = "pokemontcg.io" if "pokemontcg" in str(_src).lower() else "myp_estat"
+    else:
+        card.tcg_source = "pokemontcg.io" if card.tcg_real_usd not in (None, "", "—") else "myp_estat"
     # v5.8 (2026-05-16): preservar sanity-check fields entre chunks. Aggregate
     # estava strip-ando tcg_suspect → consolidated XLSX volta a mostrar Jirachi
     # como deal #1. .get() retorna None se chunk antigo não tem essas colunas.
@@ -91,16 +101,22 @@ def load_chunk_cards(xlsx_path: Path) -> list[CardData]:
         log.warning(f"  {xlsx_path} sem sheet '{sheet_name}' (sheets: {wb.sheetnames}) — pulando")
         return cards
 
-    ws = wb[sheet_name]
-    rows = list(ws.iter_rows(values_only=True))
-    if not rows:
+    try:
+        ws = wb[sheet_name]
+        rows = list(ws.iter_rows(values_only=True))
+        if not rows:
+            return cards
+        headers = list(rows[0])
+        for r in rows[1:]:
+            card = card_from_row(headers, r)
+            if card:
+                cards.append(card)
         return cards
-    headers = list(rows[0])
-    for r in rows[1:]:
-        card = card_from_row(headers, r)
-        if card:
-            cards.append(card)
-    return cards
+    finally:
+        # read_only=True mantém o handle do arquivo aberto até .close()
+        # explícito (no Windows isso trava unlink/reescrita do XLSX). Fecha
+        # sempre — sem isso o enrich não consegue reescrever sobre o input.
+        wb.close()
 
 
 def main() -> int:
