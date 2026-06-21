@@ -1430,6 +1430,46 @@ def test_summary_coverage_mixed_real_fallback():
     return True
 
 
+def test_summary_deal_floor_matches_real_threshold():
+    """v5.14.1 (fix): o piso de "deal limpo" no summary casa o threshold REAL do
+    scan (lido do XLSX), não o 0.25 hardcoded legado. Uma carta de 27% sob um
+    scan de threshold 30% NÃO pode ser contada/impressa como 'deal limpo (≥30%)'
+    — isso era uma afirmação FALSA (carta sub-threshold rotulada como ≥30%).
+
+    Caso: 1 carta EN, margem 27%, preço REAL, scan threshold=0.30. Esperado:
+    'nenhum deal limpo' (não vaza a banda 25–30%), e cobertura segue '✅ 1/1'.
+    """
+    from myp_summary import build_markdown
+
+    card = CardData(
+        name="Snorlax ex", edition="Surging Sparks", rarity="Ultra Rara",
+        product_url="https://myp/s", myp_lowest_en_nm=100.0,
+        tcg_player_price=127.0,            # margem 27% → sub-threshold de 30%
+        tcg_real_usd=25.4, tcg_source="pokemontcg.io", myp_last_sale_brl=100.0,
+        margin_pct=0.27, margin_brl=27.0, en_nm_sellers=3, last_updated="2026-06-20",
+    )
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        xlsx = f.name
+    generate_xlsx([card], xlsx, threshold=0.30)
+    with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as f:
+        md = f.name
+
+    rc = build_markdown(xlsx, md, scan_type="weekly", run_id="", repo="x/y")
+    assert rc == 0, f"build_markdown retornou {rc}"
+    text = Path(md).read_text(encoding="utf-8")
+    # A carta de 27% NÃO é um deal limpo ≥30%.
+    assert "nenhum deal limpo" in text, \
+        f"BUG: carta de 27% vazou como deal limpo sob threshold 30%:\n{text[:700]}"
+    assert "deals limpos (≥30%)" not in text, \
+        f"BUG: imprimiu contagem de 'deals limpos (≥30%)' com carta sub-threshold:\n{text[:700]}"
+    # Cobertura (universo) não é afetada: a carta tem preço real.
+    assert "1/1 cartas EN com preço REAL" in text, \
+        f"cobertura do universo (1/1 real) ausente:\n{text[:700]}"
+    Path(xlsx).unlink(); Path(md).unlink()
+    print("  summary deal-floor: 27% sob threshold 30% → 'nenhum deal limpo', não ≥30% ✓")
+    return True
+
+
 def main():
     tests = [
         ("threshold constant", test_threshold_constant),
@@ -1464,6 +1504,7 @@ def main():
         ("v5.14 sinal de cobertura real no resumo", test_summary_real_coverage_signal),
         ("v5.14.1 cobertura sobre universo EN c/ 0 deals", test_summary_coverage_real_universe_with_zero_deals),
         ("v5.14.1 cobertura mista real/fallback (universo)", test_summary_coverage_mixed_real_fallback),
+        ("v5.14.1 piso de deal casa threshold real (não 0.25)", test_summary_deal_floor_matches_real_threshold),
     ]
     failed = 0
     for name, fn in tests:

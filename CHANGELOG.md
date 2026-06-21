@@ -24,13 +24,24 @@ dois números distintos e estavam colapsados num só denominador.
    "cobertura de preço real" (universo) com "deals ≥30%" (subconjunto).
 3. **`datetime.utcnow()` → `datetime.now(timezone.utc)`** no `myp_summary.py`
    (remove o deprecation do Python 3.12+).
-4. **Testes.** +2 testes offline: universo 100% real com 0 deals ≥threshold
+4. **Piso de "deal limpo" casa o threshold REAL do scan (não 0.25 hardcoded).**
+   `myp_summary.py` recomputa `deals` da aba `All EN Cards` com um piso que era
+   `>= 0.25` hardcoded (default legado de quando o threshold era 25%; hoje é
+   30%). Com o novo sufixo de esclarecimento (item 2) rotulando a contagem como
+   `deals limpos (≥30%)`, cards na banda 25–30% vazavam para o Top-50 **e** eram
+   impressos como `≥30%` — uma afirmação **falsa**. Agora o piso é lido do XLSX
+   (`Margin Threshold`, ex. `"30%"` → `0.30`); XLSX antigo sem o campo cai no
+   default `0.25` (preserva o comportamento histórico). Alinha o Top-50 com o
+   threshold exibido e com o `Deals Found (clean)` do próprio scanner.
+5. **Testes.** +3 testes offline: universo 100% real com 0 deals ≥threshold
    **não** grita ZERO (reporta `✅ 3/3 cartas EN`); mix real/fallback reporta
-   `⚠️ 1/2 cartas EN`. O teste existente passou a assertar a contagem sobre o
-   universo (`0/2 cartas EN`).
+   `⚠️ 1/2 cartas EN`; carta de 27% sob scan de threshold 30% **não** é contada
+   nem impressa como `deal limpo (≥30%)`. O teste existente passou a assertar a
+   contagem sobre o universo (`0/2 cartas EN`).
 
 > Não toca no caminho de preço real em si (que já funciona) — só a **métrica de
-> cobertura** no resumo. Threshold/editions de produção inalterados.
+> cobertura** e o **piso de deal** no resumo. Threshold/editions de produção
+> inalterados (o piso passa a SEGUIR o threshold real em vez de um 0.25 fixo).
 
 ## v5.14 — 2026-06-20 — Preço TCG real off-runner + sinal de honestidade explícito
 

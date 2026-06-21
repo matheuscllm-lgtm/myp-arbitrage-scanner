@@ -194,7 +194,19 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
     # segura o arquivo em read_only até fechar — relevante p/ testes/uso in-process).
     wb.close()
 
-    deals = [c for c in all_cards if c.get("Margin %") and c["Margin %"] >= 0.25]
+    # v5.14.1 (fix): o piso de "deal" no summary tem de casar o threshold REAL do
+    # scan (lido do XLSX `Margin Threshold`), NÃO um 0.25 hardcoded legado (o
+    # default era 25% até v5.10; hoje é 30%). Sem isso, cards na banda 25–30%
+    # vazavam para o balde de "deals limpos" (Top-50) e — pior, com o novo
+    # `deals_clarif` desta versão — eram impressos como "deals limpos (≥30%)",
+    # uma afirmação falsa (carta de 27% rotulada como ≥30%). XLSX antigo sem o
+    # campo cai no default 0.25 (preserva comportamento histórico).
+    _thr_raw = summary_data.get("Margin Threshold", "25%")
+    try:
+        deal_floor = float(str(_thr_raw).strip().rstrip("%")) / 100.0
+    except (TypeError, ValueError):
+        deal_floor = 0.25
+    deals = [c for c in all_cards if c.get("Margin %") and c["Margin %"] >= deal_floor]
     deals_sorted = sorted(deals, key=lambda c: c.get("Margin %") or 0, reverse=True)
 
     # v5.8 (2026-05-16): Top 15 "limpos" exclui agora 3 buckets: supranumerários,
