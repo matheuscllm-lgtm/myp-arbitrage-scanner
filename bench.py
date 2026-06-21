@@ -2,8 +2,9 @@
 """
 bench.py — micro-benchmark reprodutível do MYP scanner (loop de otimização).
 
-Faz parte do "loop iterativo de dev" (ver docs/optimization-loop.md): roda o
-scanner sobre uma fatia pequena e fixa e imprime um relatório de UMA TELA, fácil
+Faz parte do "loop iterativo de dev" (medir→mudar→verificar→repetir; ver a seção
+"Otimizar o scanner" no CLAUDE.md): roda o scanner sobre uma fatia pequena e fixa
+e imprime um relatório de UMA TELA, fácil
 de comparar antes/depois de uma mudança.
 
     # baseline (mockado, SEM rede — roda em CI/local sem segredos)

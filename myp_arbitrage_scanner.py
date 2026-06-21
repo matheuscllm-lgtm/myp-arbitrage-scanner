@@ -225,7 +225,8 @@ MYP_EDITION_SUBSTR_TO_PTCG = {
     # `unmapped_set` pra `no_coverage`. Os "deals" ME (Ascended Heroes etc.) saem
     # do `.estat-tcg` e por isso caem nos baldes validar-manualmente. Só um preço
     # TCGplayer alternativo (scrape direto / outra fonte) destrava margem real
-    # pra ME — ver backlog em docs/optimization-loop.md.
+    # pra ME (item de backlog; o playbook docs/optimization-loop.md é local-only/
+    # gitignored e pode não existir no clone — ver seção "Otimizar" no CLAUDE.md).
     "Mega Evolution: Phantasmal Flames": "me2",
     "Ascended Heroes":                   "me2pt5",
     "Mega Evolution":                    "me1",   # base ME (catch-all curto, longest-substr win pros específicos acima)
