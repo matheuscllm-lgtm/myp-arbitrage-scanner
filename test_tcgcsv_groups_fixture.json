@@ -1,0 +1,532 @@
+[
+ {
+  "groupId": 24541,
+  "name": "ME: Ascended Heroes",
+  "abbreviation": "ASC"
+ },
+ {
+  "groupId": 24448,
+  "name": "ME02: Phantasmal Flames",
+  "abbreviation": "PFL"
+ },
+ {
+  "groupId": 24380,
+  "name": "ME01: Mega Evolution",
+  "abbreviation": "MEG"
+ },
+ {
+  "groupId": 24325,
+  "name": "SV: Black Bolt",
+  "abbreviation": "BLK"
+ },
+ {
+  "groupId": 24326,
+  "name": "SV: White Flare",
+  "abbreviation": "WHT"
+ },
+ {
+  "groupId": 24269,
+  "name": "SV10: Destined Rivals",
+  "abbreviation": "DRI"
+ },
+ {
+  "groupId": 24073,
+  "name": "SV09: Journey Together",
+  "abbreviation": "JTG"
+ },
+ {
+  "groupId": 23821,
+  "name": "SV: Prismatic Evolutions",
+  "abbreviation": "PRE"
+ },
+ {
+  "groupId": 23651,
+  "name": "SV08: Surging Sparks",
+  "abbreviation": "SSP"
+ },
+ {
+  "groupId": 23537,
+  "name": "SV07: Stellar Crown",
+  "abbreviation": "SCR"
+ },
+ {
+  "groupId": 23529,
+  "name": "SV: Shrouded Fable",
+  "abbreviation": "SFA"
+ },
+ {
+  "groupId": 23473,
+  "name": "SV06: Twilight Masquerade",
+  "abbreviation": "TWM"
+ },
+ {
+  "groupId": 23381,
+  "name": "SV05: Temporal Forces",
+  "abbreviation": "TEF"
+ },
+ {
+  "groupId": 23353,
+  "name": "SV: Paldean Fates",
+  "abbreviation": "PAF"
+ },
+ {
+  "groupId": 23286,
+  "name": "SV04: Paradox Rift",
+  "abbreviation": "PAR"
+ },
+ {
+  "groupId": 23237,
+  "name": "SV: Scarlet & Violet 151",
+  "abbreviation": "MEW"
+ },
+ {
+  "groupId": 23228,
+  "name": "SV03: Obsidian Flames",
+  "abbreviation": "OBF"
+ },
+ {
+  "groupId": 23120,
+  "name": "SV02: Paldea Evolved",
+  "abbreviation": "PAL"
+ },
+ {
+  "groupId": 17688,
+  "name": "SWSH: Crown Zenith",
+  "abbreviation": "CRZ"
+ },
+ {
+  "groupId": 3170,
+  "name": "SWSH12: Silver Tempest",
+  "abbreviation": "SWSH12"
+ },
+ {
+  "groupId": 3118,
+  "name": "SWSH11: Lost Origin",
+  "abbreviation": "SWSH11"
+ },
+ {
+  "groupId": 3064,
+  "name": "Pokemon GO",
+  "abbreviation": "PGO"
+ },
+ {
+  "groupId": 3040,
+  "name": "SWSH10: Astral Radiance",
+  "abbreviation": "SWSH10"
+ },
+ {
+  "groupId": 2948,
+  "name": "SWSH09: Brilliant Stars",
+  "abbreviation": "SWSH09"
+ },
+ {
+  "groupId": 2906,
+  "name": "SWSH08: Fusion Strike",
+  "abbreviation": "SWSH08"
+ },
+ {
+  "groupId": 2931,
+  "name": "Celebrations: Classic Collection",
+  "abbreviation": "CCC"
+ },
+ {
+  "groupId": 2848,
+  "name": "SWSH07: Evolving Skies",
+  "abbreviation": "SWSH07"
+ },
+ {
+  "groupId": 2807,
+  "name": "SWSH06: Chilling Reign",
+  "abbreviation": "SWSH06"
+ },
+ {
+  "groupId": 2765,
+  "name": "SWSH05: Battle Styles",
+  "abbreviation": "SWSH05"
+ },
+ {
+  "groupId": 2754,
+  "name": "Shining Fates",
+  "abbreviation": "SHF"
+ },
+ {
+  "groupId": 2701,
+  "name": "SWSH04: Vivid Voltage",
+  "abbreviation": "SWSH04"
+ },
+ {
+  "groupId": 2685,
+  "name": "Champion's Path",
+  "abbreviation": "CHP"
+ },
+ {
+  "groupId": 2675,
+  "name": "SWSH03: Darkness Ablaze",
+  "abbreviation": "SWSH03"
+ },
+ {
+  "groupId": 2626,
+  "name": "SWSH02: Rebel Clash",
+  "abbreviation": "SWSH02"
+ },
+ {
+  "groupId": 2534,
+  "name": "SM - Cosmic Eclipse",
+  "abbreviation": "SM12"
+ },
+ {
+  "groupId": 2480,
+  "name": "Hidden Fates",
+  "abbreviation": "HIF"
+ },
+ {
+  "groupId": 2464,
+  "name": "SM - Unified Minds",
+  "abbreviation": "SM11"
+ },
+ {
+  "groupId": 2420,
+  "name": "SM - Unbroken Bonds",
+  "abbreviation": "SM10"
+ },
+ {
+  "groupId": 2377,
+  "name": "SM - Team Up",
+  "abbreviation": "SM9"
+ },
+ {
+  "groupId": 2328,
+  "name": "SM - Lost Thunder",
+  "abbreviation": "SM8"
+ },
+ {
+  "groupId": 2295,
+  "name": "Dragon Majesty",
+  "abbreviation": "DRM"
+ },
+ {
+  "groupId": 2278,
+  "name": "SM - Celestial Storm",
+  "abbreviation": "CES"
+ },
+ {
+  "groupId": 2209,
+  "name": "SM - Forbidden Light",
+  "abbreviation": "SM06"
+ },
+ {
+  "groupId": 2178,
+  "name": "SM - Ultra Prism",
+  "abbreviation": "SM05"
+ },
+ {
+  "groupId": 2071,
+  "name": "SM - Crimson Invasion",
+  "abbreviation": "SM04"
+ },
+ {
+  "groupId": 2054,
+  "name": "Shining Legends",
+  "abbreviation": "SHL"
+ },
+ {
+  "groupId": 1957,
+  "name": "SM - Burning Shadows",
+  "abbreviation": "SM03"
+ },
+ {
+  "groupId": 1919,
+  "name": "SM - Guardians Rising",
+  "abbreviation": "SM02"
+ },
+ {
+  "groupId": 1842,
+  "name": "XY - Evolutions",
+  "abbreviation": "EVO"
+ },
+ {
+  "groupId": 1815,
+  "name": "XY - Steam Siege",
+  "abbreviation": "STS"
+ },
+ {
+  "groupId": 1780,
+  "name": "XY - Fates Collide",
+  "abbreviation": "FCO"
+ },
+ {
+  "groupId": 1661,
+  "name": "XY - BREAKthrough",
+  "abbreviation": "BKT"
+ },
+ {
+  "groupId": 1576,
+  "name": "XY - Ancient Origins",
+  "abbreviation": "AOR"
+ },
+ {
+  "groupId": 1534,
+  "name": "XY - Roaring Skies",
+  "abbreviation": "ROS"
+ },
+ {
+  "groupId": 1525,
+  "name": "Double Crisis",
+  "abbreviation": "DCR"
+ },
+ {
+  "groupId": 1509,
+  "name": "XY - Primal Clash",
+  "abbreviation": "PRC"
+ },
+ {
+  "groupId": 1494,
+  "name": "XY - Phantom Forces",
+  "abbreviation": "PHF"
+ },
+ {
+  "groupId": 1481,
+  "name": "XY - Furious Fists",
+  "abbreviation": "FFI"
+ },
+ {
+  "groupId": 1464,
+  "name": "XY - Flashfire",
+  "abbreviation": "FLF"
+ },
+ {
+  "groupId": 1522,
+  "name": "Kalos Starter Set",
+  "abbreviation": "KSS"
+ },
+ {
+  "groupId": 1370,
+  "name": "Plasma Blast",
+  "abbreviation": "PLB"
+ },
+ {
+  "groupId": 1382,
+  "name": "Plasma Freeze",
+  "abbreviation": "PLF"
+ },
+ {
+  "groupId": 1413,
+  "name": "Plasma Storm",
+  "abbreviation": "PLS"
+ },
+ {
+  "groupId": 1408,
+  "name": "Boundaries Crossed",
+  "abbreviation": "BCR"
+ },
+ {
+  "groupId": 1426,
+  "name": "Dragon Vault",
+  "abbreviation": "DRV"
+ },
+ {
+  "groupId": 1394,
+  "name": "Dragons Exalted",
+  "abbreviation": "DRX"
+ },
+ {
+  "groupId": 1386,
+  "name": "Dark Explorers",
+  "abbreviation": "DEX"
+ },
+ {
+  "groupId": 1412,
+  "name": "Next Destinies",
+  "abbreviation": "NXD"
+ },
+ {
+  "groupId": 1385,
+  "name": "Noble Victories",
+  "abbreviation": "NVI"
+ },
+ {
+  "groupId": 1424,
+  "name": "Emerging Powers",
+  "abbreviation": "EPO"
+ },
+ {
+  "groupId": 1381,
+  "name": "Triumphant",
+  "abbreviation": "TM"
+ },
+ {
+  "groupId": 1403,
+  "name": "Undaunted",
+  "abbreviation": "UD"
+ },
+ {
+  "groupId": 1399,
+  "name": "Unleashed",
+  "abbreviation": "UL"
+ },
+ {
+  "groupId": 1391,
+  "name": "Arceus",
+  "abbreviation": "AR"
+ },
+ {
+  "groupId": 1384,
+  "name": "Supreme Victors",
+  "abbreviation": "SV"
+ },
+ {
+  "groupId": 1369,
+  "name": "Stormfront",
+  "abbreviation": "SF"
+ },
+ {
+  "groupId": 1417,
+  "name": "Legends Awakened",
+  "abbreviation": "LA"
+ },
+ {
+  "groupId": 1390,
+  "name": "Majestic Dawn",
+  "abbreviation": "MD"
+ },
+ {
+  "groupId": 1405,
+  "name": "Great Encounters",
+  "abbreviation": "GE"
+ },
+ {
+  "groupId": 1380,
+  "name": "Secret Wonders",
+  "abbreviation": "SW"
+ },
+ {
+  "groupId": 1368,
+  "name": "Mysterious Treasures",
+  "abbreviation": "MT"
+ },
+ {
+  "groupId": 1383,
+  "name": "Power Keepers",
+  "abbreviation": "PK"
+ },
+ {
+  "groupId": 1411,
+  "name": "Dragon Frontiers",
+  "abbreviation": "DF"
+ },
+ {
+  "groupId": 1395,
+  "name": "Crystal Guardians",
+  "abbreviation": "CG"
+ },
+ {
+  "groupId": 1379,
+  "name": "Holon Phantoms",
+  "abbreviation": "HP"
+ },
+ {
+  "groupId": 1378,
+  "name": "Legend Maker",
+  "abbreviation": "LM"
+ },
+ {
+  "groupId": 1429,
+  "name": "Delta Species",
+  "abbreviation": "DS"
+ },
+ {
+  "groupId": 1398,
+  "name": "Unseen Forces",
+  "abbreviation": "UF"
+ },
+ {
+  "groupId": 1410,
+  "name": "Emerald",
+  "abbreviation": "EM"
+ },
+ {
+  "groupId": 1404,
+  "name": "Deoxys",
+  "abbreviation": "DX"
+ },
+ {
+  "groupId": 1419,
+  "name": "FireRed & LeafGreen",
+  "abbreviation": "RG"
+ },
+ {
+  "groupId": 1416,
+  "name": "Hidden Legends",
+  "abbreviation": "HL"
+ },
+ {
+  "groupId": 1377,
+  "name": "Team Magma vs Team Aqua",
+  "abbreviation": "MA"
+ },
+ {
+  "groupId": 1376,
+  "name": "Dragon",
+  "abbreviation": "DR"
+ },
+ {
+  "groupId": 1392,
+  "name": "Sandstorm",
+  "abbreviation": "SS"
+ },
+ {
+  "groupId": 1393,
+  "name": "Ruby and Sapphire",
+  "abbreviation": "RS"
+ },
+ {
+  "groupId": 1372,
+  "name": "Skyridge",
+  "abbreviation": "SK"
+ },
+ {
+  "groupId": 1397,
+  "name": "Aquapolis",
+  "abbreviation": "AQ"
+ },
+ {
+  "groupId": 1375,
+  "name": "Expedition",
+  "abbreviation": "EX"
+ },
+ {
+  "groupId": 1374,
+  "name": "Legendary Collection",
+  "abbreviation": "LC"
+ },
+ {
+  "groupId": 1444,
+  "name": "Neo Destiny",
+  "abbreviation": "N4"
+ },
+ {
+  "groupId": 1389,
+  "name": "Neo Revelation",
+  "abbreviation": "N3"
+ },
+ {
+  "groupId": 1434,
+  "name": "Neo Discovery",
+  "abbreviation": "N2"
+ },
+ {
+  "groupId": 1396,
+  "name": "Neo Genesis",
+  "abbreviation": "N1"
+ },
+ {
+  "groupId": 1440,
+  "name": "Gym Challenge",
+  "abbreviation": "G2"
+ },
+ {
+  "groupId": 1441,
+  "name": "Gym Heroes",
+  "abbreviation": "G1"
+ }
+]
