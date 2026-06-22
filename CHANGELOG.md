@@ -34,7 +34,10 @@ ao vivo: Ascended Heroes **7/7 cartas via tcgcsv, 0 fallback**.
   - `tcgcsv_fetch_groups()` (lista de sets, cacheada 1×/run) +
     `resolve_tcgcsv_group_id()` (setcode pokemontcg.io → groupId tcgcsv por
     abreviação conhecida, fallback por nome do set; **sem match → None →
-    fallback honesto, nunca preço inventado**).
+    fallback honesto, nunca preço inventado**). O fallback por nome exige match
+    **ÚNICO** (cross-review): se a substring casar >1 group (ex. "Mega Evolution"
+    ∈ ME01/MEP/MEE), é ambíguo → None → fallback `.estat-tcg`, **nunca** chuta o
+    primeiro (evita injetar preço de promo/energy como "real").
   - `_prefill_tcgcsv_set()`: 2 requests por set (`/products` + `/prices`), junta
     por `productId`, lê o número do colecionador do `extendedData[Number]`, aplica
     o **mesmo** `_min_tcg_usd` (menor `market`/`mid` entre subtypes Normal/Holo/
