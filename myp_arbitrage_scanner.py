@@ -18,7 +18,7 @@ Requisitos:
 
 Autor: Matheus Chillemi / Claude
 Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10) | 2026-06-07 (v5.10.1 → v5.11) | 2026-06-09 (v5.11.1) | 2026-06-10 (v5.11.2 → v5.11.3) | 2026-06-16 (v5.11.4 → v5.11.6) | 2026-06-13 (v5.11.7, doc-only) | 2026-06-17 (v5.11.8 — loop: timing + bench) | 2026-06-17 (v5.12 — batch pokemontcg.io por set) | 2026-06-17 (v5.13 — Iteração #2: atribuição de cobertura do fallback) | 2026-06-20 (v5.14 — coluna "TCG Source" explícita + enrich off-runner p/ preço real) | 2026-06-20 (v5.14.1 — cobertura de preço real no summary medida sobre o universo de cartas EN) | 2026-06-21 (v5.14.3 — deal com preço FALLBACK sai do balde "limpos" → balde dedicado; fix BLOCKER de honestidade) | 2026-06-21 (v5.14.4 — tcg_suspect boundary inclusivo `>=` (pega exatamente-10x); regressão de precisão minerada do eval asi-evolve)
-Versão: v5.15.1
+Versão: v5.16
 
 Changelog v5.1 (2026-05-12 — auditoria C/H/M, mesma metodologia do CT scanner):
   - C1: --threshold < 1.0 auto-converte com warning (UX guard contra trap
@@ -268,6 +268,116 @@ MYP_EDITION_SUBSTR_TO_PTCG = {
     # mapeia a carta errada (Darumaka declarado R$2.867 vs real US$13,42).
     "Black Bolt":                        "zsv10pt5",
     "White Flare":                       "rsv10pt5",
+    # ══════════════════════════════════════════════════════════════════
+    # v5.16 (2026-06-22): EXPANSÃO de cobertura de set (eras SM/XY/SWSH-
+    # antigo/BW/DP/EX/e-Card/Neo/Gym + alguns clássicos). Cada substring
+    # abaixo foi VERIFICADA contra a lista REAL de edições do MYP (scrape ao
+    # vivo de 362 edições, 2026-06-22) — match ÚNICO por título (zero
+    # colisão/ambiguidade na simulação longest-substring-wins sobre TODOS os
+    # títulos reais) — E cada setcode tem abbreviação tcgcsv resolvendo 1-a-1
+    # contra /groups (ver PTCG_SETCODE_TO_TCGCSV_ABBR). Esta tabela tem 106
+    # substrings (32→106), que casam 112/362 das edições reais do MYP (uma
+    # substring pode cobrir >1 edição; uma edição pode casar via nome-base do
+    # set) — não confundir nº de substrings da tabela (106) com nº de edições
+    # cobertas (112/362). Substrings escolhidas em EN (o MYP emite título
+    # bilíngue PT+EN concatenado, ex.: 'Sol & Lua 7…Sun & Moon 7: Celestial
+    # Storm' contém a substring EN). Onde o MYP usa nome distintivo do set
+    # (DP2 vem como 'Diamond & PEARLS 2' — typo plural do MYP), a chave é o
+    # nome do set ('Mysterious Treasures') que casa 1 título só. NÃO mapeado
+    # de propósito (incerto/ambíguo, deixa em fallback honesto): EX7 Team
+    # Rocket Returns + 'Team Rocket' base (substring colide c/ Returns/JP),
+    # XY9 BREAKpoint + Platinum2 Rising Rivals (abbr tcgcsv ambígua), Call of
+    # Legends + TCG Classic (abbr 'CL' ambígua), e TODOS os sets só-JP
+    # (Eevee Heroes, VMAX Climax, etc. — sem print EN no TCGplayer/tcgcsv).
+    # Sun & Moon era
+    "Sun & Moon 2: Guardians Rising":            "sm2",
+    "Sun & Moon 3: Burning Shadows":             "sm3",
+    "Sun & Moon 3.5: Shining Legends":           "sm35",
+    "Sun & Moon 4: Crimson Invasion":            "sm4",
+    "Sun & Moon 5: Ultra Prism":                 "sm5",
+    "Sun & Moon 6: Forbidden Light":             "sm6",
+    "Sun & Moon 7: Celestial Storm":             "sm7",
+    "Sun & Moon 7.5: Dragon Majesty":            "sm75",
+    "Sun & Moon 8: Lost Thunder":                "sm8",
+    "Sun & Moon 9: Team Up":                     "sm9",
+    "Sun & Moon 10: Unbroken Bonds":             "sm10",
+    "Sun & Moon 11: Unified Minds":              "sm11",
+    "Sun & Moon 11.5: Hidden Fates":             "sm115",
+    "Sun & Moon 12: Cosmic Eclipse":             "sm12",
+    # XY era
+    "XY 2: Flashfire":                           "xy2",
+    "XY 3: Furious Fists":                       "xy3",
+    "XY 4: Phantom Forces":                      "xy4",
+    "XY 5: Primal Clash":                        "xy5",
+    "XY 6: Roaring Skies":                       "xy6",
+    "XY 7: Ancient Origins":                     "xy7",
+    "XY 8: BREAKthrough":                        "xy8",
+    "XY 10: Fates Collide":                      "xy10",
+    "XY 11: Steam Siege":                        "xy11",
+    "XY 12: Evolutions":                         "xy12",
+    "XY: Double Crisis":                         "dc1",
+    "XY: Kalos Starter Set":                     "xy0",
+    # Sword & Shield (mais antigos que os já mapeados acima)
+    "Sword & Shield 2: Rebel Clash":             "swsh2",
+    "Sword & Shield 3: Darkness Ablaze":         "swsh3",
+    "Sword & Shield 3.5: Champion's Path":       "swsh35",
+    "Sword & Shield 4: Vivid Voltage":           "swsh4",
+    "Sword & Shield 5: Battle Styles":           "swsh5",
+    "Sword & Shield 6: Chilling Reign":          "swsh6",
+    "Shining Fates":                             "swsh45",
+    "Celebrations: Classic Collection":          "cel25c",
+    # HeartGold & SoulSilver era
+    "HeartGold & SoulSilver 2: Unleashed":       "hgss2",
+    "HeartGold & SoulSilver 3: Undaunted":       "hgss3",
+    "HeartGold & SoulSilver 4: Triumphant":      "hgss4",
+    # Black & White era
+    "Black & White 2: Emerging Powers":          "bw2",
+    "Black & White 3: Noble Victories":          "bw3",
+    "Black & White 4: Next Destinies":           "bw4",
+    "Black & White 5: Dark Explorers":           "bw5",
+    "Black & White 6: Dragons Exalted":          "bw6",
+    "Black & White 7: Boundaries Crossed":       "bw7",
+    "Black & White 8: Plasma Storm":             "bw8",
+    "Black & White 9: Plasma Freeze":            "bw9",
+    "Black & White 10: Plasma Blast":            "bw10",
+    "Black & White: Dragon Vault":               "dv1",
+    # Diamond & Pearl / Platinum era
+    "Platinum 3: Supreme Victors":               "pl3",
+    "Platinum 4: Arceus":                        "pl4",
+    "Mysterious Treasures":                      "dp2",   # MYP titula 'Diamond & PEARLS 2' (typo) → casa pelo nome do set
+    "Secret Wonders":                            "dp3",
+    "Great Encounters":                          "dp4",
+    "Majestic Dawn":                             "dp5",
+    "Legends Awakened":                          "dp6",
+    "Diamond & Pearl 7: Stormfront":             "dp7",
+    # EX era
+    "EX 1: Ruby & Sapphire":                     "ex1",
+    "EX 2: Sandstorm":                           "ex2",
+    "EX 3: Dragon":                              "ex3",
+    "EX 4: Team Magma vs Team Aqua":             "ex4",
+    "EX 5: Hidden Legends":                      "ex5",
+    "EX 6: Fire Red & Leaf Green":               "ex6",
+    "EX 8: Deoxys":                              "ex8",
+    "EX 9: Emerald":                             "ex9",
+    "EX 10: Unseen Forces":                      "ex10",
+    "EX 11: Delta Species":                      "ex11",
+    "EX 12: Legend Maker":                       "ex12",
+    "EX 13: Holon Phantoms":                     "ex13",
+    "EX 14: Crystal Guardians":                  "ex14",
+    "EX 15: Dragon Frontiers":                   "ex15",
+    "EX 16: Power Keepers":                      "ex16",
+    # e-Card era
+    "E-Card 1: Expedition Base Set":             "ecard1",
+    "E-Card 2: Aquapolis":                       "ecard2",
+    "E-Card 3: Skyridge":                        "ecard3",
+    # WOTC clássicos
+    "Neo Genesis":                               "neo1",
+    "Neo Discovery":                             "neo2",
+    "Neo Revelation":                            "neo3",
+    "Neo Destiny":                               "neo4",
+    "Gym Heroes":                                "gym1",
+    "Gym Challenge":                             "gym2",
+    "Legendary Collection":                      "base6",
 }
 
 # Regex (NNN/MMM) — captura numerator e denominator. Reutilizado de
@@ -321,7 +431,7 @@ PTCG_API_BASE = "https://api.pokemontcg.io/v2/cards/"
 # (`_real_tcg_brl`, override, margem) é reusado sem mudança.
 # ══════════════════════════════════════════════════════════════════════
 TCGCSV_BASE = "https://tcgcsv.com/tcgplayer/3"  # categoria 3 = Pokémon
-TCGCSV_USER_AGENT = "myp-arbitrage-scanner/5.15 (+github.com/matheuscllm-lgtm/myp-arbitrage-scanner)"
+TCGCSV_USER_AGENT = "myp-arbitrage-scanner/5.16 (+github.com/matheuscllm-lgtm/myp-arbitrage-scanner)"
 
 # setcode pokemontcg.io → abreviação tcgcsv (confirmado 2026-06-21 contra
 # /groups: sv7=SCR=Stellar Crown, me2pt5=ASC=Ascended Heroes, etc.). Quando o
@@ -355,6 +465,101 @@ PTCG_SETCODE_TO_TCGCSV_ABBR = {
     "pgo": "PGO",         # Pokémon GO
     "zsv10pt5": "BLK",  # Black Bolt
     "rsv10pt5": "WHT",  # White Flare
+    # ── v5.16 (2026-06-22): abbreviações VERIFICADAS 1-a-1 contra /groups ao
+    # vivo (cada uma resolve p/ EXATAMENTE 1 group, nome coerente c/ o set).
+    # ⚠️ A abbr tcgcsv NEM SEMPRE bate com o ptcgoCode do pokemontcg.io: SM/
+    # SWSH usam o esquema próprio do tcgcsv (SM02, SWSH02, …) e alguns sets
+    # usam código alternativo (sm7→CES, sm35→SHL, swsh35→CHP). Tudo abaixo foi
+    # casado contra o NOME do group no dump real, não por suposição.
+    # Sun & Moon
+    "sm2": "SM02",      # SM - Guardians Rising
+    "sm3": "SM03",      # SM - Burning Shadows
+    "sm35": "SHL",      # Shining Legends
+    "sm4": "SM04",      # SM - Crimson Invasion
+    "sm5": "SM05",      # SM - Ultra Prism
+    "sm6": "SM06",      # SM - Forbidden Light
+    "sm7": "CES",       # SM - Celestial Storm
+    "sm75": "DRM",      # Dragon Majesty
+    "sm8": "SM8",       # SM - Lost Thunder (tcgcsv usa SM8, sem zero-pad)
+    "sm9": "SM9",       # SM - Team Up
+    "sm10": "SM10",     # SM - Unbroken Bonds
+    "sm11": "SM11",     # SM - Unified Minds
+    "sm115": "HIF",     # Hidden Fates
+    "sm12": "SM12",     # SM - Cosmic Eclipse
+    # XY
+    "xy2": "FLF",       # XY - Flashfire
+    "xy3": "FFI",       # XY - Furious Fists
+    "xy4": "PHF",       # XY - Phantom Forces
+    "xy5": "PRC",       # XY - Primal Clash
+    "xy6": "ROS",       # XY - Roaring Skies
+    "xy7": "AOR",       # XY - Ancient Origins
+    "xy8": "BKT",       # XY - BREAKthrough
+    "xy10": "FCO",      # XY - Fates Collide
+    "xy11": "STS",      # XY - Steam Siege
+    "xy12": "EVO",      # XY - Evolutions
+    "dc1": "DCR",       # Double Crisis
+    "xy0": "KSS",       # Kalos Starter Set
+    # Sword & Shield (antigos)
+    "swsh2": "SWSH02",  # Rebel Clash
+    "swsh3": "SWSH03",  # Darkness Ablaze
+    "swsh35": "CHP",    # Champion's Path
+    "swsh4": "SWSH04",  # Vivid Voltage
+    "swsh5": "SWSH05",  # Battle Styles (NÃO 'BST' — esse é EX Battle Stadium!)
+    "swsh6": "SWSH06",  # Chilling Reign
+    "swsh45": "SHF",    # Shining Fates
+    "cel25c": "CCC",    # Celebrations: Classic Collection
+    # HeartGold & SoulSilver
+    "hgss2": "UL",      # Unleashed
+    "hgss3": "UD",      # Undaunted
+    "hgss4": "TM",      # Triumphant
+    # Black & White
+    "bw2": "EPO",       # Emerging Powers
+    "bw3": "NVI",       # Noble Victories
+    "bw4": "NXD",       # Next Destinies
+    "bw5": "DEX",       # Dark Explorers
+    "bw6": "DRX",       # Dragons Exalted
+    "bw7": "BCR",       # Boundaries Crossed
+    "bw8": "PLS",       # Plasma Storm
+    "bw9": "PLF",       # Plasma Freeze
+    "bw10": "PLB",      # Plasma Blast
+    "dv1": "DRV",       # Dragon Vault
+    # Diamond & Pearl / Platinum
+    "pl3": "SV",        # Supreme Victors
+    "pl4": "AR",        # Arceus
+    "dp2": "MT",        # Mysterious Treasures
+    "dp3": "SW",        # Secret Wonders
+    "dp4": "GE",        # Great Encounters
+    "dp5": "MD",        # Majestic Dawn
+    "dp6": "LA",        # Legends Awakened
+    "dp7": "SF",        # Stormfront
+    # EX
+    "ex1": "RS",        # Ruby & Sapphire
+    "ex2": "SS",        # Sandstorm
+    "ex3": "DR",        # Dragon
+    "ex4": "MA",        # Team Magma vs Team Aqua
+    "ex5": "HL",        # Hidden Legends
+    "ex6": "RG",        # FireRed & LeafGreen
+    "ex8": "DX",        # Deoxys
+    "ex9": "EM",        # Emerald
+    "ex10": "UF",       # Unseen Forces
+    "ex11": "DS",       # Delta Species
+    "ex12": "LM",       # Legend Maker
+    "ex13": "HP",       # Holon Phantoms
+    "ex14": "CG",       # Crystal Guardians
+    "ex15": "DF",       # Dragon Frontiers
+    "ex16": "PK",       # Power Keepers
+    # e-Card
+    "ecard1": "EX",     # Expedition Base Set
+    "ecard2": "AQ",     # Aquapolis
+    "ecard3": "SK",     # Skyridge
+    # WOTC clássicos
+    "neo1": "N1",       # Neo Genesis
+    "neo2": "N2",       # Neo Discovery
+    "neo3": "N3",       # Neo Revelation
+    "neo4": "N4",       # Neo Destiny
+    "gym1": "G1",       # Gym Heroes
+    "gym2": "G2",       # Gym Challenge
+    "base6": "LC",      # Legendary Collection
 }
 
 # Câmbio: frankfurter.app (ECB, grátis, sem key); fallback open.er-api.com.

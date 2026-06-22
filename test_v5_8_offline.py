@@ -405,15 +405,25 @@ def test_myp_edition_to_setcode():
     assert myp_edition_to_ptcg_setcode("ME: Ascended Heroes") == "me2pt5"
     # Case-insensitive
     assert myp_edition_to_ptcg_setcode("STELLAR CROWN") == "sv7"
-    # Unmapped (vintage / promo / SV base / Black Bolt etc) → None
-    assert myp_edition_to_ptcg_setcode("Diamond & Pearl") is None
+    # v5.16: eras antigas agora MAPEADAS (substring EN única no título MYP).
+    assert myp_edition_to_ptcg_setcode("Black & White 9: Plasma Freeze") == "bw9"
+    assert myp_edition_to_ptcg_setcode("Sun & Moon 9: Team Up") == "sm9"
+    assert myp_edition_to_ptcg_setcode("XY 7: Ancient Origins") == "xy7"
+    assert myp_edition_to_ptcg_setcode("EX 3: Dragon") == "ex3"
+    # v5.16: DP2 vem como 'Diamond & PEARLS 2' (typo MYP) → casa pelo nome do set.
+    assert myp_edition_to_ptcg_setcode(
+        "Diamante & Pérola 2: Tesouros MisteriososDiamond & Pearls 2: Mysterious Treasures"
+    ) == "dp2"
+    # Unmapped: nomes-BASE/promo/SV base seguem None (substrings distintivas do
+    # v5.16 NÃO casam o título-base sozinho — sem over-match).
+    assert myp_edition_to_ptcg_setcode("Diamond & Pearl") is None       # base DP, não numerado
     assert myp_edition_to_ptcg_setcode("Scarlet & Violet") is None
     assert myp_edition_to_ptcg_setcode("Sun & Moon Promos") is None
-    assert myp_edition_to_ptcg_setcode("Black & White 9: Plasma Freeze") is None
+    assert myp_edition_to_ptcg_setcode("Black & White") is None         # base BW, não numerado
     # Edge cases
     assert myp_edition_to_ptcg_setcode("") is None
     assert myp_edition_to_ptcg_setcode(None) is None
-    print(f"  Mapeamento edition→setcode: 11 casos OK ✓")
+    print(f"  Mapeamento edition→setcode: 16 casos OK ✓")
     return True
 
 
@@ -1332,6 +1342,86 @@ def test_tcgcsv_groupid_resolution():
     return True
 
 
+def test_setcode_abbr_table_is_self_consistent():
+    """v5.16: GUARD anti-bug-set-errado (estrutural, sem rede).
+
+    Toda abreviação em PTCG_SETCODE_TO_TCGCSV_ABBR tem que ser ÚNICA dentro da
+    própria tabela (duas setcodes distintas apontando pra mesma abbr injetaria
+    o preço do mesmo group em sets diferentes — exceto subset legítimo, que
+    não temos aqui). Também checa: nenhuma chave/valor vazio. Não depende de
+    rede; é a primeira linha de defesa do mapa."""
+    from myp_arbitrage_scanner import PTCG_SETCODE_TO_TCGCSV_ABBR as T
+    from collections import Counter
+    assert all(k and v for k, v in T.items()), "chave/valor vazio na tabela"
+    c = Counter(v.upper() for v in T.values())
+    dups = {a: n for a, n in c.items() if n > 1}
+    assert not dups, f"abbr repetida na tabela (set-wrong risk): {dups}"
+    print(f"  v5.16 tabela setcode→abbr: {len(T)} entradas, abbr únicas ✓")
+    return True
+
+
+def test_setcode_abbr_resolves_1to1_against_groups_fixture():
+    """v5.16: cada abbr da tabela resolve para EXATAMENTE 1 group num snapshot
+    REAL e COMPLETO do /groups do tcgcsv (fixture de metadados groupId/name/
+    abbreviation, sem preços). Pega: (a) abbr que sumiu/renomeou no tcgcsv
+    (0 matches), (b) abbr que colide com outro set (>1 match) → BLOCKER de
+    preço de set errado.
+
+    O fixture (`test_tcgcsv_groups_fixture.json`) é o dump INTEIRO do /groups ao
+    vivo (217 groups, 2026-06-22) — TODOS os groups da categoria Pokémon, não só
+    os usados pela tabela. Isso é o que torna o guard NÃO-circular: o dump
+    contém abbreviations colisoras reais (ex.: `RR` = Rising Rivals + Team Rocket
+    Returns = 2 groups; `CL`, `BKP`, `BLW`, `GEN`, `LTR` = 2 cada; `PR`/`POP` =
+    promos com dezenas). Se alguém adicionar à tabela uma abbr ambígua dessas,
+    `by_abbr[abbr] > 1` e o teste FALHA. As 106 entradas atuais são todas únicas
+    no dump real (confirmado ao vivo)."""
+    import json as _json
+    from pathlib import Path
+    from collections import Counter
+    from myp_arbitrage_scanner import (
+        PTCG_SETCODE_TO_TCGCSV_ABBR as T, resolve_tcgcsv_group_id,
+        MYP_EDITION_SUBSTR_TO_PTCG as S,
+    )
+    fx_path = Path(__file__).parent / "test_tcgcsv_groups_fixture.json"
+    groups = _json.loads(fx_path.read_text(encoding="utf-8"))
+    # sanity: é o snapshot COMPLETO (não um subset montado p/ a tabela), e é
+    # só metadados (sem preços) — senão o guard volta a ser circular.
+    assert len(groups) >= 200, (
+        f"fixture deve ser o dump COMPLETO do /groups (217), tem {len(groups)} "
+        "— um subset reintroduz a circularidade que este teste corrige")
+    assert all(set(g.keys()) == {"groupId", "name", "abbreviation"} for g in groups), \
+        "fixture deve conter SÓ metadados (groupId/name/abbreviation), sem preços"
+
+    by_abbr = Counter(str(g.get("abbreviation") or "").upper() for g in groups)
+    # o dump real PRECISA conter abbrs colisoras, senão o guard seria inócuo
+    assert any(n > 1 for n in by_abbr.values()), (
+        "dump real deveria ter abbreviations colisoras (ex. RR/CL/PR); "
+        "sua ausência indica fixture truncado/sanitizado demais")
+
+    # 1) cada abbr da tabela aparece exatamente 1× no dump COMPLETO (1-a-1):
+    #    0 = abbr sumiu/renomeou no tcgcsv; >1 = colide com outro set (set-wrong).
+    bad = {}
+    for setcode, abbr in T.items():
+        n = by_abbr.get(abbr.upper(), 0)
+        if n != 1:
+            bad[setcode] = (abbr, n)
+    assert not bad, f"abbr não-única no /groups (set-wrong/missing): {bad}"
+
+    # 2) resolve_tcgcsv_group_id retorna um groupId p/ cada setcode da tabela,
+    #    via o caminho de ABREVIAÇÃO (caminho primário), usando uma edição que
+    #    de fato mapeia pra esse setcode (longest-substring), garantindo que o
+    #    par (substring MYP → setcode → abbr → group) é coerente ponta-a-ponta.
+    substr_for = {}
+    for substr, sc in S.items():
+        substr_for.setdefault(sc, substr)
+    for setcode, abbr in T.items():
+        ed = substr_for.get(setcode, "")
+        gid = resolve_tcgcsv_group_id(setcode, ed, groups)
+        assert gid is not None, f"setcode {setcode} ({abbr}) não resolveu groupId"
+    print(f"  v5.16 {len(T)} abbrs resolvem 1-a-1 no snapshot /groups real ✓")
+    return True
+
+
 def test_tcgcsv_no_match_falls_back_honestly():
     """v5.15: set sem groupId no tcgcsv → _prefill_tcgcsv_set retorna False e NÃO
     popula cache (NUNCA preço inventado). Honestidade dura."""
@@ -2215,6 +2305,8 @@ def main():
         ("v5.12 prefill batch pokemontcg.io por set", test_prefill_ptcg_set_batch),
         ("v5.15 tcgcsv prefill parseia schema real", test_tcgcsv_prefill_parses_schema),
         ("v5.15 tcgcsv resolução de groupId", test_tcgcsv_groupid_resolution),
+        ("v5.16 tabela setcode→abbr auto-consistente", test_setcode_abbr_table_is_self_consistent),
+        ("v5.16 abbrs resolvem 1-a-1 no /groups (fixture)", test_setcode_abbr_resolves_1to1_against_groups_fixture),
         ("v5.15 tcgcsv sem match → fallback honesto", test_tcgcsv_no_match_falls_back_honestly),
         ("v5.15 tcgcsv e2e source='tcgcsv' (REAL)", test_tcgcsv_end_to_end_real_source_label),
         ("v5.15 tcgcsv reconhecido como REAL no summary", test_tcgcsv_recognized_as_real_in_summary),

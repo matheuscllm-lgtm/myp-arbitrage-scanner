@@ -1,5 +1,72 @@
 # Changelog
 
+## v5.16 — 2026-06-22 — Expansão do mapa de sets tcgcsv (cobertura de preço REAL)
+
+**O que muda em uma frase:** dezenas de eras antigas (Sun & Moon, XY, SWSH
+antigos, Black & White, Diamond & Pearl/Platinum, EX, e-Card, Neo, Gym) agora
+puxam **preço TCGplayer REAL** via tcgcsv em vez de cair no fallback `.estat-tcg`
+do MYP — **sem nenhum mapeamento de set errado** (cada um verificado 1-a-1 contra
+o `/groups` ao vivo).
+
+### Contexto
+O v5.15 ligava setcode pokemontcg.io → abreviação tcgcsv → groupId, mas só ~26
+setcodes estavam mapeados. Editions fora desse conjunto caíam em fallback
+honesto. Medição (scrape ao vivo de **362 edições** do MYP, 2026-06-22): só
+**32/362** editions resolviam pra um setcode.
+
+### O que foi feito (com verificação dura anti-set-errado)
+- **`MYP_EDITION_SUBSTR_TO_PTCG`:** +74 substrings de edição → setcode. Cada
+  substring foi conferida contra a lista REAL de títulos do MYP exigindo
+  **match único** (simulação longest-substring-wins sobre TODOS os 362 títulos:
+  **zero** colisão/ambiguidade, **zero** regressão nas resoluções já existentes).
+  Cobertura de editions mapeadas: **32 → 112 / 362**.
+- **`PTCG_SETCODE_TO_TCGCSV_ABBR`:** +80 setcode → abbreviação tcgcsv. **Cada
+  abbreviação resolve para EXATAMENTE 1 group** no dump real do `/groups`
+  (26 → 106 entradas, todas 1-a-1). A abbr tcgcsv **nem sempre** bate com o
+  `ptcgoCode` do pokemontcg.io — SM/SWSH usam o esquema próprio do tcgcsv
+  (`SM02`, `SWSH02`, …) e há códigos alternativos (`sm7→CES`, `sm35→SHL`,
+  `swsh35→CHP`); tudo casado contra o **nome** do group, não por suposição.
+- **Rejeitados de propósito (incerto/ambíguo → fallback honesto, NUNCA chute):**
+  - `swsh5` (Battle Styles): a abbr `BST` no tcgcsv é **"EX Battle Stadium"**
+    (set de 2004, diferente!). Usado `SWSH05` (verificado). Esse é exatamente o
+    tipo de armadilha que injetaria preço de outro set.
+  - `Team Rocket` base + EX7 Team Rocket Returns: substring "Team Rocket" colide
+    com "...Returns" e títulos JP → não mapeado.
+  - XY9 BREAKpoint (`BKP` colide com Burger King Promos), Platinum 2 Rising
+    Rivals (`RR` colide com Team Rocket Returns), Call of Legends / TCG Classic
+    (`CL` colide entre si) → todos deixados em fallback.
+  - Todos os sets **só-JP** (Eevee Heroes, VMAX Climax, Shiny Treasure ex, …):
+    sem print EN no TCGplayer/tcgcsv → fallback honesto.
+
+### Validação real (scans locais `--tcg-source tcgcsv`, o caminho do CI)
+| set (recém-mapeado) | groupId | preços em cache | exemplo cross-check |
+|---|---|---|---|
+| Champion's Path (swsh35) | 2685 | 80 | Charizard V 079/73 = US$265 (chase conhecido ✓) |
+| XY Evolutions (xy12) | 1842 | 113 | M-Charizard-EX 101/108 = US$151; Charizard 011/108 = US$100 ✓ |
+| Plasma Storm (bw8) | 1413 | 138 | set resolveu, 0 set-não-mapeado ✓ |
+
+Todos saíram com `TCG Source = real (tcgcsv)` e **0 fallback por set não-mapeado**.
+
+### Testes
+- `test_myp_edition_to_setcode` atualizado: as eras antigas agora **devem**
+  resolver (BW9→bw9, SM9→sm9, XY7→xy7, EX3→ex3, DP2 via nome do set); nomes-base
+  (`Diamond & Pearl`, `Black & White`, `Scarlet & Violet`) seguem `None`
+  (sem over-match).
+- **NOVO** `test_setcode_abbr_table_is_self_consistent`: nenhuma abbr repetida na
+  tabela (guard anti set-errado, sem rede).
+- **NOVO** `test_setcode_abbr_resolves_1to1_against_groups_fixture`: cada abbr da
+  tabela resolve para **exatamente 1** group no `test_tcgcsv_groups_fixture.json`
+  — que agora é o **snapshot COMPLETO do `/groups` ao vivo (217 groups,
+  2026-06-22)**, só metadados (`groupId`/`name`/`abbreviation`, **sem preços**),
+  não mais um subset de 106. Isso é o que torna o guard **não-circular**: o dump
+  inteiro contém abbreviations colisoras reais (`RR` = Rising Rivals + Team Rocket
+  Returns = 2 groups; `CL`/`BKP`/`BLW`/`GEN`/`LTR` = 2 cada; `PR`/`POP` = dezenas
+  de promos). Se alguém adicionar à tabela uma abbr ambígua dessas, o teste
+  **FALHA** (>1 match) — antes (subset de 106, 1 group por entrada) a checagem
+  era tautológica. Pega abbr sumida/renomeada (0 matches) **ou** colisão (>1). As
+  106 entradas atuais são todas 1-a-1 no dump real (confirmado ao vivo).
+- Suíte: **53/53** verdes (51 → 53).
+
 ## v5.15.1 — 2026-06-22 — FIX: agregação dos chunks rebaixava preço REAL (tcgcsv) pra fallback
 
 **O que muda em uma frase:** o scan completo do GitHub voltou a entregar **preço
