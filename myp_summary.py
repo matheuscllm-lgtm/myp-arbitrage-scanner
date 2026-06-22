@@ -324,19 +324,26 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
         cov_note = ("⚠️ **Sem preço TCG** — nenhuma carta EN com preço TCGplayer "
                     "(real ou fallback). Nada a reportar de cobertura.")
     elif real_n == 0:
+        # v5.15.1 (2026-06-22): mensagem atualizada. A v5.15 trocou a fonte do CI
+        # pro tcgcsv.com (que os runners do GitHub ALCANÇAM) → ZERO real NÃO é mais
+        # o estado esperado do CI. Se o consolidado vier 0/N real, é uma FALHA real
+        # (tcgcsv fora do ar, sets sem groupId, ou — como o bug do round-trip de
+        # aggregate corrigido na v5.15.1 — perda da fonte na junção dos chunks).
         cov_note = (f"🛑 **ZERO preço real** — 0/{total_priced} cartas EN com preço "
-                    f"REAL (pokemontcg.io); todas em fallback `.estat-tcg` (margens "
-                    f"NÃO-confiáveis). Provável run em runner do GitHub (que não "
-                    f"alcança a pokemontcg.io): enriqueça LOCAL com `myp_enrich.py` "
-                    f"antes de operar.{deals_clarif}")
+                    f"REAL (tcgcsv/pokemontcg.io); todas em fallback `.estat-tcg` "
+                    f"(margens NÃO-confiáveis). Desde a v5.15 o CI puxa preço real "
+                    f"via tcgcsv.com, então 0 real indica FALHA (tcgcsv indisponível, "
+                    f"sets sem groupId, ou perda da fonte na agregação dos chunks) — "
+                    f"investigue antes de operar; em último caso, enriqueça LOCAL "
+                    f"com `myp_enrich.py`.{deals_clarif}")
     elif fb_n:
         cov_note = (f"⚠️ **{real_n}/{total_priced} cartas EN com preço REAL** "
-                    f"(pokemontcg.io); {fb_n} em fallback `.estat-tcg` (margem "
+                    f"(tcgcsv/pokemontcg.io); {fb_n} em fallback `.estat-tcg` (margem "
                     f"NÃO-confiável — validar manual ou enriquecer com "
                     f"`myp_enrich.py`).{deals_clarif}")
     else:
         cov_note = (f"✅ **{real_n}/{total_priced} cartas EN com preço REAL** "
-                    f"(pokemontcg.io).{deals_clarif}")
+                    f"(tcgcsv/pokemontcg.io).{deals_clarif}")
     lines.append(f"**Cobertura de preço TCG real:** {cov_note}")
     lines.append("")
 

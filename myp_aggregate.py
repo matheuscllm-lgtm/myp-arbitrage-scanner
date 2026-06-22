@@ -56,14 +56,33 @@ def card_from_row(headers: list[str], row: tuple) -> CardData | None:
     # tabela de ENTREGA (myp_summary.py). .get() → None em chunks antigos.
     card.tcg_real_usd = rec.get("TCG US$")
     # v5.14 (2026-06-20): preservar a FONTE do preço entre chunks/round-trips
-    # (real pokemontcg.io vs fallback .estat-tcg). É o sinal de honestidade do
-    # output. Chunks antigos não têm a coluna "TCG Source" → infere pela
-    # presença de "TCG US$" (real só era populado no caminho pokemontcg.io),
+    # (real pokemontcg.io/tcgcsv vs fallback .estat-tcg). É o sinal de
+    # honestidade do output. Chunks antigos não têm a coluna "TCG Source" →
+    # infere pela presença de "TCG US$" (real só era populado no caminho real),
     # mantendo o comportamento legado sem mascarar fallback como real.
+    #
+    # v5.15.1 (2026-06-22) BUG FIX: a célula "TCG Source" guarda o RÓTULO LEGÍVEL
+    # que generate_xlsx escreve ("real (tcgcsv)", "real (pokemontcg.io)",
+    # "fallback (.estat-tcg)") — NÃO o token interno (`tcgcsv`/`pokemontcg.io`/
+    # `myp_estat`). O parser antigo só reconhecia a substring "pokemontcg", então
+    # TODO chunk via tcgcsv (a fonte do CI desde v5.15) caía em "myp_estat" →
+    # o consolidado mostrava 0 real / 100% fallback mesmo com 537 cards REAIS
+    # gravados pelos chunks. Aqui reconstruímos o token interno do rótulo (inverso
+    # de _REAL_SOURCES de generate_xlsx): tcgcsv e pokemontcg.io são REAIS e
+    # preservados; só "fallback" (ou rótulo desconhecido) vira myp_estat.
+    # Honestidade dura: real só permanece real; fallback continua fallback.
     _src = rec.get("TCG Source")
     if _src:
-        card.tcg_source = "pokemontcg.io" if "pokemontcg" in str(_src).lower() else "myp_estat"
+        _src_lc = str(_src).lower()
+        if "tcgcsv" in _src_lc:
+            card.tcg_source = "tcgcsv"
+        elif "pokemontcg" in _src_lc:
+            card.tcg_source = "pokemontcg.io"
+        else:
+            card.tcg_source = "myp_estat"
     else:
+        # Chunk legado sem a coluna "TCG Source": real só era populado no caminho
+        # real (com USD), então infere pela presença de "TCG US$".
         card.tcg_source = "pokemontcg.io" if card.tcg_real_usd not in (None, "", "—") else "myp_estat"
     # v5.8 (2026-05-16): preservar sanity-check fields entre chunks. Aggregate
     # estava strip-ando tcg_suspect → consolidated XLSX volta a mostrar Jirachi

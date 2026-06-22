@@ -1,5 +1,65 @@
 # Changelog
 
+## v5.15.1 — 2026-06-22 — FIX: agregação dos chunks rebaixava preço REAL (tcgcsv) pra fallback
+
+**O que muda em uma frase:** o scan completo do GitHub voltou a entregar **preço
+real** ponta-a-ponta — o passo que junta os 20 pedaços (chunks) parou de jogar
+fora o preço de verdade que cada pedaço já tinha calculado.
+
+### O bug (run `27926311953`)
+O scan completo provou que o tcgcsv **FUNCIONA no CI**: os 20 chunks gravaram
+preço real (`TCG Source = real (tcgcsv)` — 537 cartas). MAS o passo de
+**agregação** (`myp_aggregate.py`, que junta os 20 chunks num XLSX só) saía com
+**0/1803 real, 100% fallback `.estat-tcg`**, e o balde de "deals limpos" vazio.
+
+### Causa-raiz exata
+`myp_aggregate.py`, `card_from_row()` (linhas ~63-67, pré-fix). A célula
+`TCG Source` do chunk guarda o **rótulo legível** que `generate_xlsx` escreve
+(`"real (tcgcsv)"`, `"real (pokemontcg.io)"`, `"fallback (.estat-tcg)"`) — não o
+token interno. O parser do aggregate só reconhecia a substring `"pokemontcg"`:
+
+```python
+card.tcg_source = "pokemontcg.io" if "pokemontcg" in str(_src).lower() else "myp_estat"
+```
+
+Como `"real (tcgcsv)"` **não contém** `"pokemontcg"`, **toda** carta real do CI
+(tcgcsv é a fonte do CI desde a v5.15) caía em `"myp_estat"` (fallback) ao ser
+relida na junção. `generate_xlsx` então re-rotulava fielmente como
+`"fallback (.estat-tcg)"`. O sinal de honestidade reportava ZERO corretamente,
+mas o pipeline completo não entregava real nenhum.
+
+### Fix
+- **`myp_aggregate.py`:** `card_from_row()` agora reconstrói o token interno a
+  partir do rótulo (inverso de `_REAL_SOURCES`): `tcgcsv` → `tcgcsv`,
+  `pokemontcg` → `pokemontcg.io`, resto → `myp_estat`. Honestidade dura: real só
+  permanece real (tcgcsv **e** pokemontcg.io); fallback continua fallback. O
+  preço real em USD (`tcg_real_usd`) já era preservado.
+- **`myp_summary.py`:** mensagem stale do `🛑 ZERO preço real` (texto v5.14 que
+  dizia "Provável run em runner do GitHub que não alcança a pokemontcg.io →
+  enriqueça LOCAL com myp_enrich.py") atualizada: desde a v5.15 o CI puxa real
+  via tcgcsv, então **0 real agora indica FALHA** (tcgcsv fora do ar, sets sem
+  groupId, ou perda da fonte na agregação) — não mais o estado normal do CI. Os
+  rótulos `(pokemontcg.io)` na nota de cobertura viraram `(tcgcsv/pokemontcg.io)`.
+
+### Re-validação (re-agregação dos 20 chunks reais do run `27926311953`)
+| | real | fallback | deals limpos ≥30% |
+|---|---|---|---|
+| **Antes (consolidado do run / repro buggy)** | **0** / 1803 | 1803 | **0** |
+| **Depois (fix)** | **537** / 1803 | 1266 | **17** |
+
+Os 537 reais batem exatamente com a soma dos 20 chunks. 17 deals limpos com
+preço real voltaram a popular o balde Top-50.
+
+### Testes
+- Estendido `test_tcg_source_roundtrip_aggregate`: adiciona row `real (tcgcsv)`
+  e asserta que sobrevive ao round-trip como `tcgcsv` (não vira fallback) +
+  contagem real preservada.
+- Novo `test_aggregate_multichunk_preserves_real_counts`: monta 2 mini-XLSX de
+  chunk com mix real(tcgcsv)/real(pokemontcg)/fallback, roda `myp_aggregate.main()`
+  (o caminho do workflow) e asserta que o consolidado preserva 3 real (2 tcgcsv)
+  + 2 fallback. **Ambos falham contra o código antigo, passam com o fix** (51/51
+  verdes).
+
 ## v5.15 — 2026-06-21 — Preço TCG REAL via **tcgcsv.com** (a fonte que FUNCIONA no CI)
 
 **O que muda em uma frase:** o scanner agora consegue puxar o preço **de

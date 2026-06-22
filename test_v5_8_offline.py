@@ -1537,21 +1537,34 @@ def test_tcg_source_roundtrip_aggregate():
     real_row = ("Charizard ex", "Surging Sparks", "SIR", 80.0, 200.0, 37.0,
                 "real (pokemontcg.io)", 180.0, 1.5, 120.0, 4, "", "", "", "",
                 "http://myp/x", "2026-06-20", "http://tcg/x")
+    # v5.15.1 REGRESSÃO DURA: a fonte REAL do CI desde a v5.15 é o tcgcsv. O
+    # rótulo "real (tcgcsv)" NÃO contém "pokemontcg" — o parser antigo o tratava
+    # como fallback, zerando os 537 reais do CI no consolidado. Esta row garante
+    # que tcgcsv sobrevive ao round-trip como REAL (token interno `tcgcsv`).
+    real_csv_row = ("Garchomp ex", "Surging Sparks", "Double Rare", 70.0, 95.0, 18.4,
+                    "real (tcgcsv)", 90.0, 0.35, 25.0, 5, "", "", "", "",
+                    "http://myp/z", "2026-06-22", "http://tcg/z")
     fb_row = ("Pikachu", "Velho", "Comum", 60.0, 150.0, None,
               "fallback (.estat-tcg)", 140.0, 1.5, 90.0, 2, "", "", "", "",
               "http://myp/y", "2026-06-20", "http://tcg/y")
     cr = card_from_row(hdr, real_row)
+    cc = card_from_row(hdr, real_csv_row)
     cf = card_from_row(hdr, fb_row)
     assert cr.tcg_source == "pokemontcg.io", cr.tcg_source
+    assert cc.tcg_source == "tcgcsv", cc.tcg_source  # v5.15.1: tcgcsv preservado
     assert cf.tcg_source == "myp_estat", cf.tcg_source
 
     # Round-trip completo: generate_xlsx -> load_chunk_cards preserva a fonte.
     with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
         out = f.name
-    generate_xlsx([cr, cf], out, threshold=0.25)
+    generate_xlsx([cr, cc, cf], out, threshold=0.25)
     reloaded = {c.name: c.tcg_source for c in load_chunk_cards(Path(out))}
     assert reloaded["Charizard ex"] == "pokemontcg.io", reloaded
+    assert reloaded["Garchomp ex"] == "tcgcsv", reloaded  # v5.15.1: NÃO vira fallback
     assert reloaded["Pikachu"] == "myp_estat", reloaded
+    # Contagem real-vs-fallback preservada no round-trip (2 real, 1 fallback).
+    real_ct = sum(1 for s in reloaded.values() if s in ("pokemontcg.io", "tcgcsv"))
+    assert real_ct == 2, f"esperava 2 reais preservados, obteve {real_ct}: {reloaded}"
     Path(out).unlink()
 
     # XLSX ANTIGO (sem 'TCG Source'): infere pela presença de "TCG US$" — NÃO
@@ -1562,6 +1575,80 @@ def test_tcg_source_roundtrip_aggregate():
     assert card_from_row(old_hdr, old_real).tcg_source == "pokemontcg.io"
     assert card_from_row(old_hdr, old_fb).tcg_source == "myp_estat"
     print("  TCG Source round-trip: preserva real/fallback + infere XLSX antigo ✓")
+    return True
+
+
+def _make_mini_chunk(path, cards_spec):
+    """Escreve um mini-XLSX de chunk (sheet 'All EN Cards') via generate_xlsx, a
+    partir de uma lista (name, src, usd) — src em {'tcgcsv','pokemontcg.io','myp_estat'}."""
+    cards = []
+    for i, (name, src, usd) in enumerate(cards_spec):
+        cards.append(CardData(
+            name=name, edition="Surging Sparks", rarity="Double Rare",
+            product_url=f"https://myp/{name}{i}",
+            myp_lowest_en_nm=70.0, tcg_player_price=95.0,
+            tcg_real_usd=usd, tcg_source=src,
+            myp_last_sale_brl=90.0, margin_pct=0.35, margin_brl=25.0,
+            en_nm_sellers=5, last_updated="2026-06-22",
+        ))
+    generate_xlsx(cards, str(path), threshold=0.30)
+
+
+def test_aggregate_multichunk_preserves_real_counts():
+    """v5.15.1 REGRESSÃO DURA (bug do run 27926311953): a agregação de MÚLTIPLOS
+    chunks deve PRESERVAR as contagens real-vs-fallback. O bug: chunks gravavam
+    'real (tcgcsv)' mas o consolidado saía 100% 'fallback (.estat-tcg)' porque o
+    parser do aggregate não reconhecia o rótulo tcgcsv. Aqui montamos 2 mini-chunks
+    com mix real(tcgcsv)/real(pokemontcg)/fallback, rodamos o aggregate.main() de
+    verdade (o caminho do workflow), e assertamos que o consolidado preserva os
+    reais — não os rebaixa pra fallback."""
+    import myp_aggregate
+
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        c0 = d / "myp_chunk_0.xlsx"
+        c1 = d / "myp_chunk_1.xlsx"
+        out = d / "consolidated.xlsx"
+        # chunk 0: 2 tcgcsv real + 1 fallback ; chunk 1: 1 pokemontcg real + 1 fallback
+        _make_mini_chunk(c0, [
+            ("Garchomp ex", "tcgcsv", 18.4),
+            ("Garbodor", "tcgcsv", 18.6),
+            ("Entei", "myp_estat", None),
+        ])
+        _make_mini_chunk(c1, [
+            ("Charizard ex", "pokemontcg.io", 37.0),
+            ("Raichu", "myp_estat", None),
+        ])
+
+        # Roda o aggregate EXATAMENTE como o workflow (via main()).
+        argv = ["myp_aggregate.py", str(c0), str(c1), "--output", str(out),
+                "--threshold", "0.30"]
+        old_argv = sys.argv[:]
+        sys.argv = argv
+        try:
+            rc = myp_aggregate.main()
+        finally:
+            sys.argv = old_argv
+        assert rc == 0, f"aggregate.main() retornou {rc}"
+
+        # Lê a coluna 'TCG Source' do consolidado e conta real vs fallback.
+        wb = load_workbook(out, read_only=True, data_only=True)
+        ws = wb["All EN Cards"]
+        rows = list(ws.iter_rows(values_only=True))
+        wb.close()
+        headers = list(rows[0])
+        si = headers.index("TCG Source")
+        labels = [r[si] for r in rows[1:]]
+        real_ct = sum(1 for s in labels if s and "real" in str(s).lower())
+        fb_ct = sum(1 for s in labels if s and "fallback" in str(s).lower())
+        tcgcsv_ct = sum(1 for s in labels if s and "tcgcsv" in str(s).lower())
+
+        # Input total = 3 real (2 tcgcsv + 1 pokemontcg) + 2 fallback.
+        assert len(labels) == 5, f"esperava 5 cards consolidados, obteve {len(labels)}"
+        assert real_ct == 3, f"esperava 3 reais preservados, obteve {real_ct}: {labels}"
+        assert fb_ct == 2, f"esperava 2 fallback, obteve {fb_ct}: {labels}"
+        assert tcgcsv_ct == 2, f"esperava 2 tcgcsv preservados, obteve {tcgcsv_ct}: {labels}"
+    print("  aggregate multi-chunk: preserva 3 real (2 tcgcsv) + 2 fallback ✓")
     return True
 
 
@@ -2134,6 +2221,7 @@ def main():
         ("v5.13 atribuição de cobertura do fallback", test_fallback_attribution),
         ("v5.14 coluna TCG Source explícita", test_tcg_source_column_explicit),
         ("v5.14 TCG Source round-trip aggregate", test_tcg_source_roundtrip_aggregate),
+        ("v5.15.1 aggregate multi-chunk preserva contagens real", test_aggregate_multichunk_preserves_real_counts),
         ("v5.14 sinal de cobertura real no resumo", test_summary_real_coverage_signal),
         ("v5.14.1 cobertura sobre universo EN c/ 0 deals", test_summary_coverage_real_universe_with_zero_deals),
         ("v5.14.1 cobertura mista real/fallback (universo)", test_summary_coverage_mixed_real_fallback),
