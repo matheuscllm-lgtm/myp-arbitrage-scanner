@@ -1209,6 +1209,215 @@ def test_prefill_ptcg_set_batch():
     return True
 
 
+# ══════════════════════════════════════════════════════════════════════
+# v5.15: fonte de preço tcgcsv.com (funciona no CI)
+# ══════════════════════════════════════════════════════════════════════
+def _tcgcsv_session(groups=None, products=None, prices=None, log_calls=None):
+    """Sessão fake que responde aos 3 endpoints tcgcsv com fixtures sintéticas.
+
+    Schema fiel ao dump REAL (confirmado 2026-06-21): /groups → results c/
+    {groupId,name,abbreviation}; /products → results c/ extendedData[Number];
+    /prices → results c/ {productId, marketPrice, midPrice, subTypeName}."""
+    bodies = {"groups": groups, "products": products, "prices": prices}
+
+    class _Resp:
+        def __init__(self, body, status=200):
+            self._body = body
+            self.status_code = status
+        def json(self):
+            return self._body
+
+    class _Sess:
+        def get(self, url, **kw):
+            if log_calls is not None:
+                log_calls.append(url)
+            if url.endswith("/groups"):
+                return _Resp(bodies["groups"]) if bodies["groups"] is not None else _Resp(None, 500)
+            if url.endswith("/products"):
+                return _Resp(bodies["products"]) if bodies["products"] is not None else _Resp(None, 500)
+            if url.endswith("/prices"):
+                return _Resp(bodies["prices"]) if bodies["prices"] is not None else _Resp(None, 500)
+            return _Resp(None, 404)
+    return _Sess()
+
+
+def _tcgcsv_fixtures():
+    """Fixture mínima de 1 set (Stellar Crown → sv7, abbr SCR, groupId 23537)."""
+    groups = {"results": [
+        {"groupId": 23537, "name": "SV07: Stellar Crown", "abbreviation": "SCR"},
+        {"groupId": 99999, "name": "Outro Set Qualquer", "abbreviation": "ZZZ"},
+    ]}
+    products = {"results": [
+        {"productId": 1001, "name": "Venusaur ex",
+         "extendedData": [{"name": "Number", "value": "001/142"},
+                          {"name": "Rarity", "value": "Double Rare"}]},
+        {"productId": 1002, "name": "Ledyba",
+         "extendedData": [{"name": "Number", "value": "070/142"}]},
+        # número não-numérico (promo/GG) → não casa o cid {setcode}-{num}
+        {"productId": 1003, "name": "Promo Card",
+         "extendedData": [{"name": "Number", "value": "GG01/GG10"}]},
+    ]}
+    prices = {"results": [
+        # productId 1001: 2 subtypes → _min_tcg_usd pega o menor market (12.0)
+        {"productId": 1001, "lowPrice": 10.0, "midPrice": 20.0,
+         "highPrice": 99.0, "marketPrice": 18.0, "subTypeName": "Normal"},
+        {"productId": 1001, "lowPrice": 8.0, "midPrice": 15.0,
+         "highPrice": 50.0, "marketPrice": 12.0, "subTypeName": "Holofoil"},
+        # productId 1002: só mid (market None) → cai no mid 5.0
+        {"productId": 1002, "lowPrice": 4.0, "midPrice": 5.0,
+         "highPrice": 9.0, "marketPrice": None, "subTypeName": "Normal"},
+        {"productId": 1003, "lowPrice": 1.0, "midPrice": 2.0,
+         "highPrice": 3.0, "marketPrice": 1.5, "subTypeName": "Normal"},
+    ]}
+    return groups, products, prices
+
+
+def test_tcgcsv_prefill_parses_schema():
+    """v5.15: _prefill_tcgcsv_set parseia o schema REAL do tcgcsv (groups+products
+    +prices), junta por productId, aplica _min_tcg_usd (menor market/mid entre
+    subtypes — IDÊNTICO ao pokemontcg.io) e popula o MESMO _ptcg_cache."""
+    from myp_arbitrage_scanner import MYPScraper
+
+    groups, products, prices = _tcgcsv_fixtures()
+    calls = []
+    sc = MYPScraper(delay=0.0, min_price=50.0)
+    sc.fx_usd_brl = 5.0
+    sc.session = _tcgcsv_session(groups, products, prices, log_calls=calls)
+
+    ok = sc._prefill_tcgcsv_set("sv7", "SV07: Stellar Crown")
+    assert ok is True, "prefill devia ter preenchido ≥1 preço"
+    # 1001: min(market 18, market 12) = 12.0 (menor subtype vence); cid sv7-1
+    assert sc._ptcg_cache.get("sv7-1") == 12.0, sc._ptcg_cache
+    # 1002: market None → mid 5.0; zero à esquerda normalizado (070→70)
+    assert sc._ptcg_cache.get("sv7-70") == 5.0, sc._ptcg_cache
+    # 1003: número não-numérico (GG01) → fora do cache
+    assert not any(k.startswith("sv7-GG") for k in sc._ptcg_cache), sc._ptcg_cache
+    # ambos os cids são marcados como provenientes do tcgcsv
+    assert "sv7-1" in sc._tcgcsv_cids and "sv7-70" in sc._tcgcsv_cids
+    # 3 requests: groups + products + prices (1 set)
+    assert sum("/groups" in u for u in calls) == 1
+    assert sum("/products" in u for u in calls) == 1
+    assert sum("/prices" in u for u in calls) == 1
+    assert sc._stats["tcgcsv_prefill_sets"] == 1
+    print("  v5.15 tcgcsv prefill: parse schema + min(subtype) + cache compartilhado ✓")
+    return True
+
+
+def test_tcgcsv_groupid_resolution():
+    """v5.15: resolve_tcgcsv_group_id casa por abreviação (primário) e por nome
+    (fallback). Set sem correspondência → None (→ fallback honesto, sem chute)."""
+    from myp_arbitrage_scanner import resolve_tcgcsv_group_id
+    groups = [
+        {"groupId": 23537, "name": "SV07: Stellar Crown", "abbreviation": "SCR"},
+        {"groupId": 24541, "name": "ME: Ascended Heroes", "abbreviation": "ASC"},
+    ]
+    # por abreviação (mapa conhecido sv7→SCR)
+    assert resolve_tcgcsv_group_id("sv7", "SV07: Stellar Crown", groups) == 23537
+    assert resolve_tcgcsv_group_id("me2pt5", "ME: Ascended Heroes", groups) == 24541
+    # setcode fora do mapa de abreviação → fallback por nome (substring MYP)
+    groups2 = [{"groupId": 555, "name": "SV07: Stellar Crown", "abbreviation": "XXX"}]
+    assert resolve_tcgcsv_group_id("sv7", "Stellar Crown", groups2) == 555
+    # sem correspondência nenhuma → None (NUNCA chuta um groupId)
+    assert resolve_tcgcsv_group_id("sv99", "Set Inexistente", groups) is None
+    print("  v5.15 groupId: abbr primário + nome fallback + None honesto ✓")
+    return True
+
+
+def test_tcgcsv_no_match_falls_back_honestly():
+    """v5.15: set sem groupId no tcgcsv → _prefill_tcgcsv_set retorna False e NÃO
+    popula cache (NUNCA preço inventado). Honestidade dura."""
+    from myp_arbitrage_scanner import MYPScraper
+    groups = {"results": [{"groupId": 1, "name": "Algum Set", "abbreviation": "ZZZ"}]}
+    sc = MYPScraper(delay=0.0, min_price=50.0)
+    sc.fx_usd_brl = 5.0
+    sc.session = _tcgcsv_session(groups, {"results": []}, {"results": []})
+    # sv7 não casa nenhum group da fixture → sem groupId
+    ok = sc._prefill_tcgcsv_set("sv7", "SV07: Stellar Crown")
+    assert ok is False
+    assert sc._ptcg_cache == {}, "cache devia ficar vazio (sem preço inventado)"
+    assert sc._tcgcsv_cids == set()
+    print("  v5.15 tcgcsv sem match → fallback honesto (cache vazio) ✓")
+    return True
+
+
+def test_tcgcsv_end_to_end_real_source_label():
+    """v5.15: ponta-a-ponta — prefill tcgcsv + scrape_product → card sai com
+    tcg_source='tcgcsv' (REAL), preço real sobrepõe o `.estat-tcg`, margem real."""
+    from myp_arbitrage_scanner import MYPScraper
+
+    groups, products, prices = _tcgcsv_fixtures()
+    sc = MYPScraper(delay=0.0, min_price=50.0, tcg_source="tcgcsv")
+    sc.fx_usd_brl = 5.0
+    sc.session = _tcgcsv_session(groups, products, prices)
+    # pré-carrega o set (como faz o loop de edições)
+    sc._prefill_tcgcsv_set("sv7", "SV07: Stellar Crown")
+    # NÃO deve haver round-trip pokemontcg.io em modo tcgcsv
+    sc._fetch_ptcg_usd = lambda cid: (_ for _ in ()).throw(
+        AssertionError("modo tcgcsv não deve chamar pokemontcg.io"))
+
+    # Ledyba 070/142: tcgcsv real só-mid US$5 → R$25? não — usamos Venusaur 001
+    # (US$12 → R$60). .estat-tcg declara R$300 (fake) → o real sobrepõe.
+    # EN-NM lowest = 50 (≥ min_price 50, passa o filtro). Margem real = (60-50)/50
+    # = 0.20.
+    html = _real_price_page("Venusaur ex (001/142)", "300,00", ["50,00", "55,00"])
+    sc._get = lambda url, save_debug=False: BeautifulSoup(html, "lxml")
+    card = sc.scrape_product("https://mypcards.com/pokemon/produto/1/venusaur",
+                             "SV07: Stellar Crown")
+    assert card is not None
+    assert card.tcg_source == "tcgcsv", f"source={card.tcg_source}"
+    assert abs(card.tcg_real_usd - 12.0) < 1e-6, card.tcg_real_usd
+    assert abs(card.tcg_player_price - 60.0) < 1e-6, card.tcg_player_price
+    # o preço real (R$60) sobrepôs o `.estat-tcg` declarado (R$300, fake)
+    assert abs(card.myp_declared_tcg_brl - 300.0) < 1e-6, card.myp_declared_tcg_brl
+    assert abs(card.margin_pct - 0.20) < 1e-6, card.margin_pct
+    assert sc._stats["tcg_from_tcgcsv"] == 1, sc._stats["tcg_from_tcgcsv"]
+    assert sc._stats["tcg_from_real"] == 1
+    print("  v5.15 e2e: card sai tcg_source='tcgcsv' (REAL), preço real na margem ✓")
+    return True
+
+
+def _tcgcsv_deal(name, myp, tcg_brl, usd, rarity="Double Rare"):
+    """v5.15: deal com preço REAL via tcgcsv (tcg_source='tcgcsv')."""
+    return CardData(
+        name=name, edition="Stellar Crown", rarity=rarity,
+        product_url=f"https://myp/{name}", myp_lowest_en_nm=myp,
+        tcg_player_price=tcg_brl, tcg_real_usd=usd, tcg_source="tcgcsv",
+        myp_last_sale_brl=myp, margin_pct=(tcg_brl - myp) / myp,
+        margin_brl=tcg_brl - myp, en_nm_sellers=3, last_updated="2026-06-20",
+    )
+
+
+def test_tcgcsv_recognized_as_real_in_summary():
+    """v5.15: o gate de honestidade do myp_summary (_is_real) reconhece
+    'real (tcgcsv)' como preço REAL — senão deals reais do CI cairiam no balde
+    'validar manualmente'. Regra dura: tcgcsv é fonte real verificável."""
+    from myp_summary import build_markdown
+
+    deal = _tcgcsv_deal("Venusaur ex (001/142)", 50.0, 80.0, 16.0)
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        xlsx = f.name
+    generate_xlsx([deal], xlsx, threshold=0.30)
+    with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as f:
+        md = f.name
+
+    rc = build_markdown(xlsx, md, scan_type="daily", run_id="", repo="x/y")
+    assert rc == 0
+    text = Path(md).read_text(encoding="utf-8")
+    sec = _section_of(text, "Venusaur ex")
+    assert sec is not None and "limpos" in sec.lower(), \
+        f"deal tcgcsv (REAL) devia estar no balde limpo, está em: {sec!r}\n{text[:900]}"
+    # NÃO pode aparecer no balde fallback
+    assert "FALLBACK `.estat-tcg`" not in text or "Venusaur ex" not in \
+        text.split("FALLBACK `.estat-tcg`")[-1], \
+        "deal tcgcsv (REAL) não pode estar no balde fallback"
+    # cobertura conta 1/1 real
+    assert "1/1 cartas EN com preço REAL" in text, \
+        f"cobertura devia contar 1/1 real:\n{text[:600]}"
+    Path(xlsx).unlink(); Path(md).unlink()
+    print("  v5.15 summary: 'real (tcgcsv)' reconhecido como REAL (balde limpo) ✓")
+    return True
+
+
 def test_fallback_attribution():
     """v5.13 (Iteração #2): _attribute_fallback classifica POR QUE o card caiu no
     fallback `.estat-tcg`, na MESMA cascata de _real_tcg_brl. Cada motivo cai no
@@ -1834,6 +2043,11 @@ def main():
         ("checkpoint save/load (v5.11.4)", test_checkpoint_save_load),
         ("scan resume skips done editions (v5.11.4)", test_scan_resume_skips_done_editions),
         ("v5.12 prefill batch pokemontcg.io por set", test_prefill_ptcg_set_batch),
+        ("v5.15 tcgcsv prefill parseia schema real", test_tcgcsv_prefill_parses_schema),
+        ("v5.15 tcgcsv resolução de groupId", test_tcgcsv_groupid_resolution),
+        ("v5.15 tcgcsv sem match → fallback honesto", test_tcgcsv_no_match_falls_back_honestly),
+        ("v5.15 tcgcsv e2e source='tcgcsv' (REAL)", test_tcgcsv_end_to_end_real_source_label),
+        ("v5.15 tcgcsv reconhecido como REAL no summary", test_tcgcsv_recognized_as_real_in_summary),
         ("v5.13 atribuição de cobertura do fallback", test_fallback_attribution),
         ("v5.14 coluna TCG Source explícita", test_tcg_source_column_explicit),
         ("v5.14 TCG Source round-trip aggregate", test_tcg_source_roundtrip_aggregate),

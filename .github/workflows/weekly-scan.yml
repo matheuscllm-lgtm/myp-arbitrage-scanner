@@ -98,9 +98,10 @@ jobs:
       - name: Run scanner chunk ${{ matrix.chunk_index }}/${{ needs.plan.outputs.chunk_total }}
         env:
           PYTHONIOENCODING: utf-8
-          # v5.11: preço TCG real via pokemontcg.io. Sem a key, scans grandes
-          # sofrem 429 e caem no fallback `.estat-tcg`. Vazio se o secret não
-          # existir → scanner roda keyless (graceful).
+          # v5.11: preço TCG real. v5.15: a fonte do CI é o tcgcsv.com — os
+          # runners do GitHub NÃO alcançam api.pokemontcg.io, mas ALCANÇAM o
+          # tcgcsv (sonda run 27918333945). A key fica disponível mas é
+          # irrelevante em --tcg-source tcgcsv (o tcgcsv não usa key).
           POKEMONTCG_API_KEY: ${{ secrets.POKEMONTCG_API_KEY }}
         run: |
           THRESHOLD="${{ github.event.inputs.threshold || '30' }}"
@@ -114,11 +115,14 @@ jobs:
           # ao quick-scan.yml (ex.: "Paldean Fates" vira 1 filtro, não "Paldean"
           # + "Fates" — bug do $ARGS cru anterior). Editions vazio = catálogo
           # full (não passa --editions; o scanner varre todas as edições).
+          # v5.15: --tcg-source tcgcsv = preço TCG REAL no runner (a rota que
+          # funciona); sem isto o weekly cairia 100% no fallback `.estat-tcg`.
           if [ -n "$EDITIONS_INPUT" ]; then
             eval "set -- $EDITIONS_INPUT"
             echo "Edições ($#): $@"
             python myp_arbitrage_scanner.py \
               --threshold "$THRESHOLD" --min-price "$MIN_PRICE" --delay "$DELAY" \
+              --tcg-source tcgcsv \
               --chunk-index "$CI" --chunk-total "$CT" \
               --output "myp_chunk_${CI}.xlsx" \
               --editions "$@"
@@ -126,6 +130,7 @@ jobs:
             echo "Editions vazio → catálogo full"
             python myp_arbitrage_scanner.py \
               --threshold "$THRESHOLD" --min-price "$MIN_PRICE" --delay "$DELAY" \
+              --tcg-source tcgcsv \
               --chunk-index "$CI" --chunk-total "$CT" \
               --output "myp_chunk_${CI}.xlsx"
           fi

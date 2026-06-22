@@ -59,11 +59,24 @@ python myp_arbitrage_scanner.py --editions "Ascended Heroes" \
   embutido** no cálculo (diferente do CardTrader, que usa `custo = preço × 1.06`).
   O operador calcula frete/câmbio/comissão por fora. **Não** adicionar
   multiplicador de custo ao cálculo de margem.
-- **Preço TCG = TCGplayer REAL via pokemontcg.io (v5.11)**, convertido USD→BRL
-  com câmbio ao vivo. O campo `.estat-tcg` do MYP **não** é mais a fonte primária
-  (ele mapeava a carta errada em Black Bolt/White Flare base-086 → preço furado);
-  vira **fallback** só onde o pokemontcg.io não cobre. A conversão de moeda **não**
-  é taxa — é só pra comparar BRL com BRL. **Defina `POKEMONTCG_API_KEY`** (env;
+- **Preço TCG = TCGplayer REAL (v5.11+)**, convertido USD→BRL com câmbio ao
+  vivo. O campo `.estat-tcg` do MYP **não** é a fonte primária (ele mapeava a
+  carta errada em Black Bolt/White Flare base-086 → preço furado); vira
+  **fallback** só onde não houver preço real. A conversão de moeda **não** é
+  taxa — é só pra comparar BRL com BRL.
+  - **🆕 v5.15 — duas rotas pro mesmo preço real (flag `--tcg-source`):**
+    - **`tcgcsv`** (dump diário grátis do TCGplayer via `tcgcsv.com`) é a **ÚNICA
+      fonte que funciona nos runners do GitHub Actions** — é o que o **CI usa**
+      agora (os 3 workflows passam `--tcg-source tcgcsv`). Cross-check confirmou
+      que tcgcsv = pokemontcg.io em **0–0,3%** (mesmo preço TCGplayer), e tcgcsv
+      ainda TEM preço pros sets **ME** (Ascended Heroes etc.) que a pokemontcg.io
+      devolve sem preço. Não usa key.
+    - **`pokemontcg`** (`api.pokemontcg.io`) é o caminho **local** clássico (o
+      PC alcança; os runners do GitHub não). Precisa de `POKEMONTCG_API_KEY` pra
+      evitar throttle 429.
+    - **`auto`** (default): tcgcsv primeiro; pokemontcg.io complementa por set
+      sem groupId tcgcsv. Em qualquer modo, sem fonte real = fallback honesto.
+  - **`POKEMONTCG_API_KEY`** (env;
   key grátis em dev.pokemontcg.io, 20k req/dia): elimina o throttle 429
   (backoff 5/15/30s) **e** ativa o sleep adaptativo de 0.3s (v5.11.2) — num
   scan quick de 8 edições o ganho passa de **15-24 min**. No PowerShell:
@@ -72,30 +85,23 @@ python myp_arbitrage_scanner.py --editions "Ascended Heroes" \
     1. **CI (workflows):** secret do GitHub Actions `POKEMONTCG_API_KEY`
        (*Settings → Secrets and variables → Actions*). Os 3 workflows
        (daily/weekly/quick) injetam no `env` do step de scan sozinhos (desde
-       #30). Toda run de workflow já usa — automático. *(Atualização
-       2026-06-20: os repos foram tornados **públicos** → minutos de GitHub
-       Actions são gratuitos; a nota anterior de "inativo por billing" não vale
-       mais. **MAS rodar ≠ servir preço real** — ver o 🛑 abaixo: o CI roda, só
-       que devolve preço FALLBACK. O run LOCAL segue como caminho pro preço
-       real.)*
-       - 🛑 **CI dá preço FALLBACK, não real (achado 2026-06-20 — NÃO
-         re-investigue):** os runners do GitHub **não alcançam**
-         `api.pokemontcg.io` (o Cloudflare da API bloqueia/challenge os IPs de
-         datacenter do GitHub/Azure → toda chamada falha → cai no `.estat-tcg`).
-         Logo o workflow produz **cobertura completa do catálogo com preço
-         fallback** (margens infladas/artefato — 650%/407%), **mesmo com o
-         secret setado**. Confirmado: 0/1326 reais no workflow, e 0 também
-         forçando Python 3.11 (não é key nem Python — é o IP do runner). PC/
-         container comum **alcança** a API normal. **Como obter preço real:**
-         rode o scanner **LOCAL** (preço já nasce real), **ou** use o **fluxo
-         híbrido** abaixo (workflow p/ cobertura → `myp_enrich.py` local p/
-         preço real). O sinal real-vs-fallback é **explícito** desde v5.14: a
-         coluna `TCG Source` no XLSX e a linha "Cobertura de preço TCG real" no
-         resumo do `myp_summary.py` dizem, por card, se o preço é real
-         (`pokemontcg.io`) ou fallback (`.estat-tcg`) — o CI nunca mais finge.
-         A linha de cobertura é medida sobre **todas** as cartas EN (universo,
-         aba `All EN Cards`), **não** sobre o balde de deals ≥threshold (corrigido
-         em v5.14.1): "preço de verdade?" (cobertura) ≠ "margem ≥30%?" (deal).
+       #30). *(Atualização 2026-06-20: os repos foram tornados **públicos** →
+       minutos de GitHub Actions são gratuitos.)*
+       - ✅ **CI agora serve preço REAL sozinho (v5.15 — supersede o 🛑 de
+         2026-06-20):** os runners do GitHub **não alcançam** `api.pokemontcg.io`
+         (CF da API bloqueia os IPs de datacenter — achado 2026-06-20, ainda
+         vale pra **essa** fonte). A v5.15 resolveu **trocando a fonte do CI** pro
+         **`tcgcsv.com`**, que o runner **ALCANÇA** (sonda `probe-price-sources.yml`
+         run `27918333945`: HTTP 200, JSON real) e que tem o **mesmo** preço
+         TCGplayer (cross-check 0–0,3%). Os 3 workflows passam `--tcg-source
+         tcgcsv` → o CI entrega preço **real** (`TCG Source = real (tcgcsv)`),
+         **sem precisar mais do passo manual `myp_enrich.py`**. A
+         `POKEMONTCG_API_KEY` continua injetada, mas é **irrelevante** em modo
+         tcgcsv (o tcgcsv não usa key). O sinal real-vs-fallback segue
+         **explícito** (coluna `TCG Source` + linha "Cobertura de preço TCG real"
+         do `myp_summary.py`): real = `pokemontcg.io`/`tcgcsv`, fallback =
+         `.estat-tcg`. A cobertura é medida sobre **todas** as cartas EN
+         (universo, aba `All EN Cards`), não sobre o balde de deals (v5.14.1).
     2. **Máquina local do operador (fluxo canônico — local-first):**
        `POKEMONTCG_API_KEY` setada como **variável de ambiente de usuário do
        Windows** (`[Environment]::SetEnvironmentVariable("POKEMONTCG_API_KEY",
@@ -128,23 +134,32 @@ python myp_arbitrage_scanner.py --editions "Ascended Heroes" \
   `editions` (multi-palavra entre aspas — o quick parseia certo via `eval
   set --`; o weekly tem bug latente com multi-palavra no `$ARGS` cru).
 
-## 🔀 Fluxo híbrido — preço TCG REAL no catálogo COMPLETO (v5.14)
+## 🔀 Fluxo híbrido — preço TCG REAL no catálogo COMPLETO
 
-> Em português simples: o **workflow do GitHub é rápido mas só sabe dar uma
-> estimativa de preço** (o "fallback"), porque os computadores do GitHub não
-> conseguem falar com o site de preços (pokemontcg.io). O **seu PC consegue**.
-> Então a gente usa os dois: o GitHub levanta a lista completa de cartas rápido,
-> e o seu PC preenche o preço de verdade depois. No fim, o resultado **diz claramente**
-> quais preços são de verdade e quais ficaram na estimativa — nada é mascarado.
+> **🆕 v5.15 — na maioria dos casos você NÃO precisa mais deste fluxo.** Desde a
+> v5.15 o **próprio workflow do GitHub já entrega preço real** (via `tcgcsv.com`,
+> a fonte que os computadores do GitHub conseguem acessar). Ou seja: rode o
+> workflow e o resultado já vem com preço de verdade (`TCG Source = real
+> (tcgcsv)`), sem o passo manual no seu PC. O fluxo híbrido abaixo com
+> `myp_enrich.py` continua **válido como opção** (ex.: você quer cruzar com o
+> preço da pokemontcg.io especificamente), mas deixou de ser **obrigatório**.
+
+> Contexto histórico (≤v5.14): o workflow só dava **estimativa** (fallback)
+> porque os computadores do GitHub não conseguem falar com a `pokemontcg.io`; o
+> seu PC consegue, então usava-se os dois. A v5.15 trocou a fonte do CI pro
+> tcgcsv e acabou com essa limitação.
 
 Quando você precisa de **preço TCG real no catálogo inteiro** (não só nos hot
-sets de um scan local), há dois caminhos:
+sets de um scan local):
 
-- **Simples:** rode o scanner **LOCAL** (`python myp_arbitrage_scanner.py …`) —
-  o preço já nasce real (o PC alcança a pokemontcg.io). Pode passar de 1h num
-  scan largo; rode detached.
-- **Híbrido (rápido + completo):** deixe o **workflow** levantar a cobertura e
-  enriqueça **local** com `myp_enrich.py`:
+- **Mais simples (v5.15):** rode o **workflow** — ele já entrega preço real
+  (tcgcsv) no catálogo inteiro, sozinho. Baixe o XLSX consolidado e entregue
+  via `myp_summary.py`.
+- **Local:** rode o scanner **LOCAL** (`python myp_arbitrage_scanner.py …`) — o
+  preço já nasce real (default `auto`: tcgcsv + pokemontcg.io). Pode passar de
+  1h num scan largo; rode detached.
+- **Híbrido (legado, opcional):** deixe o **workflow** levantar a cobertura e
+  enriqueça **local** com `myp_enrich.py` (usa a pokemontcg.io):
 
   ```bash
   # 1) workflow (cobertura do catálogo, ~2h em 20 runners) → baixe o XLSX consolidado
