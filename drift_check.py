@@ -32,6 +32,8 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
 import requests
 from bs4 import BeautifulSoup
 
+from myp_arbitrage_scanner import _clean_secret
+
 FIRECRAWL_API = "https://api.firecrawl.dev/v1/scrape"
 TIMEOUT = 60   # firecrawl pode levar até ~30s pra páginas com CF
 MIN_EDITIONS = 200   # mesmo floor do scanner v5.4 (catalog sanity)
@@ -138,7 +140,11 @@ def check_product(html: str) -> tuple[bool, str]:
 
 
 def main() -> int:
-    api_key = os.environ.get("FIRECRAWL_API_KEY", "").strip()
+    # _clean_secret (não só .strip()): .strip() NÃO remove BOM/zero-width, e a
+    # key vira header HTTP `Authorization: Bearer ...` (latin-1) em firecrawl_scrape.
+    # Um BOM no secret quebraria toda chamada ao Firecrawl — mesma classe de bug
+    # do X-Api-Key do scanner.
+    api_key = _clean_secret(os.environ.get("FIRECRAWL_API_KEY"))
     if not api_key:
         print("ERROR: FIRECRAWL_API_KEY não está no env. Configurar via gh secret set.", file=sys.stderr)
         return 2

@@ -149,6 +149,26 @@ PRICE_RE = re.compile(r'R\$\s*[\d.,]+')
 NAME_NNN_MMM_RE = re.compile(r"^(.*?\(\s*\d+\s*/\s*\d+\s*\))")
 
 
+def _clean_secret(value: Optional[str]) -> Optional[str]:
+    """Sanitiza um segredo (API key) lido de env/secret do CI antes de usá-lo
+    num header HTTP.
+
+    Remove BOM (U+FEFF), zero-width space (U+200B) e espaços/quebras nas pontas.
+    O `requests` codifica headers HTTP em latin-1; um BOM grudado no secret por
+    engano (arquivo salvo como UTF-8-with-BOM, copy/paste do site) vira
+    `UnicodeEncodeError: 'latin-1' codec can't encode '\\ufeff'` e derruba 100%
+    das chamadas — foi exatamente o que abortou o scan do scanner irmão no
+    GitHub Actions (mass pricing failure, scan "verde" mas vazio). `str.strip()`
+    NÃO remove BOM (U+FEFF não é whitespace pra Python), então tratamos
+    explicitamente. Retorna None se sobrar vazio — caller trata como 'sem key'
+    (sem header X-Api-Key, que é fallback válido na pokemontcg.io).
+    """
+    if value is None:
+        return None
+    cleaned = value.replace("\ufeff", "").replace("\u200b", "").strip()
+    return cleaned or None
+
+
 def clean_card_name(raw: str) -> str:
     """Trunca o título do <h1> logo após '(NNN/MMM)' quando presente,
     removendo o nome EN duplicado que o MYP concatena sem separador.
@@ -606,7 +626,11 @@ class MYPScraper:
         # fx_usd_brl é buscado uma vez no início de scan(); fica None em testes
         # offline (scan() não roda) → real-price path inerte, usa `.estat-tcg`.
         self.fx_usd_brl: Optional[float] = None
-        self.ptcg_api_key: Optional[str] = os.environ.get("POKEMONTCG_API_KEY") or None
+        # _clean_secret: tira BOM/zero-width/whitespace antes de virar header
+        # HTTP (X-Api-Key). Sem isso, um BOM no secret quebra o latin-1 encode do
+        # requests e derruba TODA chamada à pokemontcg.io (mass pricing failure,
+        # scan "verde" mas vazio — bug real que pegou o scanner irmão CardTrader).
+        self.ptcg_api_key: Optional[str] = _clean_secret(os.environ.get("POKEMONTCG_API_KEY"))
         self._ptcg_cache: dict[str, Optional[float]] = {}  # cid → preço USD (ou None)
         self._prefilled_sets: set[str] = set()  # v5.12: setcodes já pré-carregados (batch)
         # v5.15: fonte do preço TCG real. "auto" = tcgcsv primeiro (funciona no

@@ -8,6 +8,7 @@ end-to-end surfacing.
 Run: python test_v5_8_offline.py
 Exit 0 = todos asserts passam, 1 = regressão.
 """
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -17,6 +18,7 @@ from openpyxl import load_workbook
 from myp_arbitrage_scanner import (
     CardData,
     MYPScraper,
+    _clean_secret,
     generate_xlsx,
     tcg_search_url,
     tcg_direct_url,
@@ -2021,9 +2023,83 @@ def test_summary_coverage_no_price_at_all_branch():
     return True
 
 
+# ─── Regressão: segredo com BOM/zero-width → header latin-1-encodável ──────────
+# Bug real (scanner irmão CardTrader, GH Actions): o secret POKEMONTCG_API_KEY
+# tinha um BOM (U+FEFF) na frente. Headers HTTP são codificados em latin-1 pelo
+# `requests`, então "\ufeff..." virava
+# `UnicodeEncodeError: 'latin-1' codec can't encode '\ufeff'` em TODA chamada de
+# pricing → mass pricing failure → scan "verde" mas vazio. O MYP está hoje
+# insulado no CI (usa --tcg-source tcgcsv, sem header pokemontcg), mas em modo
+# pokemontcg/auto o mesmo header X-Api-Key é montado — _clean_secret trava isso.
+# NB: usamos escapes "\ufeff"/"\u200b" de propósito (nada de invisível literal
+# no fonte do teste).
+_BOM = "\ufeff"
+_ZWSP = "\u200b"
+
+
+def test_clean_secret_strips_bom_and_zero_width():
+    assert _clean_secret(_BOM + "abc123") == "abc123"
+    assert _clean_secret(_ZWSP + "abc123") == "abc123"
+    assert _clean_secret(_BOM + "  abc123  \n") == "abc123"
+    assert _clean_secret("  abc123\n") == "abc123"
+    # vazio / só-invisível → None (caller trata como 'sem key')
+    assert _clean_secret(None) is None
+    assert _clean_secret("") is None
+    assert _clean_secret("   ") is None
+    assert _clean_secret(_BOM) is None
+    assert _clean_secret(_ZWSP + _BOM) is None
+    # valor limpo passa intacto
+    assert _clean_secret("eyJhbGciOi.token.sig") == "eyJhbGciOi.token.sig"
+    print("  _clean_secret: BOM/ZWSP/whitespace removidos, vazio→None ✓")
+    return True
+
+
+def test_ptcg_api_key_bom_header_is_latin1_encodable():
+    """Com POKEMONTCG_API_KEY prefixada de BOM, o scanner sanitiza no read e o
+    header X-Api-Key resultante codifica em latin-1 (o que o requests faz). Antes
+    do _clean_secret isto estouraria UnicodeEncodeError em toda chamada."""
+    prev = os.environ.get("POKEMONTCG_API_KEY")
+    try:
+        os.environ["POKEMONTCG_API_KEY"] = _BOM + "secretkey"
+        sc = MYPScraper(delay=0.0)
+        assert sc.ptcg_api_key == "secretkey", repr(sc.ptcg_api_key)
+        header = {"X-Api-Key": sc.ptcg_api_key}["X-Api-Key"]
+        # O ponto da regressão: NÃO pode levantar UnicodeEncodeError.
+        header.encode("latin-1")
+    finally:
+        if prev is None:
+            os.environ.pop("POKEMONTCG_API_KEY", None)
+        else:
+            os.environ["POKEMONTCG_API_KEY"] = prev
+    print("  X-Api-Key com BOM: sanitizado → latin-1-encodável ✓")
+    return True
+
+
+def test_ptcg_api_key_bom_only_yields_no_key():
+    """Key que era só BOM/zero-width vira None → sem header X-Api-Key (fallback
+    sem-key, válido na pokemontcg.io). Não vira header inválido."""
+    prev = os.environ.get("POKEMONTCG_API_KEY")
+    try:
+        os.environ["POKEMONTCG_API_KEY"] = _ZWSP + _BOM
+        sc = MYPScraper(delay=0.0)
+        assert sc.ptcg_api_key is None, repr(sc.ptcg_api_key)
+        headers = {"X-Api-Key": sc.ptcg_api_key} if sc.ptcg_api_key else {}
+        assert "X-Api-Key" not in headers
+    finally:
+        if prev is None:
+            os.environ.pop("POKEMONTCG_API_KEY", None)
+        else:
+            os.environ["POKEMONTCG_API_KEY"] = prev
+    print("  X-Api-Key só-BOM: vira None → sem header ✓")
+    return True
+
+
 def main():
     tests = [
         ("threshold constant", test_threshold_constant),
+        ("secret BOM/zero-width sanitization", test_clean_secret_strips_bom_and_zero_width),
+        ("X-Api-Key c/ BOM → latin-1-encodável", test_ptcg_api_key_bom_header_is_latin1_encodable),
+        ("X-Api-Key só-BOM → sem header", test_ptcg_api_key_bom_only_yields_no_key),
         ("rarity-mislabel gate (2026-06-19)", test_rarity_mislabel_gate),
         ("Jirachi ratio math", test_jirachi_ratio_math),
         ("v5.14.4 tcg_suspect boundary exatamente 10x", test_tcg_suspect_boundary_exactly_10x),
