@@ -132,9 +132,11 @@ jobs:
       - name: Run scanner chunk ${{ matrix.chunk_index }}/${{ needs.plan.outputs.chunk_total }}
         env:
           PYTHONIOENCODING: utf-8
-          # v5.11: preço TCG real via pokemontcg.io. Sem a key, scans grandes
-          # sofrem 429 e caem no fallback `.estat-tcg`. Vazio se o secret não
-          # existir → scanner roda keyless (graceful).
+          # v5.11: preço TCG real. v5.15: a fonte do CI é o tcgcsv.com — os
+          # runners do GitHub NÃO alcançam api.pokemontcg.io (CF da API bloqueia
+          # IPs de datacenter; achado 2026-06-20), mas ALCANÇAM o tcgcsv (sonda
+          # run 27918333945). A key da pokemontcg.io fica disponível mas é
+          # irrelevante em --tcg-source tcgcsv (o tcgcsv não usa key).
           POKEMONTCG_API_KEY: ${{ secrets.POKEMONTCG_API_KEY }}
         run: |
           THRESHOLD="${{ github.event.inputs.threshold || '30' }}"
@@ -150,6 +152,9 @@ jobs:
           CT="${{ needs.plan.outputs.chunk_total }}"
 
           ARGS="--threshold $THRESHOLD --min-price $MIN_PRICE --delay $DELAY"
+          # v5.15: preço TCG REAL via tcgcsv.com (única fonte que funciona no
+          # runner). Sem isto, o CI cairia 100% no fallback `.estat-tcg`.
+          ARGS="$ARGS --tcg-source tcgcsv"
           ARGS="$ARGS --chunk-index $CI --chunk-total $CT"
           ARGS="$ARGS --output myp_chunk_${CI}.xlsx"
           # --editions usa nargs="+": shell precisa expandir as substrings.

@@ -1,5 +1,76 @@
 # Changelog
 
+## v5.15 — 2026-06-21 — Preço TCG REAL via **tcgcsv.com** (a fonte que FUNCIONA no CI)
+
+**O que muda em uma frase:** o scanner agora consegue puxar o preço **de
+verdade** do TCGplayer **rodando dentro do GitHub** (antes só conseguia no seu
+PC). Os robôs do GitHub não conseguem falar com o site de preços antigo
+(`pokemontcg.io`), mas conseguem falar com um espelho diário grátis chamado
+**tcgcsv.com** — que tem o **mesmo** preço do TCGplayer. Então o resultado do CI
+deixa de ser "estimativa" (fallback) e passa a ser preço real, sem você precisar
+rodar o passo manual no seu computador.
+
+### Por quê
+A v5.14 deixou **honesto** o sinal de "preço real vs estimativa" (`TCG Source`):
+ficou explícito que **todo** scan do CI caía no fallback `.estat-tcg` (margens
+infladas/artefato), porque os runners do GitHub Actions **não alcançam**
+`api.pokemontcg.io` (o Cloudflare da API bloqueia os IPs de datacenter do
+GitHub/Azure — achado 2026-06-20). Honesto, mas **inútil pro CI**: o workflow
+levantava o catálogo e não entregava preço real nenhum (era preciso o passo
+manual off-runner com `myp_enrich.py` no PC).
+
+**A sonda `probe-price-sources.yml` (run `27918333945`) provou empiricamente** que
+o mesmo runner **ALCANÇA `tcgcsv.com`** (HTTP 200, 217 sets, JSON real). O tcgcsv
+é um dump diário grátis dos preços do TCGplayer. Cross-check local 2026-06-21:
+tcgcsv concorda com a pokemontcg.io em **0–0,3%** (mesmo preço, só capturado por
+outra rota — ex.: Stellar Crown 174 *Area Zero Underdepths*: pokemontcg.io
+US$12,53 vs tcgcsv US$12,56 = **0,24%**, só drift de timestamp). **BÔNUS:** o
+tcgcsv TEM preço pros sets **ME** (Ascended Heroes etc.) que a pokemontcg.io
+devolve **sem `prices`** (a era ME inteira estava 0% de cobertura real) — smoke
+ao vivo: Ascended Heroes **7/7 cartas via tcgcsv, 0 fallback**.
+
+### Mudanças
+- **Novo provider tcgcsv** (`myp_arbitrage_scanner.py`):
+  - `tcgcsv_fetch_groups()` (lista de sets, cacheada 1×/run) +
+    `resolve_tcgcsv_group_id()` (setcode pokemontcg.io → groupId tcgcsv por
+    abreviação conhecida, fallback por nome do set; **sem match → None →
+    fallback honesto, nunca preço inventado**).
+  - `_prefill_tcgcsv_set()`: 2 requests por set (`/products` + `/prices`), junta
+    por `productId`, lê o número do colecionador do `extendedData[Number]`, aplica
+    o **mesmo** `_min_tcg_usd` (menor `market`/`mid` entre subtypes Normal/Holo/
+    Reverse) e popula o **MESMO** `_ptcg_cache` (keyed `{setcode}-{num}`) que o
+    caminho pokemontcg.io. Resultado: **todo** o caminho de margem a jusante
+    (`_real_tcg_brl`, override, cálculo de margem, flags) é **reusado sem
+    mudança** — o provider só troca de ONDE vem o preço USD cacheado.
+  - Header `User-Agent` é obrigatório no tcgcsv (sem ele = 401).
+- **Flag CLI `--tcg-source {auto,tcgcsv,pokemontcg}`** (default `auto`):
+  - `tcgcsv` → só tcgcsv (a rota do CI); cache miss = sem cobertura → fallback
+    honesto, **sem** round-trip à pokemontcg.io.
+  - `auto` → tcgcsv primeiro; pokemontcg.io complementa por set sem groupId
+    tcgcsv (útil local).
+  - `pokemontcg` → comportamento ≤v5.14 (só pokemontcg.io).
+- **Proveniência honesta:** preço do tcgcsv sai com `TCG Source = real (tcgcsv)`
+  (ambas as rotas são REAIS, rótulos distintos só p/ auditoria). O gate de
+  honestidade do `myp_summary.py` (`_is_real`) foi atualizado pra reconhecer
+  `tcgcsv` como REAL — senão deals reais do CI cairiam no balde "validar
+  manualmente". O fallback `.estat-tcg` segue marcado e fora do balde limpo.
+- **CI:** `daily/weekly/quick-scan.yml` agora passam `--tcg-source tcgcsv` →
+  o CI entrega **preço real sozinho**, aposentando o passo manual obrigatório
+  do `myp_enrich.py`. (O fluxo híbrido off-runner continua disponível/documentado
+  como opção, mas deixou de ser necessário pro preço real.)
+- **Testes (+5, suíte 47/47):** parse do schema real (fixture sintética fiel),
+  min(subtype), resolução de groupId (abbr + nome + None honesto), set sem match
+  → fallback honesto (cache vazio), e2e `tcg_source='tcgcsv'`, e o gate de
+  honestidade do summary reconhecendo tcgcsv como REAL.
+- **Validação ao vivo:** Stellar Crown 12 prods → 1 carta `real (tcgcsv)`
+  (175 preços prefilled em 1 batch, 0 pokemontcg.io calls), preço cross-checado
+  US$12,56 vs US$12,53 da pokemontcg.io (0,24%). Ascended Heroes 8 prods → 7/7
+  via tcgcsv, 0 fallback (era ME antes 100% fallback).
+
+> Honestidade dura preservada: fallback NUNCA contado como real; preço real só
+> de fonte verificável (tcgcsv ou pokemontcg.io). Set sem groupId tcgcsv → não
+> inventa preço, cai no fallback explícito.
+
 ## v5.14.4 — 2026-06-21 — `tcg_suspect` boundary inclusivo (`>=`): pega o exatamente-10x
 
 **Regressão de precisão minerada do eval asi-evolve.** O filtro `tcg_suspect`

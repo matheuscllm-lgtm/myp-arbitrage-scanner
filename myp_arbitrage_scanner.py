@@ -18,7 +18,7 @@ Requisitos:
 
 Autor: Matheus Chillemi / Claude
 Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10) | 2026-06-07 (v5.10.1 → v5.11) | 2026-06-09 (v5.11.1) | 2026-06-10 (v5.11.2 → v5.11.3) | 2026-06-16 (v5.11.4 → v5.11.6) | 2026-06-13 (v5.11.7, doc-only) | 2026-06-17 (v5.11.8 — loop: timing + bench) | 2026-06-17 (v5.12 — batch pokemontcg.io por set) | 2026-06-17 (v5.13 — Iteração #2: atribuição de cobertura do fallback) | 2026-06-20 (v5.14 — coluna "TCG Source" explícita + enrich off-runner p/ preço real) | 2026-06-20 (v5.14.1 — cobertura de preço real no summary medida sobre o universo de cartas EN) | 2026-06-21 (v5.14.3 — deal com preço FALLBACK sai do balde "limpos" → balde dedicado; fix BLOCKER de honestidade) | 2026-06-21 (v5.14.4 — tcg_suspect boundary inclusivo `>=` (pega exatamente-10x); regressão de precisão minerada do eval asi-evolve)
-Versão: v5.14.4
+Versão: v5.15
 
 Changelog v5.1 (2026-05-12 — auditoria C/H/M, mesma metodologia do CT scanner):
   - C1: --threshold < 1.0 auto-converte com warning (UX guard contra trap
@@ -266,6 +266,77 @@ _COLLECTOR_NUM_RE = re.compile(r"\((\d+)\s*/\s*(\d+)\)")
 # pokemontcg.io não tem cobertura (ex.: alguns Mega — me2pt5-269 sem preço).
 # ══════════════════════════════════════════════════════════════════════
 PTCG_API_BASE = "https://api.pokemontcg.io/v2/cards/"
+
+# ══════════════════════════════════════════════════════════════════════
+# v5.15 (2026-06-21): PREÇO TCG REAL via tcgcsv.com (fonte que FUNCIONA no CI)
+# ──────────────────────────────────────────────────────────────────────
+# Achado empírico (sonda probe-price-sources.yml run 27918333945): os runners
+# do GitHub Actions ALCANÇAM `tcgcsv.com` (HTTP 200, JSON real), enquanto
+# `api.pokemontcg.io` é bloqueado pelo CF da API nos IPs de datacenter do
+# GitHub/Azure → toda chamada cai no fallback `.estat-tcg` (margens infladas).
+# tcgcsv.com é um dump diário grátis dos preços do TCGplayer; cross-check local
+# 2026-06-21 confirmou que o preço tcgcsv concorda com o pokemontcg.io em
+# 0–1,5% (sv7-1: 1,34 vs 1,36; sv7-2: 0,06 idêntico) — é o MESMO preço
+# TCGplayer, só capturado por outra rota. BÔNUS: tcgcsv TEM preço pros sets ME
+# (Ascended Heroes etc.) que o pokemontcg.io devolve SEM `prices` (a era ME
+# inteira estava 0% de cobertura — ver MYP_EDITION_SUBSTR_TO_PTCG nota ME).
+#
+# Schema confirmado (categoria 3 = Pokémon):
+#   GET /tcgplayer/3/groups            → {results:[{groupId, name, abbreviation}]}
+#   GET /tcgplayer/3/<groupId>/products→ {results:[{productId, name,
+#                                          extendedData:[{name:"Number",
+#                                          value:"001/142"}, ...]}]}
+#   GET /tcgplayer/3/<groupId>/prices  → {results:[{productId, lowPrice,
+#                                          midPrice, marketPrice, subTypeName}]}
+#     subTypeName ∈ {Normal, Holofoil, Reverse Holofoil}; 1 produto pode ter
+#     várias linhas (1 por subtype). Header `User-Agent` é OBRIGATÓRIO (sem ele
+#     a API devolve 401). O preço usado é o MESMO `_min_tcg_usd` (menor market/
+#     mid entre subtypes) — resultado idêntico ao caminho pokemontcg.io.
+#
+# PONTE set→groupId: o scanner já mapeia edição MYP → setcode pokemontcg.io
+# (MYP_EDITION_SUBSTR_TO_PTCG). Aqui ligamos setcode → tcgcsv groupId por
+# abreviação/nome do group (resolvido 1× contra /groups, cacheado). O cache de
+# preço (`_ptcg_cache`) segue keyed por `{setcode}-{num}` — os dois provedores
+# preenchem a MESMA estrutura, então TODO o caminho de margem a jusante
+# (`_real_tcg_brl`, override, margem) é reusado sem mudança.
+# ══════════════════════════════════════════════════════════════════════
+TCGCSV_BASE = "https://tcgcsv.com/tcgplayer/3"  # categoria 3 = Pokémon
+TCGCSV_USER_AGENT = "myp-arbitrage-scanner/5.15 (+github.com/matheuscllm-lgtm/myp-arbitrage-scanner)"
+
+# setcode pokemontcg.io → abreviação tcgcsv (confirmado 2026-06-21 contra
+# /groups: sv7=SCR=Stellar Crown, me2pt5=ASC=Ascended Heroes, etc.). Quando o
+# setcode NÃO está aqui, a ponte cai no match por nome contra /groups (substring
+# do nome da edição), e se nem isso casar → sem groupId → fallback `.estat-tcg`
+# honesto (NUNCA preço inventado).
+PTCG_SETCODE_TO_TCGCSV_ABBR = {
+    "sv10": "DRI",      # Destined Rivals
+    "sv9": "JTG",       # Journey Together
+    "sv8pt5": "PRE",    # Prismatic Evolutions
+    "sv8": "SSP",       # Surging Sparks
+    "sv7": "SCR",       # Stellar Crown
+    "sv6pt5": "SFA",    # Shrouded Fable
+    "sv6": "TWM",       # Twilight Masquerade
+    "sv5": "TEF",       # Temporal Forces
+    "sv4pt5": "PAF",    # Paldean Fates
+    "sv4": "PAR",       # Paradox Rift
+    "sv3": "OBF",       # Obsidian Flames
+    "sv3pt5": "MEW",    # 151
+    "sv2": "PAL",       # Paldea Evolved
+    "me2pt5": "ASC",    # Ascended Heroes (pokemontcg.io SEM preço → tcgcsv resgata)
+    "me2": "PFL",       # Phantasmal Flames
+    "me1": "MEG",       # Mega Evolution (base)
+    "swsh12pt5": "CRZ",   # Crown Zenith
+    "swsh12": "SWSH12",   # Silver Tempest
+    "swsh11": "SWSH11",   # Lost Origin
+    "swsh10": "SWSH10",   # Astral Radiance
+    "swsh9": "SWSH09",    # Brilliant Stars (tcgcsv usa zero-pad: SWSH09)
+    "swsh8": "SWSH08",    # Fusion Strike
+    "swsh7": "SWSH07",    # Evolving Skies
+    "pgo": "PGO",         # Pokémon GO
+    "zsv10pt5": "BLK",  # Black Bolt
+    "rsv10pt5": "WHT",  # White Flare
+}
+
 # Câmbio: frankfurter.app (ECB, grátis, sem key); fallback open.er-api.com.
 _FX_SOURCES = (
     ("frankfurter", "https://api.frankfurter.app/latest?from=USD&to=BRL",
@@ -291,6 +362,55 @@ def fetch_usd_brl(session) -> Optional[float]:
                 return float(rate)
         except Exception as e:  # noqa: BLE001
             log.debug(f"FX {label} falhou: {e!r}")
+    return None
+
+
+def tcgcsv_fetch_groups(session) -> Optional[list]:
+    """v5.15: baixa a lista de groups (sets) do tcgcsv (categoria 3 = Pokémon).
+
+    Retorna a lista `results` (cada item: {groupId, name, abbreviation, ...}) ou
+    None se a request falhar. Header User-Agent é OBRIGATÓRIO (sem ele = 401)."""
+    try:
+        r = session.get(f"{TCGCSV_BASE}/groups",
+                         headers={"User-Agent": TCGCSV_USER_AGENT}, timeout=20)
+        if r.status_code != 200:
+            log.debug(f"tcgcsv /groups status {r.status_code}")
+            return None
+        results = (r.json() or {}).get("results")
+        return results if isinstance(results, list) else None
+    except Exception as e:  # noqa: BLE001
+        log.debug(f"tcgcsv /groups falhou: {e!r}")
+        return None
+
+
+def resolve_tcgcsv_group_id(setcode: str, edition: str, groups: list) -> Optional[int]:
+    """v5.15: setcode pokemontcg.io (+ nome da edição MYP) → tcgcsv groupId.
+
+    Estratégia em cascata (todas contra o dump REAL de /groups, sem chute):
+      1. Abreviação conhecida (PTCG_SETCODE_TO_TCGCSV_ABBR) casando o campo
+         `abbreviation` do group — caminho primário, confirmado 2026-06-21.
+      2. Fallback: match por NOME — a substring EN da edição MYP que está em
+         MYP_EDITION_SUBSTR_TO_PTCG (a chave cujo valor é este setcode) aparece
+         no `name` do group (ex.: "Stellar Crown" ∈ "SV07: Stellar Crown").
+    Retorna None se nada casar → caller mantém fallback `.estat-tcg` honesto.
+    """
+    if not groups:
+        return None
+    abbr = PTCG_SETCODE_TO_TCGCSV_ABBR.get(setcode)
+    if abbr:
+        for g in groups:
+            if str(g.get("abbreviation") or "").upper() == abbr.upper():
+                return g.get("groupId")
+    # Fallback por nome: acha a(s) substring(s) MYP que mapeiam a este setcode e
+    # tenta casá-la contra o name do group.
+    substrs = [s for s, c in MYP_EDITION_SUBSTR_TO_PTCG.items() if c == setcode]
+    el = (edition or "").lower()
+    for g in groups:
+        gname = str(g.get("name") or "").lower()
+        for s in substrs:
+            sl = s.lower()
+            if sl in gname or (sl in el and sl in gname):
+                return g.get("groupId")
     return None
 
 
@@ -447,6 +567,7 @@ class MYPScraper:
         min_en_sellers: int = MIN_EN_SELLERS_FOR_DEALS_DEFAULT,
         threshold: float = MARGIN_THRESHOLD,
         min_price: float = MIN_PRICE_BRL,
+        tcg_source: str = "auto",
     ):
         # v5.8.4 (2026-05-19): threshold configurable via CLI. Card é flagged
         # quando `en_sellers < min_en_sellers`. Default 2 reproduz v5.8.3
@@ -486,6 +607,17 @@ class MYPScraper:
         self.ptcg_api_key: Optional[str] = os.environ.get("POKEMONTCG_API_KEY") or None
         self._ptcg_cache: dict[str, Optional[float]] = {}  # cid → preço USD (ou None)
         self._prefilled_sets: set[str] = set()  # v5.12: setcodes já pré-carregados (batch)
+        # v5.15: fonte do preço TCG real. "auto" = tcgcsv primeiro (funciona no
+        # CI), pokemontcg.io como complemento por-card; "tcgcsv" = só tcgcsv;
+        # "pokemontcg" = comportamento ≤v5.14 (só pokemontcg.io). O preço de
+        # AMBOS popula o MESMO _ptcg_cache (keyed por {setcode}-{num}).
+        self.tcg_source_mode: str = (tcg_source or "auto").lower()
+        # cids cujo preço veio do tcgcsv (p/ rotular tcg_source corretamente —
+        # "tcgcsv" vs "pokemontcg.io"; ambos são REAIS, rótulos distintos só p/
+        # auditoria/proveniência). Setado por _prefill_tcgcsv_set.
+        self._tcgcsv_cids: set[str] = set()
+        self._tcgcsv_groups: Optional[list] = None   # cache de /groups (1× por run)
+        self._tcgcsv_groups_fetched: bool = False
         self._stats = {
             "pages_fetched": 0, "products_scanned": 0, "en_found": 0,
             # M5 fix: counters por motivo de skip (auditoria do funnel)
@@ -545,6 +677,11 @@ class MYPScraper:
             "t_ptcg_total": 0.0,      # tempo acumulado em _fetch_ptcg_usd (s)
             "ptcg_calls": 0,          # nº de chamadas reais à pokemontcg.io (por-card)
             "ptcg_prefill_calls": 0,  # v5.12: requests de prefill batch (por-set)
+            # v5.15: fonte tcgcsv (funciona no CI). tcg_from_tcgcsv = cards cujo
+            # preço real veio do tcgcsv; tcgcsv_prefill_sets = sets pré-carregados
+            # via tcgcsv (cada um = 2 requests: /products + /prices).
+            "tcg_from_tcgcsv": 0,
+            "tcgcsv_prefill_sets": 0,
             "t_editions_total": 0.0,  # tempo de parede por edição, acumulado (s)
         }
         # v5.4 H1: warn-once cache pra unknown language titles
@@ -997,6 +1134,11 @@ class MYPScraper:
         cid = f"{setcode}-{num}"
         if cid in self._ptcg_cache:
             usd = self._ptcg_cache[cid]
+        elif self.tcg_source_mode == "tcgcsv":
+            # v5.15: modo só-tcgcsv — cache miss = sem cobertura tcgcsv. NÃO
+            # consulta a pokemontcg.io (que de toda forma 404a no CI). Cai no
+            # fallback `.estat-tcg` honesto.
+            return None
         else:
             usd = self._fetch_ptcg_usd(cid)
             self._ptcg_cache[cid] = usd
@@ -1007,6 +1149,25 @@ class MYPScraper:
         if usd is None:
             return None
         return usd * self.fx_usd_brl
+
+    def _cid_for(self, card_name: str, edition_name: str) -> Optional[str]:
+        """v5.15: deriva o cid `{setcode}-{num}` (mesma cascata de `_real_tcg_brl`)
+        SEM tocar a rede/cache — usado só p/ rotular a proveniência do preço."""
+        setcode = myp_edition_to_ptcg_setcode(edition_name)
+        if not setcode:
+            return None
+        m = _COLLECTOR_NUM_RE.search(card_name or "")
+        if not m:
+            return None
+        return f"{setcode}-{m.group(1).lstrip('0') or '0'}"
+
+    def _real_tcg_source_label(self, card_name: str, edition_name: str) -> str:
+        """v5.15: 'tcgcsv' se o preço real veio do dump tcgcsv, senão
+        'pokemontcg.io'. Ambos são REAIS — rótulo só p/ auditoria/honestidade."""
+        cid = self._cid_for(card_name, edition_name)
+        if cid and cid in self._tcgcsv_cids:
+            return "tcgcsv"
+        return "pokemontcg.io"
 
     def _attribute_fallback(self, card_name: Optional[str], edition_name: str) -> None:
         """v5.13 (Iteração #2): classifica POR QUE o preço real não resolveu (→
@@ -1096,6 +1257,98 @@ class MYPScraper:
             page += 1
         if cached:
             log.info(f"  💾 prefill {setcode}: {cached} preços TCG em cache (batch)")
+
+    # ── v5.15: preço TCG REAL via tcgcsv.com (funciona no CI) ──
+    def _tcgcsv_get_json(self, path: str) -> Optional[dict]:
+        """GET tcgcsv + parse JSON, com o User-Agent obrigatório. None se falhar."""
+        try:
+            r = self.session.get(f"{TCGCSV_BASE}/{path}",
+                                  headers={"User-Agent": TCGCSV_USER_AGENT}, timeout=20)
+            if r.status_code != 200:
+                log.debug(f"tcgcsv {path} status {r.status_code}")
+                return None
+            return r.json()
+        except Exception as e:  # noqa: BLE001
+            log.debug(f"tcgcsv {path} falhou: {e!r}")
+            return None
+
+    def _prefill_tcgcsv_set(self, setcode: str, edition: str) -> bool:
+        """v5.15: pré-carrega os preços TCGplayer do SET via tcgcsv, populando o
+        MESMO `_ptcg_cache` (keyed por `{setcode}-{num}`) que o caminho
+        pokemontcg.io. Assim TODO o caminho de margem a jusante é reusado.
+
+        Faz 2 requests: `/{groupId}/products` (productId→Number do colecionador)
+        e `/{groupId}/prices` (productId→preço por subtype). Junta por productId,
+        aplica `_min_tcg_usd` (menor market/mid entre subtypes — IDÊNTICO ao
+        pokemontcg.io) e grava o USD no cache. Marca o cid em `_tcgcsv_cids` p/
+        rotular a proveniência. Roda no máx. 1× por setcode/run (compartilha
+        `_prefilled_sets` com o caminho pokemontcg.io — fontes mutuamente
+        exclusivas por set). Retorna True se preencheu ≥1 preço; False se sem
+        groupId/rede falhou (caller decide se cai no pokemontcg.io)."""
+        if setcode in self._prefilled_sets:
+            # já pré-carregado (por qualquer fonte) → True se há cids tcgcsv dele
+            return any(c.startswith(f"{setcode}-") for c in self._tcgcsv_cids)
+        if not self._tcgcsv_groups_fetched:
+            self._tcgcsv_groups = tcgcsv_fetch_groups(self.session)
+            self._tcgcsv_groups_fetched = True
+        if not self._tcgcsv_groups:
+            return False
+        group_id = resolve_tcgcsv_group_id(setcode, edition, self._tcgcsv_groups)
+        if not group_id:
+            log.debug(f"tcgcsv: sem groupId p/ setcode {setcode} ({edition!r})")
+            return False
+
+        products = self._tcgcsv_get_json(f"{group_id}/products")
+        prices = self._tcgcsv_get_json(f"{group_id}/prices")
+        if not products or not prices:
+            return False
+        self._stats["tcgcsv_prefill_sets"] += 1
+
+        # productId → número do colecionador (do extendedData "Number" = "NNN/MMM")
+        num_by_pid: dict[int, str] = {}
+        for p in products.get("results") or []:
+            pid = p.get("productId")
+            if pid is None:
+                continue
+            for ed in p.get("extendedData") or []:
+                if ed.get("name") == "Number" and ed.get("value"):
+                    num_by_pid[pid] = str(ed["value"])
+                    break
+
+        # productId → [preços USD] (1 por subtype) → _min_tcg_usd reusa a seleção
+        from collections import defaultdict
+        by_pid: dict[int, dict] = defaultdict(dict)
+        for r in prices.get("results") or []:
+            pid = r.get("productId")
+            if pid is None:
+                continue
+            # adapta a forma tcgcsv {marketPrice, midPrice} p/ a forma esperada
+            # por _min_tcg_usd ({market, mid}) — fonte ÚNICA de seleção de preço.
+            sub = r.get("subTypeName") or f"_{len(by_pid[pid])}"
+            by_pid[pid][sub] = {"market": r.get("marketPrice"),
+                                "mid": r.get("midPrice")}
+
+        cached = 0
+        for pid, num_raw in num_by_pid.items():
+            # "001/142" → numerador "1" (sem leading zeros), igual ao cid
+            # pokemontcg.io ({setcode}-{num}); ignora não-numérico (TG/GG/promo).
+            numerator = num_raw.split("/")[0].strip()
+            if not numerator.isdigit():
+                continue
+            cid = f"{setcode}-{numerator.lstrip('0') or '0'}"
+            usd = self._min_tcg_usd(by_pid.get(pid))
+            if usd is None:
+                continue
+            if cid not in self._ptcg_cache or self._ptcg_cache[cid] is None:
+                self._ptcg_cache[cid] = usd
+                self._tcgcsv_cids.add(cid)
+                cached += 1
+        if cached:
+            self._prefilled_sets.add(setcode)
+            log.info(f"  💾 tcgcsv {setcode} (group {group_id}): {cached} preços "
+                     f"TCG REAIS em cache (funciona no CI)")
+            return True
+        return False
 
     # ── Step 3: Scrape product detail page (v2 — per-seller language) ─
     def scrape_product(self, url: str, edition_name: str) -> Optional[CardData]:
@@ -1403,8 +1656,14 @@ class MYPScraper:
             if real_brl is not None:
                 card.tcg_player_price = real_brl
                 card.tcg_real_usd = real_brl / self.fx_usd_brl
-                card.tcg_source = "pokemontcg.io"
+                # v5.15: rótulo de proveniência — 'tcgcsv' ou 'pokemontcg.io'
+                # (ambos REAIS). `tcg_from_real` segue contando TODO preço real
+                # (a métrica de honestidade não distingue a rota); `tcg_from_tcgcsv`
+                # é o sub-contador da rota tcgcsv (a que funciona no CI).
+                card.tcg_source = self._real_tcg_source_label(card.name, edition_name)
                 self._stats["tcg_from_real"] += 1
+                if card.tcg_source == "tcgcsv":
+                    self._stats["tcg_from_tcgcsv"] += 1
                 # v5.11.3 (A1, resgatado do PR #25): o preço agora é o REAL do
                 # TCGplayer, não o `.estat-tcg` declarado. A flag de inflação do
                 # declarado (tcg_suspect) não se aplica mais — limpa pra não
@@ -1556,9 +1815,18 @@ class MYPScraper:
         # `.estat-tcg` do MYP (degrada pro comportamento ≤v5.10.1, com warning).
         self.fx_usd_brl = fetch_usd_brl(self.session)
         if self.fx_usd_brl:
-            src = "key" if self.ptcg_api_key else "sem key (rate-limit menor)"
-            log.info(f"  💲 Preço TCG real via pokemontcg.io ATIVO ({src}); "
-                     f"fallback `.estat-tcg` onde não houver cobertura.")
+            # v5.15: fonte do preço real conforme o modo.
+            if self.tcg_source_mode == "tcgcsv":
+                log.info("  💲 Preço TCG real via tcgcsv.com (ATIVO; funciona no CI); "
+                         "fallback `.estat-tcg` onde não houver cobertura.")
+            elif self.tcg_source_mode == "auto":
+                log.info("  💲 Preço TCG real ATIVO (auto: tcgcsv primeiro — funciona "
+                         "no CI; pokemontcg.io complementa); fallback `.estat-tcg` "
+                         "onde não houver cobertura.")
+            else:
+                src = "key" if self.ptcg_api_key else "sem key (rate-limit menor)"
+                log.info(f"  💲 Preço TCG real via pokemontcg.io ATIVO ({src}); "
+                         f"fallback `.estat-tcg` onde não houver cobertura.")
             if not self.ptcg_api_key:
                 # v5.11.2: a key grátis (dev.pokemontcg.io) elimina o throttle
                 # 429 (backoff 5/15/30s) E ativa o sleep adaptativo de 0.3s —
@@ -1630,10 +1898,25 @@ class MYPScraper:
             # v5.12: prefill batch dos preços TCG do set (1 request no lugar de N
             # por-card). Só quando há câmbio e a edição mapeia a um setcode; cards
             # fora do batch caem no fetch por-card normal (fallback intacto).
+            # v5.15: ordem de fontes conforme tcg_source_mode:
+            #   - "auto"     → tcgcsv primeiro (funciona no CI); pokemontcg.io
+            #                  cobre o set se o tcgcsv não tiver groupId/preço.
+            #   - "tcgcsv"   → só tcgcsv (sem fallback pra pokemontcg.io).
+            #   - "pokemontcg" → comportamento ≤v5.14 (só pokemontcg.io).
+            # Ambos populam o mesmo _ptcg_cache; cards fora do batch caem no fetch
+            # por-card pokemontcg.io normal (que no CI 404a → fallback honesto).
             if self.fx_usd_brl:
                 _setcode = myp_edition_to_ptcg_setcode(ed["title"])
                 if _setcode:
-                    self._prefill_ptcg_set(_setcode)
+                    used_tcgcsv = False
+                    if self.tcg_source_mode in ("auto", "tcgcsv"):
+                        used_tcgcsv = self._prefill_tcgcsv_set(_setcode, ed["title"])
+                    # pokemontcg.io complementa só em "auto" (quando o tcgcsv não
+                    # cobriu o set) e em "pokemontcg".
+                    if self.tcg_source_mode == "pokemontcg" or (
+                        self.tcg_source_mode == "auto" and not used_tcgcsv
+                    ):
+                        self._prefill_ptcg_set(_setcode)
 
             for j, purl in enumerate(product_urls):
                 self._stats["products_scanned"] += 1
@@ -1696,7 +1979,9 @@ class MYPScraper:
         log.info(f"      Seller pages followed (v5.9 pagination): {self._stats['seller_pages_followed']}")
         log.info(f"      Seller page fetch failures (v5.9): {self._stats['seller_page_fetch_failures']}")
         log.info(f"      Pagination skipped (cost gate TCG<min, v5.10.1): {self._stats['pagination_skipped_low_tcg']}")
-        log.info(f"      TCG real via pokemontcg.io (v5.11): {self._stats['tcg_from_real']}")
+        log.info(f"      TCG real (v5.11): {self._stats['tcg_from_real']} "
+                 f"(dos quais {self._stats['tcg_from_tcgcsv']} via tcgcsv — v5.15, "
+                 f"funciona no CI; em {self._stats['tcgcsv_prefill_sets']} set(s))")
         log.info(f"      TCG fallback .estat-tcg MYP (v5.11): {self._stats['tcg_from_myp_fallback']}")
         # v5.13 (Iteração #2): por que caiu no fallback (raiz dos falso-positivos).
         # unmapped_set é o balde mais fixável: 1 setcode cobre o set inteiro.
@@ -1832,9 +2117,12 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
             )
             or tcg_search_url(card.name)
         )
-        # v5.14: rótulo legível da fonte do preço. `pokemontcg.io` = REAL;
-        # `myp_estat` (ou vazio) = FALLBACK (.estat-tcg do MYP, margem suspeita).
-        tcg_source_label = "real (pokemontcg.io)" if card.tcg_source == "pokemontcg.io" else "fallback (.estat-tcg)"
+        # v5.14: rótulo legível da fonte do preço. REAL = preço verificável do
+        # TCGplayer (via pokemontcg.io OU, v5.15, via tcgcsv — a rota que funciona
+        # no CI); `myp_estat` (ou vazio) = FALLBACK (.estat-tcg do MYP, margem
+        # suspeita). v5.15: ambas as rotas reais saem rotuladas `real (<fonte>)`.
+        _REAL_SOURCES = {"pokemontcg.io": "real (pokemontcg.io)", "tcgcsv": "real (tcgcsv)"}
+        tcg_source_label = _REAL_SOURCES.get(card.tcg_source, "fallback (.estat-tcg)")
         vals = [
             card.name, card.edition, card.rarity,
             card.myp_lowest_en_nm, card.tcg_player_price, card.tcg_real_usd,
@@ -1873,8 +2161,9 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
                     c.fill = yellow_fill
                 elif v and v < 0:
                     c.fill = red_fill
-            if col == TCG_SOURCE_COL and card.tcg_source != "pokemontcg.io":
-                # Fallback = preço NÃO-real → sinaliza visualmente (margem suspeita).
+            if col == TCG_SOURCE_COL and card.tcg_source not in ("pokemontcg.io", "tcgcsv"):
+                # v5.15: só FALLBACK (.estat-tcg) é destacado em amarelo — as duas
+                # rotas REAIS (pokemontcg.io / tcgcsv) ficam sem destaque.
                 c.fill = yellow_fill
                 c.alignment = Alignment(horizontal="center")
             if col == EN_TRUNC_COL and card.en_truncation_risk:
@@ -2055,6 +2344,17 @@ Exemplos:
                             f"Manually conforme outras flags.")
     parser.add_argument("--editions", nargs="+", type=str, default=None,
                        help="Filtrar por edições específicas (substring match). Ex: --editions \"Ascended Heroes\" \"Prismáticas\"")
+    # v5.15: fonte do preço TCG real.
+    parser.add_argument("--tcg-source", choices=["auto", "tcgcsv", "pokemontcg"],
+                       default="auto",
+                       help="Fonte do preço TCG REAL (default: auto). "
+                            "'tcgcsv' = dump diário do TCGplayer via tcgcsv.com "
+                            "(ÚNICA fonte que funciona nos runners do GitHub "
+                            "Actions); 'pokemontcg' = só pokemontcg.io "
+                            "(comportamento ≤v5.14; falha no CI); 'auto' = tcgcsv "
+                            "primeiro, pokemontcg.io complementa por set sem "
+                            "groupId tcgcsv. Em qualquer modo, sem fonte real = "
+                            "fallback `.estat-tcg` honesto.")
     parser.add_argument("-o", "--output", type=str, default="",
                        help="Caminho do arquivo .xlsx de saída")
     # v5.5: chunk slicing pra GH Actions matrix job
@@ -2086,10 +2386,12 @@ Exemplos:
     scraper = MYPScraper(
         delay=args.delay, min_en_sellers=args.min_en_sellers,
         threshold=threshold_frac, min_price=args.min_price,
+        tcg_source=args.tcg_source,
     )
     log.info(
         f"Config: threshold={args.threshold}%, min_price=R${args.min_price}, "
-        f"delay={args.delay}s, min_en_sellers={args.min_en_sellers}"
+        f"delay={args.delay}s, min_en_sellers={args.min_en_sellers}, "
+        f"tcg_source={args.tcg_source}"
     )
     # v5.11.4: checkpoint vive ao lado do XLSX de saída (sobrevive ao reciclo
     # do container; o XLSX em si só é escrito no fim).

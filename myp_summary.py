@@ -219,14 +219,19 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
         return is_rarity_mislabel(c.get("Card Name"), c.get("Rarity"))
 
     # v5.14.3: "o preço é de verdade?" — fonte canônica = coluna "TCG Source"
-    # (real `pokemontcg.io` vs fallback `.estat-tcg`); XLSX antigo (pré-v5.14, sem
-    # a coluna) infere pela presença de "TCG US$" (que só o preço real preenche).
-    # Definido AQUI (e não mais abaixo, na cobertura) porque agora gateia também
-    # `deals_clean`. Definição ÚNICA — não duplicar.
+    # (real `pokemontcg.io`/`tcgcsv` vs fallback `.estat-tcg`); XLSX antigo
+    # (pré-v5.14, sem a coluna) infere pela presença de "TCG US$" (que só o preço
+    # real preenche). Definido AQUI (e não mais abaixo, na cobertura) porque agora
+    # gateia também `deals_clean`. Definição ÚNICA — não duplicar.
+    # v5.15: tcgcsv.com é a SEGUNDA fonte de preço REAL (a que funciona no CI). O
+    # rótulo `real (tcgcsv)` NÃO contém "pokemontcg" → precisa ser reconhecido
+    # explicitamente como real, senão o gate de honestidade o trataria como
+    # fallback e jogaria deals reais do CI pro balde "validar manualmente".
     def _is_real(c) -> bool:
         src = c.get("TCG Source")
         if src is not None and str(src).strip() != "":
-            return "pokemontcg" in str(src).lower()
+            s = str(src).lower()
+            return "pokemontcg" in s or "tcgcsv" in s
         return c.get("TCG US$") not in (None, "", "—")
 
     # v5.14.3 (fix BLOCKER de honestidade): um "deal limpo" precisa de preço REAL.

@@ -109,8 +109,11 @@ jobs:
           eval "set -- $EDS"
           echo "Edições ($#): $@"
 
+          # v5.15: --tcg-source tcgcsv = preço TCG REAL no runner (a rota que
+          # funciona; pokemontcg.io é inalcançável pelos IPs do GitHub).
           python myp_arbitrage_scanner.py \
             --threshold "$THRESHOLD" --min-price "$MIN_PRICE" --delay "$DELAY" \
+            --tcg-source tcgcsv \
             --chunk-index "$CI" --chunk-total "$CT" \
             --output "myp_chunk_${CI}.xlsx" \
             --editions "$@"
