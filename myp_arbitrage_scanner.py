@@ -2531,6 +2531,11 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
         margin_cell = ws3.cell(row=i, column=2, value=f"{d.margin_pct*100:.1f}% — R${d.margin_brl:,.2f}")
         margin_cell.font = bold_green
 
+    # Garante que o diretório-alvo exista antes de salvar (ex.: results/ não vem
+    # num clone limpo, por ser gitignored — sem isto, o wb.save() quebra com
+    # FileNotFoundError DEPOIS de um scan inteiro, perdendo todo o trabalho).
+    out_dir = os.path.dirname(os.path.abspath(output_path))
+    os.makedirs(out_dir, exist_ok=True)
     wb.save(output_path)
     log.info(f"📊 Spreadsheet saved: {output_path}")
     return output_path
