@@ -160,6 +160,28 @@ def test_xlsx_end_to_end():
     return True
 
 
+def test_xlsx_creates_missing_output_dir():
+    """Regressão: generate_xlsx deve CRIAR o diretório-alvo se ele não existir.
+
+    Num clone limpo (ex.: sessão Claude Code na nuvem) a pasta results/ é
+    gitignored e NÃO vem — antes do fix o wb.save() quebrava com
+    FileNotFoundError DEPOIS de um scan inteiro, perdendo todo o trabalho.
+    """
+    import shutil
+    cards = [make_clean_deal()]
+    tmpdir = tempfile.mkdtemp()
+    try:
+        missing = Path(tmpdir) / "results" / "nested"  # ainda NÃO existe
+        assert not missing.exists(), "pré-condição: dir-alvo não deve existir"
+        out = str(missing / "scan.xlsx")
+        generate_xlsx(cards, out, threshold=0.25)  # não deve levantar FileNotFoundError
+        assert Path(out).exists(), "xlsx não foi criado (dir-alvo não foi gerado)"
+        assert "🔥 Deals" in load_workbook(out).sheetnames
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+    return True
+
+
 def test_tcg_search_url():
     """v5.8.8: URL de busca TCGplayer remove o sufixo (NNN/MMM) e codifica."""
     u = tcg_search_url("Rayquaza VMAX (111/203)")
@@ -2326,6 +2348,7 @@ def main():
         ("v5.14.3 CI all-fallback → 0 limpos + balde fallback", test_summary_ci_all_fallback_zero_clean),
         ("v5.14.3 mix real/fallback → cada um no seu balde", test_summary_mix_real_and_fallback_deals),
         ("v5.14.3 gate fallback em XLSX antigo (infere por USD)", test_summary_fallback_gate_old_xlsx),
+        ("fix: generate_xlsx cria dir-alvo ausente (clone limpo sem results/)", test_xlsx_creates_missing_output_dir),
     ]
     failed = 0
     for name, fn in tests:
