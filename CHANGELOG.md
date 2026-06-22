@@ -55,9 +55,16 @@ Todos saíram com `TCG Source = real (tcgcsv)` e **0 fallback por set não-mapea
 - **NOVO** `test_setcode_abbr_table_is_self_consistent`: nenhuma abbr repetida na
   tabela (guard anti set-errado, sem rede).
 - **NOVO** `test_setcode_abbr_resolves_1to1_against_groups_fixture`: cada abbr da
-  tabela resolve para **exatamente 1** group num snapshot real do `/groups`
-  (`test_tcgcsv_groups_fixture.json`, só metadados groupId/name/abbreviation, sem
-  preços) — pega abbr sumida/renomeada (0 matches) **ou** colisão (>1).
+  tabela resolve para **exatamente 1** group no `test_tcgcsv_groups_fixture.json`
+  — que agora é o **snapshot COMPLETO do `/groups` ao vivo (217 groups,
+  2026-06-22)**, só metadados (`groupId`/`name`/`abbreviation`, **sem preços**),
+  não mais um subset de 106. Isso é o que torna o guard **não-circular**: o dump
+  inteiro contém abbreviations colisoras reais (`RR` = Rising Rivals + Team Rocket
+  Returns = 2 groups; `CL`/`BKP`/`BLW`/`GEN`/`LTR` = 2 cada; `PR`/`POP` = dezenas
+  de promos). Se alguém adicionar à tabela uma abbr ambígua dessas, o teste
+  **FALHA** (>1 match) — antes (subset de 106, 1 group por entrada) a checagem
+  era tautológica. Pega abbr sumida/renomeada (0 matches) **ou** colisão (>1). As
+  106 entradas atuais são todas 1-a-1 no dump real (confirmado ao vivo).
 - Suíte: **53/53** verdes (51 → 53).
 
 ## v5.15.1 — 2026-06-22 — FIX: agregação dos chunks rebaixava preço REAL (tcgcsv) pra fallback

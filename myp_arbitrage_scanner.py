@@ -275,8 +275,11 @@ MYP_EDITION_SUBSTR_TO_PTCG = {
     # vivo de 362 edições, 2026-06-22) — match ÚNICO por título (zero
     # colisão/ambiguidade na simulação longest-substring-wins sobre TODOS os
     # títulos reais) — E cada setcode tem abbreviação tcgcsv resolvendo 1-a-1
-    # contra /groups (ver PTCG_SETCODE_TO_TCGCSV_ABBR). Cobertura de edições
-    # mapeadas: 32→112 / 362. Substrings escolhidas em EN (o MYP emite título
+    # contra /groups (ver PTCG_SETCODE_TO_TCGCSV_ABBR). Esta tabela tem 106
+    # substrings (32→106), que casam 112/362 das edições reais do MYP (uma
+    # substring pode cobrir >1 edição; uma edição pode casar via nome-base do
+    # set) — não confundir nº de substrings da tabela (106) com nº de edições
+    # cobertas (112/362). Substrings escolhidas em EN (o MYP emite título
     # bilíngue PT+EN concatenado, ex.: 'Sol & Lua 7…Sun & Moon 7: Celestial
     # Storm' contém a substring EN). Onde o MYP usa nome distintivo do set
     # (DP2 vem como 'Diamond & PEARLS 2' — typo plural do MYP), a chave é o

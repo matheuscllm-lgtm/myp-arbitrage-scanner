@@ -1362,13 +1362,19 @@ def test_setcode_abbr_table_is_self_consistent():
 
 def test_setcode_abbr_resolves_1to1_against_groups_fixture():
     """v5.16: cada abbr da tabela resolve para EXATAMENTE 1 group num snapshot
-    REAL do /groups do tcgcsv (fixture de metadados groupId/name/abbreviation,
-    sem preços). Pega: (a) abbr que sumiu/renomeou no tcgcsv (0 matches), (b)
-    abbr que colide com outro set (>1 match) → BLOCKER de preço de set errado.
+    REAL e COMPLETO do /groups do tcgcsv (fixture de metadados groupId/name/
+    abbreviation, sem preços). Pega: (a) abbr que sumiu/renomeou no tcgcsv
+    (0 matches), (b) abbr que colide com outro set (>1 match) → BLOCKER de
+    preço de set errado.
 
-    O fixture (`test_tcgcsv_groups_fixture.json`) foi extraído 1× do dump ao
-    vivo (2026-06-22) contendo TODO group cuja abbreviation é usada pela tabela
-    — então uma colisão real apareceria como >1 entrada aqui."""
+    O fixture (`test_tcgcsv_groups_fixture.json`) é o dump INTEIRO do /groups ao
+    vivo (217 groups, 2026-06-22) — TODOS os groups da categoria Pokémon, não só
+    os usados pela tabela. Isso é o que torna o guard NÃO-circular: o dump
+    contém abbreviations colisoras reais (ex.: `RR` = Rising Rivals + Team Rocket
+    Returns = 2 groups; `CL`, `BKP`, `BLW`, `GEN`, `LTR` = 2 cada; `PR`/`POP` =
+    promos com dezenas). Se alguém adicionar à tabela uma abbr ambígua dessas,
+    `by_abbr[abbr] > 1` e o teste FALHA. As 106 entradas atuais são todas únicas
+    no dump real (confirmado ao vivo)."""
     import json as _json
     from pathlib import Path
     from collections import Counter
@@ -1378,9 +1384,22 @@ def test_setcode_abbr_resolves_1to1_against_groups_fixture():
     )
     fx_path = Path(__file__).parent / "test_tcgcsv_groups_fixture.json"
     groups = _json.loads(fx_path.read_text(encoding="utf-8"))
-    by_abbr = Counter(str(g.get("abbreviation") or "").upper() for g in groups)
+    # sanity: é o snapshot COMPLETO (não um subset montado p/ a tabela), e é
+    # só metadados (sem preços) — senão o guard volta a ser circular.
+    assert len(groups) >= 200, (
+        f"fixture deve ser o dump COMPLETO do /groups (217), tem {len(groups)} "
+        "— um subset reintroduz a circularidade que este teste corrige")
+    assert all(set(g.keys()) == {"groupId", "name", "abbreviation"} for g in groups), \
+        "fixture deve conter SÓ metadados (groupId/name/abbreviation), sem preços"
 
-    # 1) cada abbr da tabela aparece exatamente 1× no /groups (1-a-1)
+    by_abbr = Counter(str(g.get("abbreviation") or "").upper() for g in groups)
+    # o dump real PRECISA conter abbrs colisoras, senão o guard seria inócuo
+    assert any(n > 1 for n in by_abbr.values()), (
+        "dump real deveria ter abbreviations colisoras (ex. RR/CL/PR); "
+        "sua ausência indica fixture truncado/sanitizado demais")
+
+    # 1) cada abbr da tabela aparece exatamente 1× no dump COMPLETO (1-a-1):
+    #    0 = abbr sumiu/renomeou no tcgcsv; >1 = colide com outro set (set-wrong).
     bad = {}
     for setcode, abbr in T.items():
         n = by_abbr.get(abbr.upper(), 0)
