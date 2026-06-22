@@ -392,6 +392,12 @@ def resolve_tcgcsv_group_id(setcode: str, edition: str, groups: list) -> Optiona
       2. Fallback: match por NOME — a substring EN da edição MYP que está em
          MYP_EDITION_SUBSTR_TO_PTCG (a chave cujo valor é este setcode) aparece
          no `name` do group (ex.: "Stellar Crown" ∈ "SV07: Stellar Crown").
+         ⚠️ Só aceita match por nome se ele for **ÚNICO**: se a substring casar
+         >1 group (ex.: "Mega Evolution" ∈ ME01/MEP/MEE), é AMBÍGUO → None →
+         fallback `.estat-tcg` honesto. NUNCA chuta o primeiro — injetar preço
+         de promo/energy como "real" é a classe de bug que a v5.11 corrigiu no
+         `.estat-tcg`. (O caminho 1 por abreviação é exato e cobre os sets
+         mapeados; este fallback é a rede de segurança contra renomeação futura.)
     Retorna None se nada casar → caller mantém fallback `.estat-tcg` honesto.
     """
     if not groups:
@@ -402,16 +408,12 @@ def resolve_tcgcsv_group_id(setcode: str, edition: str, groups: list) -> Optiona
             if str(g.get("abbreviation") or "").upper() == abbr.upper():
                 return g.get("groupId")
     # Fallback por nome: acha a(s) substring(s) MYP que mapeiam a este setcode e
-    # tenta casá-la contra o name do group.
-    substrs = [s for s, c in MYP_EDITION_SUBSTR_TO_PTCG.items() if c == setcode]
-    el = (edition or "").lower()
-    for g in groups:
-        gname = str(g.get("name") or "").lower()
-        for s in substrs:
-            sl = s.lower()
-            if sl in gname or (sl in el and sl in gname):
-                return g.get("groupId")
-    return None
+    # casa contra o name do group — exigindo match ÚNICO (sem chute em ambíguo).
+    substrs = [s.lower() for s, c in MYP_EDITION_SUBSTR_TO_PTCG.items() if c == setcode]
+    matches = [g.get("groupId") for g in groups
+               if any(sl in str(g.get("name") or "").lower() for sl in substrs)]
+    uniq = list(dict.fromkeys(m for m in matches if m is not None))
+    return uniq[0] if len(uniq) == 1 else None
 
 
 def tcg_search_url(name: str) -> Optional[str]:

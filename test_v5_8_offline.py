@@ -1319,7 +1319,14 @@ def test_tcgcsv_groupid_resolution():
     assert resolve_tcgcsv_group_id("sv7", "Stellar Crown", groups2) == 555
     # sem correspondência nenhuma → None (NUNCA chuta um groupId)
     assert resolve_tcgcsv_group_id("sv99", "Set Inexistente", groups) is None
-    print("  v5.15 groupId: abbr primário + nome fallback + None honesto ✓")
+    # AMBÍGUO: a substring casa >1 group e nenhuma abbr exata → None (não chuta o
+    # primeiro). Guard anti "preço de promo rotulado real" (review v5.15).
+    groups_ambig = [
+        {"groupId": 901, "name": "SV07: Stellar Crown", "abbreviation": "XXX"},
+        {"groupId": 902, "name": "Stellar Crown Promo", "abbreviation": "YYY"},
+    ]
+    assert resolve_tcgcsv_group_id("sv7", "Stellar Crown", groups_ambig) is None
+    print("  v5.15 groupId: abbr primário + nome fallback ÚNICO + None honesto ✓")
     return True
 
 
