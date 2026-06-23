@@ -208,7 +208,7 @@ iterativo de dev — **medir → mudar → verificar → repetir**:
    tempo real contra o site + API.
 2. **Mudar** uma coisa por vez (uma otimização isolada).
 3. **Verificar**: `python bench.py > after.txt && diff before.txt after.txt`
-   (ganho mensurável?) **e** `python test_v5_8_offline.py` (50/50 verde —
+   (ganho mensurável?) **e** `python test_v5_8_offline.py` (54/54 verde —
    nenhuma regressão).
 4. **Repetir**. Não improvise fora desse ciclo.
 

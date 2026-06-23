@@ -157,7 +157,6 @@ def test_xlsx_end_to_end():
 
     # Cleanup
     Path(out).unlink()
-    return True
 
 
 def test_xlsx_creates_missing_output_dir():
@@ -179,7 +178,6 @@ def test_xlsx_creates_missing_output_dir():
         assert "🔥 Deals" in load_workbook(out).sheetnames
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
-    return True
 
 
 def test_tcg_search_url():
@@ -198,7 +196,6 @@ def test_tcg_search_url():
     assert tcg_search_url("") is None
     assert tcg_search_url(None) is None
     print(f"  tcg_search_url: 6 casos OK ✓")
-    return True
 
 
 def test_price_cell_hyperlinks():
@@ -337,7 +334,6 @@ def test_price_cell_hyperlinks():
     Path(out).unlink()
     print(f"  Hyperlinks de preço OK em {len(card_sheets)} sheets ({checked} células checadas) ✓")
     print(f"  Direct link (sv5-70) e fallback (search) confirmados ✓")
-    return True
 
 
 def test_tcg_url_column():
@@ -402,7 +398,6 @@ def test_tcg_url_column():
 
     Path(out).unlink()
     print(f"  Coluna 'TCG URL' (última, 18 cols) OK: direct + fallback ✓")
-    return True
 
 
 def test_myp_edition_to_setcode():
@@ -446,7 +441,6 @@ def test_myp_edition_to_setcode():
     assert myp_edition_to_ptcg_setcode("") is None
     assert myp_edition_to_ptcg_setcode(None) is None
     print(f"  Mapeamento edition→setcode: 16 casos OK ✓")
-    return True
 
 
 def test_tcg_direct_url():
@@ -485,13 +479,11 @@ def test_tcg_direct_url():
     u = tcg_direct_url("", "Temporal Forces")
     assert u is None
     print(f"  tcg_direct_url: 8 casos OK ✓")
-    return True
 
 
 def test_threshold_constant():
     """Threshold 10x é o que documentação especifica."""
     assert TCG_SUSPECT_RATIO_THRESHOLD == 10.0, f"Threshold mudou: {TCG_SUSPECT_RATIO_THRESHOLD}"
-    return True
 
 
 def test_jirachi_ratio_math():
@@ -500,7 +492,6 @@ def test_jirachi_ratio_math():
     # v5.14.4: assert espelha o operador da produção (`>=`, boundary inclusivo).
     assert ratio >= TCG_SUSPECT_RATIO_THRESHOLD, f"Caso Jirachi não dispara: {ratio:.1f}x"
     print(f"  Jirachi ratio = {ratio:.1f}x ✓")
-    return True
 
 
 def test_tcg_suspect_boundary_exactly_10x():
@@ -534,7 +525,6 @@ def test_tcg_suspect_boundary_exactly_10x():
         "BUG: ratio EXATAMENTE 10x escapou do filtro suspect (boundary não-inclusivo)"
     assert sc._stats["tcg_suspects"] == 1, sc._stats["tcg_suspects"]
     print("  tcg_suspect boundary: ratio exatamente 10x → suspect (inclusivo `>=`) ✓")
-    return True
 
 
 # ── v5.9 (2026-06-03): marketplace pagination fix (truncation root cause) ──
@@ -659,7 +649,6 @@ def test_marketplace_pagination():
     assert card.en_nm_sellers == 6, f"en_nm_sellers={card.en_nm_sellers} (esperado 6)"
     print(f"  Psyduck lowest EN-NM = R${card.myp_lowest_en_nm} "
           f"(margem +{card.margin_pct*100:.0f}%), {sc._stats['seller_pages_followed']} págs seguidas ✓")
-    return True
 
 
 def test_pagination_gate_skips_untruncated():
@@ -698,7 +687,6 @@ def test_pagination_gate_skips_untruncated():
     assert all("estoque-outros-page" not in u for u in fetched), \
         f"buscou página extra indevidamente: {fetched}"
     print(f"  Produto não-truncado: 0 páginas extras (truncation gate OK) ✓")
-    return True
 
 
 def test_pagination_cost_gate_low_tcg():
@@ -754,7 +742,6 @@ def test_pagination_cost_gate_low_tcg():
     assert all("estoque-outros-page" not in u for u in fetched), \
         f"buscou página extra indevidamente: {fetched}"
     print(f"  Truncado + TCG R$50 < R$80: 0 págs, gate contou 1 (cost gate v5.9.1) ✓")
-    return True
 
 
 def test_a3_real_price_rescues_pagination():
@@ -808,7 +795,6 @@ def test_a3_real_price_rescues_pagination():
     assert card.myp_lowest_en_nm == 85.0, f"lowest_en={card.myp_lowest_en_nm} (esperado 85 da pág 2)"
     assert card.tcg_source == "pokemontcg.io"
     print("  A3: declarado R$50<80 mas real R$500 → paginou, achou EN R$85 (deal salvo) ✓")
-    return True
 
 
 def _real_price_page(card_h1, estat_tcg_brl, en_prices):
@@ -847,7 +833,6 @@ def test_real_tcg_overrides_estat():
     assert card.margin_pct is not None and card.margin_pct < 0, card.margin_pct
     assert sc._stats["tcg_from_real"] == 1
     print("  Darumaka: .estat-tcg R$2867 → real US$13,42×5=R$67,10, deal fake morto ✓")
-    return True
 
 
 def test_fallback_to_estat_when_no_coverage():
@@ -868,7 +853,6 @@ def test_fallback_to_estat_when_no_coverage():
     assert card.tcg_real_usd is None
     assert sc._stats["tcg_from_myp_fallback"] == 1
     print("  Mega Gengar: sem cobertura pokemontcg.io → fallback .estat-tcg R$437,95 ✓")
-    return True
 
 
 def test_no_fx_keeps_estat():
@@ -891,7 +875,6 @@ def test_no_fx_keeps_estat():
     assert abs(card.tcg_player_price - 200.0) < 0.01, card.tcg_player_price
     assert called == [], f"pokemontcg.io chamado sem câmbio: {called}"
     print("  Sem câmbio: real-price inerte, usa .estat-tcg R$200 (sem chamar API) ✓")
-    return True
 
 
 def _no_estat_page(card_h1, en_prices):
@@ -933,7 +916,6 @@ def test_real_price_clears_suspect():
     assert sc._stats["tcg_suspects"] == 0, sc._stats["tcg_suspects"]
     assert abs(card.tcg_player_price - 67.10) < 0.01, card.tcg_player_price
     print("  A1: .estat-tcg inflado → suspect setado e LIMPO após preço real ✓")
-    return True
 
 
 def test_prices_card_without_estat_tcg():
@@ -955,7 +937,6 @@ def test_prices_card_without_estat_tcg():
     assert abs(card.tcg_player_price - 200.0) < 0.01, card.tcg_player_price
     assert card.margin_pct is not None and abs(card.margin_pct - 1.0) < 0.01, card.margin_pct
     print("  A2: card sem .estat-tcg precificado via fonte real (R$200, +100%) ✓")
-    return True
 
 
 def test_skip_when_no_tcg_at_all():
@@ -974,7 +955,6 @@ def test_skip_when_no_tcg_at_all():
     assert card is None, "deveria skipar: sem TCG declarado nem real"
     assert sc._stats["skipped_no_tcg_price"] == 1, sc._stats["skipped_no_tcg_price"]
     print("  A2: sem .estat-tcg e sem cobertura real → skip correto ✓")
-    return True
 
 
 def test_parse_brl_formats():
@@ -1002,7 +982,6 @@ def test_parse_brl_formats():
         got = f(text)
         assert got == expected, f"_parse_brl({text!r}) = {got}, esperado {expected}"
     print(f"  _parse_brl: {len(cases)} casos OK ✓")
-    return True
 
 
 def test_last_brl():
@@ -1014,7 +993,6 @@ def test_last_brl():
     assert f("") is None
     assert f(None) is None
     print(f"  _last_brl: extração do último valor OK ✓")
-    return True
 
 
 def test_oversized_regex():
@@ -1026,7 +1004,6 @@ def test_oversized_regex():
     assert OVERSIZED_FOIL_RE.search("Jumbo")
     assert not OVERSIZED_FOIL_RE.search("Holo")
     print(f"  oversized/jumbo regex OK ✓")
-    return True
 
 
 def test_delivery_table_format():
@@ -1116,7 +1093,6 @@ def test_delivery_table_format():
     _os.unlink(xlsx_out)
     _os.unlink(md_out)
     print("  delivery table format (header + Carta + links + USD + Cond) OK ✓")
-    return True
 
 
 def test_checkpoint_save_load():
@@ -1143,7 +1119,6 @@ def test_checkpoint_save_load():
     finally:
         _os.path.exists(path) and _os.unlink(path)
     print("  checkpoint save/load round-trip (cards + stats + done) ✓")
-    return True
 
 
 def test_scan_resume_skips_done_editions():
@@ -1185,7 +1160,6 @@ def test_scan_resume_skips_done_editions():
     assert names == ["Done (1/100)", "E2 (2/100)"], names
     assert not _os.path.exists(ckpt), "checkpoint deveria ser removido ao concluir"
     print("  resume: pula edição feita (u1), escaneia só u2, limpa checkpoint ✓")
-    return True
 
 
 def test_prefill_ptcg_set_batch():
@@ -1240,7 +1214,6 @@ def test_prefill_ptcg_set_batch():
     assert abs(brl - 13.42 * 5.0) < 1e-6, brl
     assert calls["single"] == 0, "não devia haver fetch por-card após prefill"
     print("  v5.12 prefill: batch popula cache + _real_tcg_brl usa cache (0 round-trips por-card) ✓")
-    return True
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1334,7 +1307,6 @@ def test_tcgcsv_prefill_parses_schema():
     assert sum("/prices" in u for u in calls) == 1
     assert sc._stats["tcgcsv_prefill_sets"] == 1
     print("  v5.15 tcgcsv prefill: parse schema + min(subtype) + cache compartilhado ✓")
-    return True
 
 
 def test_tcgcsv_groupid_resolution():
@@ -1361,7 +1333,6 @@ def test_tcgcsv_groupid_resolution():
     ]
     assert resolve_tcgcsv_group_id("sv7", "Stellar Crown", groups_ambig) is None
     print("  v5.15 groupId: abbr primário + nome fallback ÚNICO + None honesto ✓")
-    return True
 
 
 def test_setcode_abbr_table_is_self_consistent():
@@ -1379,7 +1350,6 @@ def test_setcode_abbr_table_is_self_consistent():
     dups = {a: n for a, n in c.items() if n > 1}
     assert not dups, f"abbr repetida na tabela (set-wrong risk): {dups}"
     print(f"  v5.16 tabela setcode→abbr: {len(T)} entradas, abbr únicas ✓")
-    return True
 
 
 def test_setcode_abbr_resolves_1to1_against_groups_fixture():
@@ -1441,7 +1411,6 @@ def test_setcode_abbr_resolves_1to1_against_groups_fixture():
         gid = resolve_tcgcsv_group_id(setcode, ed, groups)
         assert gid is not None, f"setcode {setcode} ({abbr}) não resolveu groupId"
     print(f"  v5.16 {len(T)} abbrs resolvem 1-a-1 no snapshot /groups real ✓")
-    return True
 
 
 def test_tcgcsv_no_match_falls_back_honestly():
@@ -1458,7 +1427,6 @@ def test_tcgcsv_no_match_falls_back_honestly():
     assert sc._ptcg_cache == {}, "cache devia ficar vazio (sem preço inventado)"
     assert sc._tcgcsv_cids == set()
     print("  v5.15 tcgcsv sem match → fallback honesto (cache vazio) ✓")
-    return True
 
 
 def test_tcgcsv_end_to_end_real_source_label():
@@ -1494,7 +1462,6 @@ def test_tcgcsv_end_to_end_real_source_label():
     assert sc._stats["tcg_from_tcgcsv"] == 1, sc._stats["tcg_from_tcgcsv"]
     assert sc._stats["tcg_from_real"] == 1
     print("  v5.15 e2e: card sai tcg_source='tcgcsv' (REAL), preço real na margem ✓")
-    return True
 
 
 def _tcgcsv_deal(name, myp, tcg_brl, usd, rarity="Double Rare"):
@@ -1536,7 +1503,6 @@ def test_tcgcsv_recognized_as_real_in_summary():
         f"cobertura devia contar 1/1 real:\n{text[:600]}"
     Path(xlsx).unlink(); Path(md).unlink()
     print("  v5.15 summary: 'real (tcgcsv)' reconhecido como REAL (balde limpo) ✓")
-    return True
 
 
 def test_fallback_attribution():
@@ -1571,7 +1537,6 @@ def test_fallback_attribution():
              + sc._stats["fallback_no_collector_num"] + sc._stats["fallback_no_coverage"])
     assert total == 4, total
     print("  v5.13 fallback attribution: no_fx/unmapped_set/no_collector_num/no_coverage ✓")
-    return True
 
 
 def test_rarity_mislabel_gate():
@@ -1592,7 +1557,6 @@ def test_rarity_mislabel_gate():
     # rarity ausente -> não casa
     assert not is_rarity_mislabel("Psyduck (226/217)", None)
     print("  rarity-mislabel gate: Comum-supr=flag, não-Comum-supr=real, exato ✓")
-    return True
 
 
 def test_tcg_source_column_explicit():
@@ -1632,7 +1596,6 @@ def test_tcg_source_column_explicit():
     assert "estat" in str(by_name["Pikachu Comum"]).lower(), by_name
     Path(out).unlink()
     print("  TCG Source col: real=pokemontcg.io, fallback=.estat-tcg explícito ✓")
-    return True
 
 
 def test_tcg_source_roundtrip_aggregate():
@@ -1687,7 +1650,6 @@ def test_tcg_source_roundtrip_aggregate():
     assert card_from_row(old_hdr, old_real).tcg_source == "pokemontcg.io"
     assert card_from_row(old_hdr, old_fb).tcg_source == "myp_estat"
     print("  TCG Source round-trip: preserva real/fallback + infere XLSX antigo ✓")
-    return True
 
 
 def _make_mini_chunk(path, cards_spec):
@@ -1761,7 +1723,6 @@ def test_aggregate_multichunk_preserves_real_counts():
         assert fb_ct == 2, f"esperava 2 fallback, obteve {fb_ct}: {labels}"
         assert tcgcsv_ct == 2, f"esperava 2 tcgcsv preservados, obteve {tcgcsv_ct}: {labels}"
     print("  aggregate multi-chunk: preserva 3 real (2 tcgcsv) + 2 fallback ✓")
-    return True
 
 
 def test_summary_real_coverage_signal():
@@ -1799,7 +1760,6 @@ def test_summary_real_coverage_signal():
     assert "0/2 cartas EN" in text, f"cobertura deve ser sobre o universo (0/2):\n{text[:600]}"
     Path(xlsx).unlink(); Path(md).unlink()
     print("  summary real-coverage: '🛑 ZERO preço real' quando tudo é fallback ✓")
-    return True
 
 
 def test_summary_coverage_real_universe_with_zero_deals():
@@ -1849,7 +1809,6 @@ def test_summary_coverage_real_universe_with_zero_deals():
         f"esclarecimento de 0 deals ausente:\n{text[:700]}"
     Path(xlsx).unlink(); Path(md).unlink()
     print("  summary coverage: universo 100% real + 0 deals → '✅ 3/3', não ZERO ✓")
-    return True
 
 
 def test_summary_coverage_mixed_real_fallback():
@@ -1883,7 +1842,6 @@ def test_summary_coverage_mixed_real_fallback():
     assert "ZERO preço real" not in text, "não é zero, é parcial"
     Path(xlsx).unlink(); Path(md).unlink()
     print("  summary coverage: mix real/fallback → '⚠️ 1/2 cartas EN' ✓")
-    return True
 
 
 def test_summary_deal_floor_matches_real_threshold():
@@ -1923,7 +1881,6 @@ def test_summary_deal_floor_matches_real_threshold():
         f"cobertura do universo (1/1 real) ausente:\n{text[:700]}"
     Path(xlsx).unlink(); Path(md).unlink()
     print("  summary deal-floor: 27% sob threshold 30% → 'nenhum deal limpo', não ≥30% ✓")
-    return True
 
 
 def _section_of(text: str, needle: str):
@@ -1984,7 +1941,6 @@ def test_summary_fallback_deal_not_in_clean():
         f"BUG: fallback inflado vazou pro balde limpo: {sec!r}"
     Path(xlsx).unlink(); Path(md).unlink()
     print("  fallback-not-clean: Darumaka inflado sem last-sale → balde FALLBACK ✓")
-    return True
 
 
 def test_summary_real_deal_stays_clean():
@@ -2009,7 +1965,6 @@ def test_summary_real_deal_stays_clean():
         text.split("FALLBACK `.estat-tcg`")[-1], "deal real não pode estar no balde fallback"
     Path(xlsx).unlink(); Path(md).unlink()
     print("  real-stays-clean: deal real → balde limpo (não fallback) ✓")
-    return True
 
 
 def test_summary_ci_all_fallback_zero_clean():
@@ -2038,7 +1993,6 @@ def test_summary_ci_all_fallback_zero_clean():
     assert _section_of(text, "Mewtwo ex") and "FALLBACK" in _section_of(text, "Mewtwo ex")
     Path(xlsx).unlink(); Path(md).unlink()
     print("  ci-all-fallback: 0 limpos + 2 no balde fallback ✓")
-    return True
 
 
 def test_summary_mix_real_and_fallback_deals():
@@ -2063,7 +2017,6 @@ def test_summary_mix_real_and_fallback_deals():
         "deal fallback devia estar no balde fallback"
     Path(xlsx).unlink(); Path(md).unlink()
     print("  mix: real→limpo, fallback→fallback ✓")
-    return True
 
 
 def test_summary_fallback_gate_old_xlsx():
@@ -2090,7 +2043,6 @@ def test_summary_fallback_gate_old_xlsx():
         "deal fallback (sem USD) devia ir pro balde fallback em XLSX antigo"
     Path(xlsx).unlink(); Path(md).unlink()
     print("  fallback-gate (XLSX antigo): real→limpo, sem-USD→fallback ✓")
-    return True
 
 
 def _drop_all_en_column(xlsx_path: str, col_name: str):
@@ -2153,7 +2105,6 @@ def test_summary_coverage_old_xlsx_inference():
         f"inferência de XLSX antigo (1/2) ausente:\n{text[:700]}"
     Path(xlsx).unlink(); Path(md).unlink()
     print("  summary coverage: XLSX antigo s/ 'TCG Source' infere por 'TCG US$' → 1/2 ✓")
-    return True
 
 
 def test_summary_coverage_excludes_unpriced_card():
@@ -2190,7 +2141,6 @@ def test_summary_coverage_excludes_unpriced_card():
         f"carta sem preço deve sair do denominador (1/1, não 1/2):\n{text[:700]}"
     Path(xlsx).unlink(); Path(md).unlink()
     print("  summary coverage: carta sem preço TCG fora do denominador → 1/1 ✓")
-    return True
 
 
 def test_summary_coverage_no_price_at_all_branch():
@@ -2219,7 +2169,6 @@ def test_summary_coverage_no_price_at_all_branch():
     assert "ZERO preço real" not in text, "sem preço ≠ ZERO real (não pode confundir)"
     Path(xlsx).unlink(); Path(md).unlink()
     print("  summary coverage: universo sem preço → '⚠️ Sem preço TCG', não ZERO ✓")
-    return True
 
 
 # ─── Regressão: segredo com BOM/zero-width → header latin-1-encodável ──────────
@@ -2250,7 +2199,6 @@ def test_clean_secret_strips_bom_and_zero_width():
     # valor limpo passa intacto
     assert _clean_secret("eyJhbGciOi.token.sig") == "eyJhbGciOi.token.sig"
     print("  _clean_secret: BOM/ZWSP/whitespace removidos, vazio→None ✓")
-    return True
 
 
 def test_ptcg_api_key_bom_header_is_latin1_encodable():
@@ -2271,7 +2219,6 @@ def test_ptcg_api_key_bom_header_is_latin1_encodable():
         else:
             os.environ["POKEMONTCG_API_KEY"] = prev
     print("  X-Api-Key com BOM: sanitizado → latin-1-encodável ✓")
-    return True
 
 
 def test_ptcg_api_key_bom_only_yields_no_key():
@@ -2290,7 +2237,6 @@ def test_ptcg_api_key_bom_only_yields_no_key():
         else:
             os.environ["POKEMONTCG_API_KEY"] = prev
     print("  X-Api-Key só-BOM: vira None → sem header ✓")
-    return True
 
 
 def main():
