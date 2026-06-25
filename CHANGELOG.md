@@ -1,5 +1,51 @@
 # Changelog
 
+## v5.17 — 2026-06-24 — `myp_enrich.py` aposentado (tcgcsv no CI tornou redundante)
+
+**O que muda em uma frase:** o passo manual off-runner `myp_enrich.py` foi
+**removido** — desde a v5.15/v5.16 o próprio CI entrega preço TCGplayer **real**
+via `tcgcsv.com`, sozinho, tornando o enriquecimento local redundante.
+
+### Contexto
+O `myp_enrich.py` existia para um problema que **não existe mais**: os runners do
+GitHub Actions não alcançam `api.pokemontcg.io`, então até a v5.14 o workflow
+produzia cobertura do catálogo só com preço **fallback** (`.estat-tcg`), e o
+operador rodava o enrich **localmente** (onde a pokemontcg.io responde) para
+injetar o preço real. A v5.15 trocou a fonte do CI pro **`tcgcsv.com`** (que os
+runners ALCANÇAM e que tem o **mesmo** preço TCGplayer — cross-check 0–0,3%), e a
+v5.16 expandiu o mapa de sets. O CI agora entrega `TCG Source = real (tcgcsv)`
+sozinho. Validado: **1344/1812** cartas com preço real no consolidado; cross-check
+**6/6** exato contra a pokemontcg.io.
+
+### Por que era seguro remover
+- **Nada importa de `myp_enrich.py`** — ele era um CLI standalone que reusava
+  `_real_tcg_brl`/`fetch_usd_brl`/`generate_xlsx` do scanner e `load_chunk_cards`
+  do aggregate. O fluxo de dependência era unidirecional (ele importava dos
+  outros; ninguém importava dele). Nenhum teste o exercitava.
+- **Sem valor único não coberto:** o enrich injetava preço da pokemontcg.io. O
+  scanner LOCAL já faz isso por padrão (`--tcg-source auto` = tcgcsv +
+  pokemontcg.io complementar). O caminho dele está 100% subsumido.
+
+### O que foi feito
+- **Removido** `myp_enrich.py` (`git rm`).
+- **CLAUDE.md:** a seção "Fluxo híbrido — preço TCG REAL no catálogo COMPLETO"
+  virou "Preço TCG REAL no catálogo COMPLETO" com uma nota curta de aposentadoria;
+  removidos os blocos de comando do enrich. O fluxo agora é: rode o workflow
+  (preço real via tcgcsv) **ou** rode o scanner local.
+- **`myp_summary.py`:** as 3 mensagens que mandavam "enriqueça LOCAL com
+  `myp_enrich.py`" foram atualizadas. A degradação 0-real agora é descrita como
+  **FALHA do tcgcsv** a investigar (não "rode o enrich"); o caveat do balde de
+  fallback pede só conferir o preço NM no Link TCG.
+- CHANGELOG: esta entrada. Header do scanner → v5.17.
+
+### Notas
+- Referências históricas a `myp_enrich.py` em entradas antigas deste CHANGELOG
+  (v5.14, v5.15) são preservadas como **histórico** — descrevem o estado da época.
+- Comentários genéricos em `myp_aggregate.py`/`test_v5_8_offline.py` que mencionam
+  "o enrich" (sobre preservar o sinal real-vs-fallback no round-trip) seguem
+  válidos: descrevem uma propriedade do round-trip que vale para qualquer re-leitura
+  do XLSX, não o script removido.
+
 ## v5.16 — 2026-06-22 — Expansão do mapa de sets tcgcsv (cobertura de preço REAL)
 
 **O que muda em uma frase:** dezenas de eras antigas (Sun & Moon, XY, SWSH

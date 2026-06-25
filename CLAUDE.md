@@ -113,7 +113,7 @@ python myp_arbitrage_scanner.py --editions "Ascended Heroes" \
          run `27918333945`: HTTP 200, JSON real) e que tem o **mesmo** preço
          TCGplayer (cross-check 0–0,3%). Os 3 workflows passam `--tcg-source
          tcgcsv` → o CI entrega preço **real** (`TCG Source = real (tcgcsv)`),
-         **sem precisar mais do passo manual `myp_enrich.py`**. A
+         sozinho, **sem nenhum passo manual de enriquecimento**. A
          `POKEMONTCG_API_KEY` continua injetada, mas é **irrelevante** em modo
          tcgcsv (o tcgcsv não usa key). O sinal real-vs-fallback segue
          **explícito** (coluna `TCG Source` + linha "Cobertura de preço TCG real"
@@ -152,51 +152,34 @@ python myp_arbitrage_scanner.py --editions "Ascended Heroes" \
   `editions` (multi-palavra entre aspas — o quick parseia certo via `eval
   set --`; o weekly tem bug latente com multi-palavra no `$ARGS` cru).
 
-## 🔀 Fluxo híbrido — preço TCG REAL no catálogo COMPLETO
+## 🔀 Preço TCG REAL no catálogo COMPLETO
 
-> **🆕 v5.15 — na maioria dos casos você NÃO precisa mais deste fluxo.** Desde a
-> v5.15 o **próprio workflow do GitHub já entrega preço real** (via `tcgcsv.com`,
-> a fonte que os computadores do GitHub conseguem acessar). Ou seja: rode o
-> workflow e o resultado já vem com preço de verdade (`TCG Source = real
-> (tcgcsv)`), sem o passo manual no seu PC. O fluxo híbrido abaixo com
-> `myp_enrich.py` continua **válido como opção** (ex.: você quer cruzar com o
-> preço da pokemontcg.io especificamente), mas deixou de ser **obrigatório**.
-
-> Contexto histórico (≤v5.14): o workflow só dava **estimativa** (fallback)
-> porque os computadores do GitHub não conseguem falar com a `pokemontcg.io`; o
-> seu PC consegue, então usava-se os dois. A v5.15 trocou a fonte do CI pro
-> tcgcsv e acabou com essa limitação.
+> **v5.17 — `myp_enrich.py` aposentado.** Não existe mais passo manual de
+> enriquecimento off-runner. Desde a v5.15/v5.16 o **próprio workflow do GitHub
+> já entrega preço TCGplayer real** (via `tcgcsv.com`, a fonte que os
+> computadores do GitHub conseguem acessar): rode o workflow e o resultado já vem
+> com preço de verdade (`TCG Source = real (tcgcsv)`), sozinho. O script
+> `myp_enrich.py` (que injetava preço da pokemontcg.io num XLSX consolidado) virou
+> redundante e foi removido — o caminho dele já está coberto pelo scanner local
+> (default `auto`: tcgcsv + pokemontcg.io). Se um consolidado vier **0 preço
+> real**, isso é uma **FALHA do tcgcsv** (indisponível, sets sem groupId, ou
+> perda da fonte na agregação dos chunks) a **investigar** — não é mais "rode o
+> enrich".
 
 Quando você precisa de **preço TCG real no catálogo inteiro** (não só nos hot
 sets de um scan local):
 
-- **Mais simples (v5.15):** rode o **workflow** — ele já entrega preço real
-  (tcgcsv) no catálogo inteiro, sozinho. Baixe o XLSX consolidado e entregue
-  via `myp_summary.py`.
+- **Mais simples:** rode o **workflow** — ele já entrega preço real (tcgcsv) no
+  catálogo inteiro, sozinho. Baixe o XLSX consolidado e entregue via
+  `myp_summary.py`.
 - **Local:** rode o scanner **LOCAL** (`python myp_arbitrage_scanner.py …`) — o
   preço já nasce real (default `auto`: tcgcsv + pokemontcg.io). Pode passar de
   1h num scan largo; rode detached.
-- **Híbrido (legado, opcional):** deixe o **workflow** levantar a cobertura e
-  enriqueça **local** com `myp_enrich.py` (usa a pokemontcg.io):
 
-  ```bash
-  # 1) workflow (cobertura do catálogo, ~2h em 20 runners) → baixe o XLSX consolidado
-  # 2) LOCAL (onde a pokemontcg.io responde), injete o preço REAL:
-  python myp_enrich.py myp_arbitrage_<stamp>.xlsx -o enr.xlsx \
-    --real-only-out enr_real.xlsx --min-price 50
-  # 3) entregue via myp_summary.py SOBRE o XLSX só-real (margem confiável):
-  python myp_summary.py enr_real.xlsx --type weekly -o results/<scope>-<data>.md
-  ```
-
-  - `myp_enrich.py` reusa `_real_tcg_brl`/`fetch_usd_brl`/`generate_xlsx` do
-    scanner (mesmo cálculo), busca preço real nos candidatos (EN-NM ≥
-    `--min-price`, default 50), e **reporta a cobertura** (`X/Y reais, Z em
-    fallback`). Requer `POKEMONTCG_API_KEY` no ambiente.
-  - **Honestidade (regra dura):** a coluna `TCG Source` do XLSX e a linha
-    "Cobertura de preço TCG real" do `myp_summary.py` declaram, por card, se o
-    preço é **real** (`pokemontcg.io`) ou **fallback** (`.estat-tcg`, margem
-    NÃO-confiável). O `--real-only-out` separa só os de preço real pra entrega.
-    **Nunca** trate fallback como real — o output não deixa.
+> **Honestidade (regra dura):** a coluna `TCG Source` do XLSX e a linha
+> "Cobertura de preço TCG real" do `myp_summary.py` declaram, por card, se o
+> preço é **real** (`tcgcsv`/`pokemontcg.io`) ou **fallback** (`.estat-tcg`,
+> margem NÃO-confiável). **Nunca** trate fallback como real — o output não deixa.
 
 ## Otimizar o scanner (loop iterativo)
 
