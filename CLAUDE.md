@@ -19,7 +19,7 @@ Erros recorrentes (3 famílias — detalhe no manual):
 2. **Git:** galho ou `main` local defasado por squash-merge PARECE pendência. O teste real de "já mergeado" é `git diff --stat origin/main <galho>` estar vazio (não `git merge-base`).
 3. **Honestidade de preço:** inflação de referência, fallback tratado como real, NM frouxo → sempre validar versão/condição e rotular fallback.
 
-**Este scanner:** referência de preço = `tcgcsv.com` (real, na nuvem via `--tcg-source tcgcsv`) → pokemontcg.io (secundário) → `.estat-tcg` (fallback rotulado); chaves = `POKEMONTCG_API_KEY`, `FIRECRAWL_API_KEY` (secrets no GitHub).
+**Este scanner:** referência de preço = `tcgcsv.com` (real, na nuvem via `--tcg-source tcgcsv`; mapa de sets ampliado na v5.16) → pokemontcg.io (secundário) → `.estat-tcg` (fallback rotulado); chaves = `POKEMONTCG_API_KEY`, `FIRECRAWL_API_KEY`.
 
 ## ▶️ Retomar de onde paramos (leia primeiro)
 
