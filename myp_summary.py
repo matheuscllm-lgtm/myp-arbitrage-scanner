@@ -332,15 +332,13 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
         cov_note = (f"🛑 **ZERO preço real** — 0/{total_priced} cartas EN com preço "
                     f"REAL (tcgcsv/pokemontcg.io); todas em fallback `.estat-tcg` "
                     f"(margens NÃO-confiáveis). Desde a v5.15 o CI puxa preço real "
-                    f"via tcgcsv.com, então 0 real indica FALHA (tcgcsv indisponível, "
-                    f"sets sem groupId, ou perda da fonte na agregação dos chunks) — "
-                    f"investigue antes de operar; em último caso, enriqueça LOCAL "
-                    f"com `myp_enrich.py`.{deals_clarif}")
+                    f"via tcgcsv.com, então 0 real indica FALHA do tcgcsv "
+                    f"(tcgcsv indisponível, sets sem groupId, ou perda da fonte na "
+                    f"agregação dos chunks) — investigue antes de operar.{deals_clarif}")
     elif fb_n:
         cov_note = (f"⚠️ **{real_n}/{total_priced} cartas EN com preço REAL** "
                     f"(tcgcsv/pokemontcg.io); {fb_n} em fallback `.estat-tcg` (margem "
-                    f"NÃO-confiável — validar manual ou enriquecer com "
-                    f"`myp_enrich.py`).{deals_clarif}")
+                    f"NÃO-confiável — validar manual).{deals_clarif}")
     else:
         cov_note = (f"✅ **{real_n}/{total_priced} cartas EN com preço REAL** "
                     f"(tcgcsv/pokemontcg.io).{deals_clarif}")
@@ -466,9 +464,8 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
                      "Essa estimativa às vezes aponta pra carta errada e **infla a margem** "
                      "— ou seja, a margem abaixo **pode ser ilusória**. Por isso estes deals "
                      "**NÃO** entram no balde 'limpos'. **Antes de operar:** confira o preço "
-                     "NM no Link TCG, ou rode `myp_enrich.py` local pra obter o preço real. "
-                     "(Coberturas de CI saem 100% aqui — os runners não alcançam a "
-                     "pokemontcg.io.)")
+                     "NM no Link TCG. (Desde a v5.15 o CI entrega preço real via tcgcsv; "
+                     "deals nesse balde indicam sets sem cobertura tcgcsv/pokemontcg.io.)")
         lines.append("")
         lines.append("| # | Margem (estimada) | MYP R$ | TCG est. R$ | Dif (est.) | Carta | Set | Raridade | Cond | Qtd | Links |")
         lines.append("|---|---:|---:|---:|---:|---|---|---|---|---:|---|")
