@@ -3,6 +3,25 @@
 > Objetivo: "rodar o MYP scanner" tem **um caminho só**. Siga este arquivo e
 > evite re-descobrir coisas que já estão resolvidas no código.
 
+## 🚨 CONTRATO DE ENTREGA (LEIA ANTES DE MOSTRAR QUALQUER RESULTADO)
+
+> **Erro recorrente real (2026-06-26):** o agente rodou o `myp_summary.py` (que
+> já gera certo), mas **remontou a tabela à mão** e **dropou o link `[TCG]` de
+> referência** pra "economizar largura". Isso quebra o padrão. NÃO repita.
+
+**Toda linha entregue tem que ter os DOIS links, sempre, em TODO bucket**
+(limpos, supranumerário, suspeito, fallback, e qualquer verificação manual):
+- **`[oferta]`** → página do produto MYP (onde comprar);
+- **`[TCG]`** → TCGplayer/referência (onde validar o preço).
+
+**Caminho único:** rode `myp_summary.py` sobre o XLSX e **cole a saída VERBATIM**
+(ela já põe `Carta` = nome+número e `Links` = `[oferta](url) · [TCG](url)` em
+cada linha, lidos das colunas `URL` e `TCG URL` do XLSX). **PROIBIDO** remontar,
+reformatar, renomear/reordenar colunas ou tirar um link. Se a entrega não saiu
+do `myp_summary.py`, **pare e gere por ele**. Verificação que a ferramenta não
+cobre (ex.: promos sem preço real) **ainda** leva os 2 links por linha. Detalhe
+completo na seção 📤 lá embaixo. Contrato fleet-wide no `~/.claude/CLAUDE.md`.
+
 ## 🛰️ Convenções da frota (cross-scanner)
 
 > **Manual completo** (repo privado): https://github.com/matheuscllm-lgtm/scanners-commons — erros comuns, referências de preço, chaves, GitHub Actions e modelo de entrega de TODOS os scanners. Cópia-mestra local: `C:\Users\mathe\scanners-commons\`.
