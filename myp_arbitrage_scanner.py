@@ -17,8 +17,8 @@ Requisitos:
     pip install cloudscraper beautifulsoup4 openpyxl lxml
 
 Autor: Matheus Chillemi / Claude
-Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10) | 2026-06-07 (v5.10.1 → v5.11) | 2026-06-09 (v5.11.1) | 2026-06-10 (v5.11.2 → v5.11.3) | 2026-06-16 (v5.11.4 → v5.11.6) | 2026-06-13 (v5.11.7, doc-only) | 2026-06-17 (v5.11.8 — loop: timing + bench) | 2026-06-17 (v5.12 — batch pokemontcg.io por set) | 2026-06-17 (v5.13 — Iteração #2: atribuição de cobertura do fallback) | 2026-06-20 (v5.14 — coluna "TCG Source" explícita + enrich off-runner p/ preço real) | 2026-06-20 (v5.14.1 — cobertura de preço real no summary medida sobre o universo de cartas EN) | 2026-06-21 (v5.14.3 — deal com preço FALLBACK sai do balde "limpos" → balde dedicado; fix BLOCKER de honestidade) | 2026-06-21 (v5.14.4 — tcg_suspect boundary inclusivo `>=` (pega exatamente-10x); regressão de precisão minerada do eval asi-evolve)
-Versão: v5.17
+Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10) | 2026-06-07 (v5.10.1 → v5.11) | 2026-06-09 (v5.11.1) | 2026-06-10 (v5.11.2 → v5.11.3) | 2026-06-16 (v5.11.4 → v5.11.6) | 2026-06-13 (v5.11.7, doc-only) | 2026-06-17 (v5.11.8 — loop: timing + bench) | 2026-06-17 (v5.12 — batch pokemontcg.io por set) | 2026-06-17 (v5.13 — Iteração #2: atribuição de cobertura do fallback) | 2026-06-20 (v5.14 — coluna "TCG Source" explícita + enrich off-runner p/ preço real) | 2026-06-20 (v5.14.1 — cobertura de preço real no summary medida sobre o universo de cartas EN) | 2026-06-21 (v5.14.3 — deal com preço FALLBACK sai do balde "limpos" → balde dedicado; fix BLOCKER de honestidade) | 2026-06-21 (v5.14.4 — tcg_suspect boundary inclusivo `>=` (pega exatamente-10x); regressão de precisão minerada do eval asi-evolve) | 2026-06-26 (v5.18 — cobertura ME: `Chaos Rising`→me4→CRI e `Perfect Order`→me3→POR; destrava preço real tcgcsv pros sets ME04/ME03 que caíam em fallback indevido)
+Versão: v5.18
 
 Changelog v5.1 (2026-05-12 — auditoria C/H/M, mesma metodologia do CT scanner):
   - C1: --threshold < 1.0 auto-converte com warning (UX guard contra trap
@@ -236,19 +236,25 @@ MYP_EDITION_SUBSTR_TO_PTCG = {
     # `me2pt5-10` 200). Quando oversized_collector_risk=True, write_card_row
     # CAI no fallback de busca (variant fora de range é o caso 404 típico).
     #
-    # ⚠️ ACHADO 2026-06-17 (Iteração #2, medido no quick ao vivo): a era ME
-    # INTEIRA está com **0% de preço TCGplayer** no pokemontcg.io — `me2pt5`,
-    # `me3` (Perfect Order), `me4` (Chaos Rising) retornam 200 mas o objeto
-    # `tcgplayer` traz só `url`, sem `prices` (vs SV = 100%, atualizado no dia).
-    # CONSEQUÊNCIA: NÃO adicionar `Perfect Order`→me3 / `Chaos Rising`→me4
-    # esperando reduzir fallback — não recupera preço nenhum, só troca o card de
-    # `unmapped_set` pra `no_coverage`. Os "deals" ME (Ascended Heroes etc.) saem
-    # do `.estat-tcg` e por isso caem nos baldes validar-manualmente. Só um preço
-    # TCGplayer alternativo (scrape direto / outra fonte) destrava margem real
-    # pra ME (item de backlog; o playbook docs/optimization-loop.md é local-only/
-    # gitignored e pode não existir no clone — ver seção "Otimizar" no CLAUDE.md).
+    # ⚠️ ACHADO 2026-06-17 (Iteração #2): a era ME está com **0% de preço
+    # TCGplayer** no pokemontcg.io — `me2pt5`, `me3` (Perfect Order), `me4`
+    # (Chaos Rising) retornam 200 mas o objeto `tcgplayer` traz só `url`, sem
+    # `prices`. À época isso significava que mapear esses sets não recuperava
+    # preço nenhum (a única fonte era a pokemontcg.io).
+    # ✅ SUPERADO pela v5.15+ (tcgcsv): o `tcgcsv.com` TEM preço TCGplayer real
+    # pros sets ME (ASC/POR/CRI confirmados 1-a-1 contra /groups). A ponte
+    # set→tcgcsv (resolve_tcgcsv_group_id) precisa do setcode pra achar o
+    # groupId — então mapear a edição ME → setcode é o que **destrava** o preço
+    # real. Sem o mapa, a edição vira `unmapped_set` (setcode None), a ponte
+    # tcgcsv nem roda, e o card cai em `.estat-tcg` indevidamente.
+    # CASO 2026-06-26: Mega Greninja ex 100/086 (Chaos Rising) saiu no
+    # fallback `.estat-tcg` (R$93,90) enquanto o tcgcsv tinha o real
+    # (#100/086 Holofoil US$19,64) — bug de cobertura corrigido adicionando
+    # `Chaos Rising`→me4 e `Perfect Order`→me3 (abbr CRI/POR no mapa tcgcsv).
     "Mega Evolution: Phantasmal Flames": "me2",
     "Ascended Heroes":                   "me2pt5",
+    "Perfect Order":                     "me3",   # ME03 (tcgcsv POR — v5.18 2026-06-26)
+    "Chaos Rising":                      "me4",   # ME04 (tcgcsv CRI — v5.18 2026-06-26)
     "Mega Evolution":                    "me1",   # base ME (catch-all curto, longest-substr win pros específicos acima)
     # Sword & Shield era
     "Crown Zenith":                      "swsh12pt5",
@@ -453,6 +459,8 @@ PTCG_SETCODE_TO_TCGCSV_ABBR = {
     "sv3pt5": "MEW",    # 151
     "sv2": "PAL",       # Paldea Evolved
     "me2pt5": "ASC",    # Ascended Heroes (pokemontcg.io SEM preço → tcgcsv resgata)
+    "me4": "CRI",       # ME04: Chaos Rising (v5.18 2026-06-26; tcgcsv resgata o preço real)
+    "me3": "POR",       # ME03: Perfect Order (v5.18 2026-06-26; idem)
     "me2": "PFL",       # Phantasmal Flames
     "me1": "MEG",       # Mega Evolution (base)
     "swsh12pt5": "CRZ",   # Crown Zenith

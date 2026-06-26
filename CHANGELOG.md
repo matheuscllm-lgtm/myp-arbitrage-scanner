@@ -1,5 +1,45 @@
 # Changelog
 
+## v5.18 — 2026-06-26 — cobertura ME: Chaos Rising (me4) e Perfect Order (me3) destravam preço real tcgcsv
+
+**O que muda em uma frase:** os sets **ME04: Chaos Rising** e **ME03: Perfect
+Order** ganharam mapa edição→setcode→tcgcsv, então cartas desses sets agora saem
+com **preço TCGplayer real** (via `tcgcsv.com`) em vez de cair no fallback
+`.estat-tcg` (margem não-confiável).
+
+### Bug (achado na revisão deal-a-deal do scan quick 2026-06-26)
+O deal **Mega Greninja ex 100/086** (Chaos Rising) saiu no balde
+`fallback (.estat-tcg)` com TCG estimado R$93,90 e **sem USD** — enquanto o
+`tcgcsv.com` **tinha** o preço real: `#100/086 Holofoil US$19,64` (≈R$102).
+Causa-raiz: `resolve_tcgcsv_group_id` é chaveado por `setcode`, derivado de
+`myp_edition_to_ptcg_setcode(edition)` via `MYP_EDITION_SUBSTR_TO_PTCG`. Como
+"Chaos Rising"/"Perfect Order" **não** estavam nesse mapa, o setcode vinha `None`,
+a ponte tcgcsv **nem rodava**, e o card caía em fallback indevido. Um comentário
+de 2026-06-17 dizia explicitamente pra **não** mapear esses sets — mas esse
+raciocínio era da era pré-tcgcsv (quando a única fonte era a pokemontcg.io, que
+não tem preço pros sets ME). A v5.15+ tornou o comentário obsoleto.
+
+### Fix
+- `MYP_EDITION_SUBSTR_TO_PTCG`: + `"Chaos Rising": "me4"`, `"Perfect Order": "me3"`.
+- `PTCG_SETCODE_TO_TCGCSV_ABBR`: + `"me4": "CRI"`, `"me3": "POR"` (abbr
+  verificadas 1-a-1 contra o dump real `/groups`: CRI=24655, POR=24587).
+- Comentário stale (linhas ~239-249) reescrito: documenta que o tcgcsv resgata
+  os sets ME e que mapear a edição é o que **destrava** o preço real.
+
+### Validação (4 camadas)
+- **Edição→setcode:** `validate_setcode_map.py` = **108 ✅ ok, 0 quebrados, 0
+  suspeitos** (Chaos Rising/Perfect Order confirmados contra o nome do set na
+  pokemontcg.io — tokens batem).
+- **Setcode→groupId:** `resolve_tcgcsv_group_id('me4',…)→24655`, `('me3',…)→24587`.
+- **Caminho de preço (integração):** Mega Greninja ex 100/086 em modo `tcgcsv`
+  agora retorna **R$102,13 real** (label `tcgcsv`), não mais fallback.
+- **Sem regressão:** `test_v5_8_offline.py` = **54/54** verde.
+
+### Impacto
+Deals de Chaos Rising/Perfect Order deixam de ser enterrados como "margem
+não-confiável" e entram no balde limpo com margem real. (No scan 2026-06-26, o
+Mega Greninja recupera margem real ~46% vs. os 34% estimados do fallback.)
+
 ## v5.17 — 2026-06-24 — `myp_enrich.py` aposentado (tcgcsv no CI tornou redundante)
 
 **O que muda em uma frase:** o passo manual off-runner `myp_enrich.py` foi
