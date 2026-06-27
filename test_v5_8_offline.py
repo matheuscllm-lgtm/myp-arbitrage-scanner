@@ -12,6 +12,16 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+
+# Smoke imprime ✓/✗/═ (Unicode); console Windows é cp1252 por default e crasha
+# (UnicodeEncodeError) no caminho de erro. Força UTF-8 igual aos demais scripts
+# do repo (myp_summary.py / myp_aggregate.py / drift_check.py).
+if (sys.stdout.encoding or "").lower() != "utf-8":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 from bs4 import BeautifulSoup
 from openpyxl import load_workbook
 
