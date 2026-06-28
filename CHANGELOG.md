@@ -1,5 +1,56 @@
 # Changelog
 
+## v5.18.1 — 2026-06-28 — robustez: truncation flag, NM separator, aggregate threshold, bench tcgcsv
+
+**O que muda em uma frase:** quatro correções de robustez/honestidade vindas de
+uma revisão de código do repo inteiro (`/code-review`), sem mudar o caminho feliz
+de scan — preço, margem e baldes de um run normal ficam idênticos.
+
+### Fix #1 — flag de truncation não era marcada após `break` (honestidade)
+Em `scrape_product`, a paginação da marketplace saía do loop com `break` quando
+uma página intermediária vinha **sem** o container `#lista-anuncio-demais-vendedores`.
+Esse `break` pulava o `else` do `for`, então o **risco residual** (`max_seller_page
+> MAX_SELLER_PAGES` → páginas além do cap nunca lidas) **não** era sinalizado: o
+card saía com `en_truncation_risk=False`, escondendo que o `lowest EN-NM` podia
+estar superestimado (uma oferta EN-NM mais barata podia existir nas páginas não
+lidas). Agora:
+- o check de risco residual `> cap` roda **sempre**, fora do `for/else`;
+- uma página vazia quando a página 1 prometia mais (`pg < pages_to_fetch`) é
+  tratada como fim **inesperado** (glitch/drift) → marca `truncation_risk` +
+  contador `seller_page_empty_early` (antes assumia "fim natural" em silêncio).
+- 2 testes novos (`test_truncation_flag_on_unexpected_empty_page`,
+  `test_truncation_residual_flag_survives_break`).
+
+### Fix #2 — condição NM dependia de hífen literal (invariante NM-only)
+`_parse_seller_table` lia o código de qualidade com `qual_txt.split("-", 1)[0]`.
+Se o MYP trocasse o separador (en-dash `–`, em-dash `—`, `/`…), `qual_code`
+viraria a célula inteira, `!= "NM"`, e **todos** os sellers NM seriam descartados
+em silêncio ("verde mas vazio"). Agora o código é extraído pelo token inicial de
+letras (`^[A-Za-z]+`), robusto a qualquer separador, mantendo o match **EXATO**
+`== "NM"` (não vaza `NMX`/`SP`). Célula não-vazia e ilegível agora gera
+warn-once + contador `skipped_unparseable_quality` (paridade com o drift de
+idioma).
+
+### Fix #3 — `myp_aggregate.py --threshold` default 0.25 ≠ 30% canônico
+O default `0.25` reclassificava o consolidado num piso **mais frouxo** que um run
+single-thread (cartas 25–30% vazavam pro balde "limpos ≥30%", e o
+`myp_summary.py` lia o "Margin Threshold" 25% gravado). Default agora é **0.30**
+(= o threshold canônico do scanner). Os workflows já passavam `--threshold`
+explícito; o default importa pro uso manual.
+
+### Fix #4 — `bench.py` media a rota de preço ERRADA
+O mock `_FakeSession` não servia `tcgcsv.com`, então no default
+(`--tcg-source auto` = tcgcsv-first, a rota do CI/prod) o prefill tcgcsv falhava
+e o bench caía na rota pokemontcg — a métrica `ptcg_calls` não refletia o caminho
+real. Agora o mock serve fixtures tcgcsv (`/groups`, `/products`, `/prices`), o
+bench ganhou `--tcg-source` e as métricas `tcgcsv_prefill_sets`/`tcg_from_tcgcsv`.
+Default mede a rota tcgcsv; `--tcg-source pokemontcg` mede a rota legada.
+
+### Validação
+- `test_v5_8_offline.py`: **56/56** (54 + 2 novos), sem regressão.
+- `bench.py` default: `tcgcsv_prefill_sets=2`, `tcg_from_tcgcsv=16`, `deals_clean=16`
+  (idêntico à rota pokemontcg); `--tcg-source pokemontcg`: `ptcg_prefill_calls=2`.
+
 ## v5.18 — 2026-06-26 — cobertura ME: Chaos Rising (me4) e Perfect Order (me3) destravam preço real tcgcsv
 
 **O que muda em uma frase:** os sets **ME04: Chaos Rising** e **ME03: Perfect
