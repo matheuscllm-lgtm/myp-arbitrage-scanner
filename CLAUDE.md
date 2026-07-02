@@ -80,6 +80,15 @@ o scanner.
 
 ## Rodar
 
+> **Skill `/scan` (jul/2026)**: o jeito canônico de pedir um scan ao assistente.
+> O catálogo mapeado (108 edições do `MYP_EDITION_SUBSTR_TO_PTCG`) está dividido
+> em **6 grupos** por recência (grupo 1 = Mega Evolution até Chaos Rising + SV
+> novos; grupo 6 = vintage), cada um dimensionado pra caber em **≤2h30** — runs
+> mais longos morriam sem entregar. O skill **sempre pergunta** quais grupos
+> rodar, roda um grupo por vez (nunca paralelo — CF 403) e entrega cada grupo
+> via `myp_summary.py` assim que termina. Definição dos grupos:
+> `.claude/commands/scan.md`.
+
 ```bash
 python myp_arbitrage_scanner.py --editions "Ascended Heroes" \
   --threshold 30 --min-price 50 --delay 1.5 \
