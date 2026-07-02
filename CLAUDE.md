@@ -85,6 +85,14 @@ o scanner.
 > entrega pelo `myp_summary.py`, sempre no mesmo formato. O contrato continua
 > sendo este CLAUDE.md; a skill só o operacionaliza passo a passo. Os comandos
 > abaixo são a referência do que a skill executa.
+>
+> **Escopo por grupos (2026-07-02):** o catálogo com preço real (108 sets) é
+> dividido em **6 grupos canônicos por recência** em `scan_groups.py` (G1 =
+> Mega Evolution até Chaos Rising + SV recente … G6 = WotC; ≤21 edições/grupo
+> pra nenhum run passar de ~2h30 e morrer por timeout sem entregar). A skill
+> pergunta ao operador quais grupos rodar; `python scan_groups.py --list`
+> mostra tudo; `--group N` imprime o input `editions` pronto. A partição é
+> travada por teste (`test_scan_groups.py`) contra `MYP_EDITION_SUBSTR_TO_PTCG`.
 
 ```bash
 python myp_arbitrage_scanner.py --editions "Ascended Heroes" \
@@ -174,8 +182,10 @@ python myp_arbitrage_scanner.py --editions "Ascended Heroes" \
   (principais SV + Ascended Heroes/Perfect Order/Chaos Rising). Usa o secret
   `POKEMONTCG_API_KEY` (sleep adaptativo, sem 429). Sai XLSX consolidado como
   artifact + `results/latest-quick.md` commitado. Edições custom: input
-  `editions` (multi-palavra entre aspas — o quick parseia certo via `eval
-  set --`; o weekly tem bug latente com multi-palavra no `$ARGS` cru).
+  `editions` (multi-palavra entre aspas — quick e weekly parseiam certo via
+  `eval set --`; no quick o input chega via env `EDITIONS_INPUT`, então edição
+  com apóstrofo, ex. "Champion's Path", também é segura; o daily ainda usa o
+  padrão `$ARGS` cru, o mais frágil dos três).
 
 ## 🔀 Preço TCG REAL no catálogo COMPLETO
 
