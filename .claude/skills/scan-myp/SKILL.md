@@ -70,7 +70,32 @@ filtro é OR.)
 (*estimativa conservadora; edições vintage têm bem menos produtos EN no MYP
 — na prática costuma ficar abaixo; com API key ~2h12.)
 
-## Passo 2 — rodar (um grupo por vez, com resume e XLSX próprios)
+## Passo 2 — rodar (rota DETERMINÍSTICA por ambiente — não há escolha ad-hoc)
+
+> O objetivo do skill é HOMOGENEIDADE (operador, 2026-07-02): o scanner roda
+> **sempre da mesma maneira** para o mesmo ambiente. A rota é decidida pela
+> tabela abaixo, nunca improvisada caso a caso.
+
+| Onde a sessão está rodando | Rota ÚNICA |
+|---|---|
+| **Sessão na nuvem / container** (Claude Code web, CI — IP de datacenter) | **SEMPRE** o workflow `Quick MYP Scan (chunked)` — dispatch abaixo. **NUNCA** rodar o scraper local no container (Cloudflare/IP não confiável; o runner do GitHub comprovadamente passa). |
+| **Máquina local do operador** (Windows) | **SEMPRE** o comando local abaixo, em background/detached, com `--resume`. |
+
+### Rota nuvem (workflow_dispatch — sempre estes inputs)
+
+Disparar `quick-scan.yml` no repo `matheuscllm-lgtm/myp-arbitrage-scanner`,
+`ref: main`, com EXATAMENTE:
+- `editions` = a lista verbatim do grupo escolhido (seção acima);
+- `chunk_total` = `"6"` (fixo);
+- demais inputs nos defaults (threshold 30 / min_price 50 / delay 1.5).
+
+Depois: monitorar o run até `completed`; baixar o artifact
+**`myp-quick-consolidated-<run_id>`**; salvar o XLSX como
+`results/grupoN_<AAAA-MM-DD>.xlsx`. Um grupo por vez — só disparar o
+próximo depois de ENTREGAR o anterior (o concurrency group `myp-scan`
+também impede simultâneos).
+
+### Rota local (sempre este comando)
 
 ```bash
 python myp_arbitrage_scanner.py \
@@ -79,30 +104,30 @@ python myp_arbitrage_scanner.py \
   -o results/grupoN_<AAAA-MM-DD>.xlsx --resume
 ```
 
-- **`--resume` é obrigatório** nos grupos: se o processo morrer, re-rodar o
-  MESMO comando retoma do checkpoint (`<output>.resume.json`) — é a defesa
-  contra o scan ser morto sem entregar.
-- Rode **em background/detached** (nunca preso num terminal que pode fechar);
-  monitore o processo e o crescimento do XLSX.
+- **`--resume` é obrigatório**: se o processo morrer, re-rodar o MESMO
+  comando retoma do checkpoint (`<output>.resume.json`) — é a defesa contra
+  o scan ser morto sem entregar.
+- Em background/detached (nunca preso num terminal que pode fechar);
+  monitorar o processo e o crescimento do XLSX.
 - `--threshold 30` é percent INTEIRO (convenção MYP; CardTrader usa fração).
 - Um grupo por vez, sequencial. Nunca 2 scans no mesmo IP.
-- Alternativa para o Grupo 1 sem ocupar a máquina: o workflow
-  `Quick MYP Scan (chunked)` no GitHub Actions cobre as 11 edições do quick
-  (SV principais + Ascended Heroes/Perfect Order/Chaos Rising) em ~10-15 min
-  de relógio (6 chunks, IPs próprios).
 
-## Passo 3 — entregar (contrato do repo, não negociável)
+## Passo 3 — entregar (ritual FIXO, contrato do repo, não negociável)
 
-Rode o `myp_summary.py` sobre CADA XLSX gerado e cole a saída **VERBATIM**
-no chat (regra dura do CLAUDE.md deste repo — nunca remontar tabela à mão,
-nunca dropar o link `[TCG]`):
+O formato de entrega é **sempre exatamente o mesmo**, para qualquer grupo e
+qualquer ambiente:
 
 ```bash
-python myp_summary.py results/grupoN_<data>.xlsx --type daily -o results/grupoN_<data>.md
+python myp_summary.py results/grupoN_<AAAA-MM-DD>.xlsx --type daily -o results/grupoN_<AAAA-MM-DD>.md
 ```
 
-Todas as regras do contrato de entrega do `CLAUDE.md` valem: todos os
-buckets, 2 links por linha, todos os deals, sem recomendação de compra.
+1. Colar o conteúdo do `.md` **VERBATIM** no chat — nunca remontar tabela à
+   mão, nunca renomear/reordenar colunas, nunca dropar o link `[TCG]`.
+2. A ÚNICA moldura permitida fora do verbatim: uma linha de contexto antes
+   ("Grupo N — run <id>/local, data") e, depois da tabela, notas de leitura
+   que NÃO alterem nem resumam a tabela (ex.: apontar os itens "validar").
+3. Sem recomendação de compra, todos os buckets, todos os deals, e sempre
+   reportar a linha "Cobertura de preço TCG real" (real vs fallback).
 
 ## Regras que este skill NÃO muda
 
