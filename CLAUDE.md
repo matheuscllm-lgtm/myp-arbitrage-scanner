@@ -179,7 +179,9 @@ python myp_arbitrage_scanner.py --editions "Ascended Heroes" \
   `POKEMONTCG_API_KEY` (sleep adaptativo, sem 429). Sai XLSX consolidado como
   artifact + `results/latest-quick.md` commitado. Edições custom: input
   `editions` (multi-palavra entre aspas — o quick parseia certo via `eval
-  set --`; o weekly tem bug latente com multi-palavra no `$ARGS` cru).
+  set --`; o input chega via env `EDITIONS_INPUT`, então edição com apóstrofo,
+  ex. "Champion's Path" do grupo 3 do scan-myp, também é segura; o weekly tem
+  bug latente com multi-palavra no `$ARGS` cru).
 
 ## 🔀 Preço TCG REAL no catálogo COMPLETO
 
