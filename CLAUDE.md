@@ -80,6 +80,12 @@ o scanner.
 
 ## Rodar
 
+> **Caminho único: skill `/myp-scan`** (`.claude/skills/myp-scan/SKILL.md`) —
+> ela dispara o workflow `quick-scan.yml` (ou o run local como fallback) e
+> entrega pelo `myp_summary.py`, sempre no mesmo formato. O contrato continua
+> sendo este CLAUDE.md; a skill só o operacionaliza passo a passo. Os comandos
+> abaixo são a referência do que a skill executa.
+
 ```bash
 python myp_arbitrage_scanner.py --editions "Ascended Heroes" \
   --threshold 30 --min-price 50 --delay 1.5 \
