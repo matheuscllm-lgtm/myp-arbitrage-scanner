@@ -80,6 +80,16 @@ o scanner.
 
 ## Rodar
 
+> 🎯 **Skill `scan-myp`** (`.claude/skills/scan-myp/SKILL.md`, 2026-07-02):
+> o catálogo mapeado (~112 edições com preço TCG real) está dividido em
+> **6 grupos por recência**, cada um dimensionado pra **≤ ~2h30 de scan**
+> (grupo 1 = era Mega Evolution até Chaos Rising + SV recente). Quando o
+> operador pedir pra "rodar o MYP", o agente **pergunta quais grupos rodar**
+> e roda um por vez com `--resume` — defesa contra scans longos que morrem
+> sem entregar. As listas de substrings dos grupos estão no skill (verbatim
+> do `MYP_EDITION_SUBSTR_TO_PTCG`; validadas por script — nunca editar de
+> cabeça).
+
 ```bash
 python myp_arbitrage_scanner.py --editions "Ascended Heroes" \
   --threshold 30 --min-price 50 --delay 1.5 \
