@@ -4,6 +4,13 @@ Usado pelo GH Actions matrix job: cada chunk gera um xlsx parcial, depois
 este script merge tudo em um relatório consolidado idêntico ao que um run
 single-thread produziria.
 
+⚠️ O `--threshold` (FRAÇÃO) classifica/colore as sheets do consolidado e é
+gravado como "Margin Threshold" no XLSX (que o `myp_summary.py` lê como piso de
+deal). Default = 0.30 (= o threshold canônico do scanner, 30%); v5.19.1 corrigiu
+o default legado 0.25 que reclassificava o consolidado num piso MAIS FROUXO que
+um run single-thread (cartas 25–30% vazavam pro balde "limpos ≥30%"). Os
+workflows já passam `--threshold` explícito; o default importa pro uso manual.
+
 Reconstrói objetos CardData a partir das rows da sheet "All EN Cards" de
 cada chunk, dedupe por product_url (chunks são interleaved então em teoria
 não deveria haver duplicata, mas defensivo), e re-invoca generate_xlsx pra
@@ -146,8 +153,10 @@ def main() -> int:
                         help="Caminhos dos XLSX de chunks (aceita glob: chunk_*.xlsx)")
     parser.add_argument("-o", "--output", required=True,
                         help="Caminho do XLSX consolidado")
-    parser.add_argument("--threshold", type=float, default=0.25,
-                        help="Margem mínima como FRAÇÃO (default 0.25 = 25%%) — só pra formatação das sheets")
+    parser.add_argument("--threshold", type=float, default=0.30,
+                        help="Margem mínima como FRAÇÃO (default 0.30 = 30%%, "
+                             "= o threshold canônico do scanner) — classifica/"
+                             "formata as sheets do consolidado")
     args = parser.parse_args()
 
     # Expand globs (Windows shell não expande)

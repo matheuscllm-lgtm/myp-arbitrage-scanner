@@ -2249,6 +2249,100 @@ def test_ptcg_api_key_bom_only_yields_no_key():
     print("  X-Api-Key só-BOM: vira None → sem header ✓")
 
 
+def _make_gate_page1(max_page: int) -> str:
+    """Página 1 que DISPARA o gate de paginação (igual Psyduck) com paginação
+    marketplace indo até `max_page`. Edição usada nos testes = 'Scarlet &
+    Violet' (NÃO mapeada p/ setcode → sem consulta de rede ao preço real, mantém
+    o `.estat-tcg`)."""
+    lojistas = (
+        '<table class="table-striped table-bordered"><tbody>'
+        + _seller_row("Inglês", "NM - Quase nova", "498,00")
+        + _seller_row("Inglês", "NM - Quase nova", "520,00")
+        + '</tbody></table>'
+    )
+    mkt_rows = ""
+    for i in range(16):
+        price = 180 + i * 4
+        lang = "Português" if i % 2 == 0 else "Japonês"
+        mkt_rows += _seller_row(lang, "NM - Quase nova", f"{price},00")
+    pag_links = "".join(
+        f'<a href="?estoque-outros-page={n}">{n}</a>' for n in range(2, max_page + 1)
+    )
+    marketplace = _marketplace_container(mkt_rows, f'<ul class="pagination">{pag_links}</ul>')
+    return ('<html><body><h1>Gatecard (053/198)</h1>'
+            '<span class="estat-tcg">TCG Player: R$ 557,40</span>'
+            f'{lojistas}{marketplace}</body></html>')
+
+
+def _mkt_page_html(price_brl: str) -> str:
+    """Página marketplace válida com 1 EN-NM no preço dado."""
+    return f'<html><body>{_marketplace_container(_seller_row("Inglês", "NM - Quase nova", price_brl))}</body></html>'
+
+
+def test_truncation_flag_on_unexpected_empty_page():
+    """v5.18.1 (fix #1, parte A): uma página marketplace SEM container quando a
+    página 1 prometia mais páginas (pg < pages_to_fetch) é fim INESPERADO →
+    truncation_risk=True (antes o `break` em mkt=None assumia 'fim natural' e
+    saía com a flag False, escondendo cobertura incompleta)."""
+    from myp_arbitrage_scanner import MYPScraper
+    base = "https://mypcards.com/pokemon/produto/1/gatecard"
+    pages = {
+        base: _make_gate_page1(max_page=4),                       # pages_to_fetch=4
+        f"{base}?estoque-outros-page=2": _mkt_page_html("410,00"),
+        f"{base}?estoque-outros-page=3": "<html><body><p>sem marketplace</p></body></html>",  # vazia (pg 3 < 4)
+        f"{base}?estoque-outros-page=4": _mkt_page_html("450,00"),  # não deve ser alcançada
+    }
+    fetched = []
+    sc = MYPScraper(delay=0.0)
+
+    def fake_get(url, save_debug=False):
+        fetched.append(url)
+        html = pages.get(url)
+        return BeautifulSoup(html, "lxml") if html is not None else None
+
+    sc._get = fake_get
+    card = sc.scrape_product(base, "Scarlet & Violet")
+    assert card is not None, "card não deveria ser skipado"
+    assert card.en_truncation_risk is True, \
+        "página vazia inesperada (pg<pages_to_fetch) deveria marcar truncation_risk"
+    assert sc._stats["seller_page_empty_early"] == 1, \
+        f"contador seller_page_empty_early={sc._stats['seller_page_empty_early']} (esperado 1)"
+    assert f"{base}?estoque-outros-page=4" not in fetched, "pg4 não deveria ser buscada (break em pg3)"
+    print("  Empty-page inesperada → truncation_risk=True + contador ✓")
+
+
+def test_truncation_residual_flag_survives_break():
+    """v5.18.1 (fix #1, parte B): com max_seller_page > cap, o risco residual
+    (páginas além do cap não lidas) é marcado MESMO quando o loop sai por `break`
+    (container vazio na última página intencional). Antes esse check vivia no
+    `else` do for-loop e era pulado por qualquer break → card saía
+    en_truncation_risk=False escondendo as páginas >cap nunca lidas."""
+    from myp_arbitrage_scanner import MYPScraper, MAX_SELLER_PAGES
+    base = "https://mypcards.com/pokemon/produto/2/gatecard"
+    page1 = _make_gate_page1(max_page=14)  # 14 > cap(10) → pages_to_fetch=10
+    fetched = []
+    sc = MYPScraper(delay=0.0)
+
+    def fake_get(url, save_debug=False):
+        fetched.append(url)
+        if url == base:
+            return BeautifulSoup(page1, "lxml")
+        # pg == cap (10) = última página intencional → container vazio (break SEM
+        # disparar o early-empty, pois pg NÃO é < pages_to_fetch); pgs 2..9 válidas.
+        if url == f"{base}?estoque-outros-page={MAX_SELLER_PAGES}":
+            return BeautifulSoup("<html><body><p>vazia</p></body></html>", "lxml")
+        return BeautifulSoup(_mkt_page_html("460,00"), "lxml")
+
+    sc._get = fake_get
+    card = sc.scrape_product(base, "Scarlet & Violet")
+    assert card is not None
+    assert sc._stats["seller_page_empty_early"] == 0, \
+        "early-empty NÃO deveria disparar (pg==pages_to_fetch, não <)"
+    assert card.en_truncation_risk is True, \
+        "risco residual (max_seller_page>cap) deveria ser marcado mesmo após break"
+    print("  Residual >cap survives break → truncation_risk=True ✓")
+
+
 def test_summary_dual_flag_deal_single_bucket():
     """v5.19.1: deal com AS DUAS flags (supranumerário-'Comum' E tcg_suspect)
     sai em UM balde só — o de TCG Suspect (sinal mais forte: o preço de
@@ -2319,6 +2413,8 @@ def test_summary_pipe_in_name_escaped():
 def main():
     tests = [
         ("threshold constant", test_threshold_constant),
+        ("v5.18.1 truncation flag em página vazia inesperada", test_truncation_flag_on_unexpected_empty_page),
+        ("v5.18.1 risco residual >cap sobrevive a break", test_truncation_residual_flag_survives_break),
         ("secret BOM/zero-width sanitization", test_clean_secret_strips_bom_and_zero_width),
         ("X-Api-Key c/ BOM → latin-1-encodável", test_ptcg_api_key_bom_header_is_latin1_encodable),
         ("X-Api-Key só-BOM → sem header", test_ptcg_api_key_bom_only_yields_no_key),

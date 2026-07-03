@@ -18,7 +18,7 @@ Requisitos:
 
 Autor: Matheus Chillemi / Claude
 Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10) | 2026-06-07 (v5.10.1 → v5.11) | 2026-06-09 (v5.11.1) | 2026-06-10 (v5.11.2 → v5.11.3) | 2026-06-16 (v5.11.4 → v5.11.6) | 2026-06-13 (v5.11.7, doc-only) | 2026-06-17 (v5.11.8 — loop: timing + bench) | 2026-06-17 (v5.12 — batch pokemontcg.io por set) | 2026-06-17 (v5.13 — Iteração #2: atribuição de cobertura do fallback) | 2026-06-20 (v5.14 — coluna "TCG Source" explícita + enrich off-runner p/ preço real) | 2026-06-20 (v5.14.1 — cobertura de preço real no summary medida sobre o universo de cartas EN) | 2026-06-21 (v5.14.3 — deal com preço FALLBACK sai do balde "limpos" → balde dedicado; fix BLOCKER de honestidade) | 2026-06-21 (v5.14.4 — tcg_suspect boundary inclusivo `>=` (pega exatamente-10x); regressão de precisão minerada do eval asi-evolve) | 2026-06-26 (v5.18 — cobertura ME: `Chaos Rising`→me4→CRI e `Perfect Order`→me3→POR; destrava preço real tcgcsv pros sets ME04/ME03 que caíam em fallback indevido)
-Versão: v5.19
+Versão: v5.19.2
 
 Changelog v5.1 (2026-05-12 — auditoria C/H/M, mesma metodologia do CT scanner):
   - C1: --threshold < 1.0 auto-converte com warning (UX guard contra trap
@@ -903,6 +903,13 @@ class MYPScraper:
             # páginas extras lidas com sucesso e falhas de fetch dessas páginas.
             "seller_pages_followed": 0,
             "seller_page_fetch_failures": 0,
+            # v5.19.1 (2026-06-28): página de marketplace sem container quando a
+            # página 1 prometia mais páginas = fim INESPERADO (glitch/drift), não
+            # natural → marca truncation_risk em vez de assumir cobertura completa.
+            "seller_page_empty_early": 0,
+            # v5.19.1: célula de qualidade não-vazia mas sem código legível (drift
+            # de layout do MYP) — NM-only não pôde ser confirmado, linha pulada.
+            "skipped_unparseable_quality": 0,
             # v5.10.1 (2026-06-07): cost gate — paginações puladas porque o card
             # tem TCG < min_price (não pode virar deal, não vale o request).
             "pagination_skipped_low_tcg": 0,
@@ -1282,14 +1289,34 @@ class MYPScraper:
             # Filter: NM (Near Mint) only — skip Played, Damaged, etc.
             # v5.8.7: lê a célula de condição DEDICADA
             # (td.estoque-lista-qualidadenome, ex.: "NM - Quase nova",
-            # "SP - Pouco jogada") e casa o código EXATO antes do " - ".
+            # "SP - Pouco jogada") e casa o código EXATO no início da célula.
             # Antes era substring "NM" na linha inteira, que vazava não-NM
             # quando "NM" aparecia em qualquer coluna (nick de vendedor,
             # obs, etc). NM-only é invariante do scanner; sem célula de
             # qualidade confirmável (drift de layout), a linha é pulada.
+            # v5.19.1 (2026-06-28): extrai o código pelo TOKEN inicial de letras
+            # (`^[A-Za-z]+`) em vez de `split("-")`. O split literal em hífen
+            # quebrava silenciosamente se o MYP trocasse o separador (en-dash
+            # "–", em-dash "—", "/" etc.) — qual_code virava a célula inteira,
+            # `!= "NM"`, e TODOS os sellers NM eram descartados sem aviso ("verde
+            # mas vazio"). O regex para no 1º não-letra, então casa "NM" igual em
+            # "NM - Quase nova", "NM – Quase nova", "NM/Quase nova" ou só "NM".
             qual_el = row.select_one("td.estoque-lista-qualidadenome")
             qual_txt = qual_el.get_text(" ", strip=True) if qual_el else ""
-            qual_code = qual_txt.split("-", 1)[0].strip().upper()
+            _qm = re.match(r"\s*([A-Za-z]+)", qual_txt)
+            qual_code = _qm.group(1).upper() if _qm else ""
+            # Drift signal (paridade com o warn de idioma desconhecido): célula
+            # não-vazia da qual NÃO conseguimos extrair código = layout mudou →
+            # conta + warn-once. Sem isso o NM-only degradaria pra zero silencioso.
+            if qual_txt and not qual_code:
+                self._stats["skipped_unparseable_quality"] += 1
+                if "__qual_drift" not in self._unknown_lang_seen:
+                    self._unknown_lang_seen.add("__qual_drift")
+                    log.warning(
+                        f"  ⚠️ Célula de qualidade ilegível: '{qual_txt[:60]}' "
+                        f"(sem código no início). Possível drift de layout do "
+                        f"MYP — NM-only não confirmável, linha pulada."
+                    )
             if qual_code != "NM":
                 continue
 
@@ -1814,23 +1841,40 @@ class MYPScraper:
                 # recontar lojistas (que apareceriam de novo no reload completo).
                 mkt = page_soup.select_one("#lista-anuncio-demais-vendedores")
                 if mkt is None:
-                    # sem container marketplace nesta página → fim natural
+                    # Sem container marketplace nesta página. Se a página 1
+                    # prometia MAIS páginas (pg < pages_to_fetch), isto é um fim
+                    # INESPERADO (glitch transitório / drift de layout), não
+                    # natural → marca risco residual em vez de assumir cobertura
+                    # completa silenciosamente (v5.19.1: antes esse `break`
+                    # também pulava o residual-risk do for/else abaixo).
+                    if pg < pages_to_fetch:
+                        truncation_risk = True
+                        self._stats["seller_page_empty_early"] += 1
+                        log.warning(
+                            f"  ⚠️ {card.name or url}: página {pg} de "
+                            f"{pages_to_fetch} sem container marketplace "
+                            f"(página 1 indicava {max_seller_page}) — fim "
+                            f"inesperado, EN-NM pode seguir truncado."
+                        )
                     break
                 pst = self._parse_seller_table(mkt)
                 en_prices.extend(pst["en_prices"])
                 en_sellers += pst["en"]
                 jumbo_rows_seen += pst["jumbo"]
                 self._stats["seller_pages_followed"] += 1
-            else:
-                # loop terminou sem break: se havia mais páginas além do cap,
-                # o resto fica não-lido → ainda há risco residual de truncation.
-                if max_seller_page > MAX_SELLER_PAGES:
-                    truncation_risk = True
-                    log.warning(
-                        f"  ⚠️ {card.name or url}: {max_seller_page} páginas de "
-                        f"marketplace > cap {MAX_SELLER_PAGES} — páginas extras "
-                        f"não lidas, EN-NM pode seguir truncado."
-                    )
+            # v5.19.1 (2026-06-28): risco residual de truncation se havia mais
+            # páginas além do cap — checado SEMPRE, fora do for/else. Antes vivia
+            # no `else` do for-loop, que qualquer `break` (fetch falho OU
+            # container vazio) pulava → um card com >cap páginas que também batia
+            # num break saía como `en_truncation_risk=False`, escondendo que
+            # páginas além do cap nunca foram lidas (lowest EN-NM superestimado).
+            if max_seller_page > MAX_SELLER_PAGES:
+                truncation_risk = True
+                log.warning(
+                    f"  ⚠️ {card.name or url}: {max_seller_page} páginas de "
+                    f"marketplace > cap {MAX_SELLER_PAGES} — páginas extras "
+                    f"não lidas, EN-NM pode seguir truncado."
+                )
 
         # v5.8.3: log se rows Jumbo foram filtradas
         if jumbo_rows_seen > 0:
