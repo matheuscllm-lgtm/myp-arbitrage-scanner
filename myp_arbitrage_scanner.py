@@ -18,7 +18,7 @@ Requisitos:
 
 Autor: Matheus Chillemi / Claude
 Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10) | 2026-06-07 (v5.10.1 → v5.11) | 2026-06-09 (v5.11.1) | 2026-06-10 (v5.11.2 → v5.11.3) | 2026-06-16 (v5.11.4 → v5.11.6) | 2026-06-13 (v5.11.7, doc-only) | 2026-06-17 (v5.11.8 — loop: timing + bench) | 2026-06-17 (v5.12 — batch pokemontcg.io por set) | 2026-06-17 (v5.13 — Iteração #2: atribuição de cobertura do fallback) | 2026-06-20 (v5.14 — coluna "TCG Source" explícita + enrich off-runner p/ preço real) | 2026-06-20 (v5.14.1 — cobertura de preço real no summary medida sobre o universo de cartas EN) | 2026-06-21 (v5.14.3 — deal com preço FALLBACK sai do balde "limpos" → balde dedicado; fix BLOCKER de honestidade) | 2026-06-21 (v5.14.4 — tcg_suspect boundary inclusivo `>=` (pega exatamente-10x); regressão de precisão minerada do eval asi-evolve) | 2026-06-26 (v5.18 — cobertura ME: `Chaos Rising`→me4→CRI e `Perfect Order`→me3→POR; destrava preço real tcgcsv pros sets ME04/ME03 que caíam em fallback indevido)
-Versão: v5.18.1
+Versão: v5.19.1
 
 Changelog v5.1 (2026-05-12 — auditoria C/H/M, mesma metodologia do CT scanner):
   - C1: --threshold < 1.0 auto-converte com warning (UX guard contra trap
@@ -255,6 +255,15 @@ MYP_EDITION_SUBSTR_TO_PTCG = {
     "Ascended Heroes":                   "me2pt5",
     "Perfect Order":                     "me3",   # ME03 (tcgcsv POR — v5.18 2026-06-26)
     "Chaos Rising":                      "me4",   # ME04 (tcgcsv CRI — v5.18 2026-06-26)
+    # v5.19 (2026-07-02): ME05 apareceu no MYP ("Megaevolução: Escuridão
+    # AbsolutaME05: Pitch Black") e o título NÃO contém "Mega Evolution" →
+    # sem esta key o set vira unmapped (fallback indevido, mesma armadilha do
+    # Chaos Rising acima). pokemontcg.io ainda NÃO lista me5 (id antecipado,
+    # padrão da era); quem destrava o preço real é o tcgcsv (abbr ME05,
+    # groupId 24688 no /groups de 2026-07-02). "Mega Brave"/"Mega Symphonia"
+    # ficam DE FORA de propósito: o tcgcsv não tem group pra eles (2026-07-02)
+    # → fallback honesto é o correto até a fonte cobrir.
+    "Pitch Black":                       "me5",   # ME05 (tcgcsv ME05 — v5.19 2026-07-02)
     "Mega Evolution":                    "me1",   # base ME (catch-all curto, longest-substr win pros específicos acima)
     # Sword & Shield era
     "Crown Zenith":                      "swsh12pt5",
@@ -459,6 +468,7 @@ PTCG_SETCODE_TO_TCGCSV_ABBR = {
     "sv3pt5": "MEW",    # 151
     "sv2": "PAL",       # Paldea Evolved
     "me2pt5": "ASC",    # Ascended Heroes (pokemontcg.io SEM preço → tcgcsv resgata)
+    "me5": "ME05",      # ME05: Pitch Black (v5.19 2026-07-02; pokemontcg.io ainda sem o set → tcgcsv resgata)
     "me4": "CRI",       # ME04: Chaos Rising (v5.18 2026-06-26; tcgcsv resgata o preço real)
     "me3": "POR",       # ME03: Perfect Order (v5.18 2026-06-26; idem)
     "me2": "PFL",       # Phantasmal Flames
@@ -893,11 +903,11 @@ class MYPScraper:
             # páginas extras lidas com sucesso e falhas de fetch dessas páginas.
             "seller_pages_followed": 0,
             "seller_page_fetch_failures": 0,
-            # v5.18.1 (2026-06-28): página de marketplace sem container quando a
+            # v5.19.1 (2026-06-28): página de marketplace sem container quando a
             # página 1 prometia mais páginas = fim INESPERADO (glitch/drift), não
             # natural → marca truncation_risk em vez de assumir cobertura completa.
             "seller_page_empty_early": 0,
-            # v5.18.1: célula de qualidade não-vazia mas sem código legível (drift
+            # v5.19.1: célula de qualidade não-vazia mas sem código legível (drift
             # de layout do MYP) — NM-only não pôde ser confirmado, linha pulada.
             "skipped_unparseable_quality": 0,
             # v5.10.1 (2026-06-07): cost gate — paginações puladas porque o card
@@ -1284,7 +1294,7 @@ class MYPScraper:
             # quando "NM" aparecia em qualquer coluna (nick de vendedor,
             # obs, etc). NM-only é invariante do scanner; sem célula de
             # qualidade confirmável (drift de layout), a linha é pulada.
-            # v5.18.1 (2026-06-28): extrai o código pelo TOKEN inicial de letras
+            # v5.19.1 (2026-06-28): extrai o código pelo TOKEN inicial de letras
             # (`^[A-Za-z]+`) em vez de `split("-")`. O split literal em hífen
             # quebrava silenciosamente se o MYP trocasse o separador (en-dash
             # "–", em-dash "—", "/" etc.) — qual_code virava a célula inteira,
@@ -1835,7 +1845,7 @@ class MYPScraper:
                     # prometia MAIS páginas (pg < pages_to_fetch), isto é um fim
                     # INESPERADO (glitch transitório / drift de layout), não
                     # natural → marca risco residual em vez de assumir cobertura
-                    # completa silenciosamente (v5.18.1: antes esse `break`
+                    # completa silenciosamente (v5.19.1: antes esse `break`
                     # também pulava o residual-risk do for/else abaixo).
                     if pg < pages_to_fetch:
                         truncation_risk = True
@@ -1852,7 +1862,7 @@ class MYPScraper:
                 en_sellers += pst["en"]
                 jumbo_rows_seen += pst["jumbo"]
                 self._stats["seller_pages_followed"] += 1
-            # v5.18.1 (2026-06-28): risco residual de truncation se havia mais
+            # v5.19.1 (2026-06-28): risco residual de truncation se havia mais
             # páginas além do cap — checado SEMPRE, fora do for/else. Antes vivia
             # no `else` do for-loop, que qualquer `break` (fetch falho OU
             # container vazio) pulava → um card com >cap páginas que também batia

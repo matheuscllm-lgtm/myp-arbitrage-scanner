@@ -1,6 +1,6 @@
 # Changelog
 
-## v5.18.1 — 2026-06-28 — robustez: truncation flag, NM separator, aggregate threshold, bench tcgcsv
+## v5.19.1 — 2026-07-03 — robustez: truncation flag, NM separator, aggregate threshold, bench tcgcsv
 
 **O que muda em uma frase:** quatro correções de robustez/honestidade vindas de
 uma revisão de código do repo inteiro (`/code-review`), sem mudar o caminho feliz
@@ -50,6 +50,27 @@ Default mede a rota tcgcsv; `--tcg-source pokemontcg` mede a rota legada.
 - `test_v5_8_offline.py`: **56/56** (54 + 2 novos), sem regressão.
 - `bench.py` default: `tcgcsv_prefill_sets=2`, `tcg_from_tcgcsv=16`, `deals_clean=16`
   (idêntico à rota pokemontcg); `--tcg-source pokemontcg`: `ptcg_prefill_calls=2`.
+
+## v5.19 — 2026-07-02 — cobertura ME: ME05 Pitch Black destrava preço real tcgcsv
+
+**O que muda em uma frase:** o set **ME05: Pitch Black** (apareceu no MYP como
+"Megaevolução: Escuridão AbsolutaME05: Pitch Black") ganhou mapa
+edição→setcode→tcgcsv, então as cartas dele saem com **preço TCGplayer real**
+(via `tcgcsv.com`) em vez de cair no fallback `.estat-tcg` — mesma classe de fix
+da v5.18 (Chaos Rising/Perfect Order).
+
+### Detalhes
+- O título MYP do set **não** contém "Mega Evolution", então o catch-all do mapa
+  não casava → setcode `None` → a ponte `resolve_tcgcsv_group_id` nem rodava →
+  fallback indevido em TODAS as cartas do set.
+- Novo mapeamento: `"Pitch Black"` → `me5` (id antecipado, padrão da era; a
+  pokemontcg.io ainda **não** lista o set) e `me5` → abbr tcgcsv **`ME05`**
+  (verificado ao vivo no `/groups` de 2026-07-02: groupId 24688,
+  "ME05: Pitch Black"; ponte + `/prices` validadas ao vivo, sem colisão de
+  abbr com os demais setcodes do mapa).
+- **"Mega Brave" / "Mega Symphonia" ficam de fora de propósito:** o tcgcsv não
+  tem group pra eles (2026-07-02) → sem fonte real, o fallback honesto é o
+  comportamento correto. Adicionar quando a fonte cobrir.
 
 ## v5.18 — 2026-06-26 — cobertura ME: Chaos Rising (me4) e Perfect Order (me3) destravam preço real tcgcsv
 

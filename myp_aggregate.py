@@ -6,7 +6,7 @@ single-thread produziria.
 
 ⚠️ O `--threshold` (FRAÇÃO) classifica/colore as sheets do consolidado e é
 gravado como "Margin Threshold" no XLSX (que o `myp_summary.py` lê como piso de
-deal). Default = 0.30 (= o threshold canônico do scanner, 30%); v5.18.1 corrigiu
+deal). Default = 0.30 (= o threshold canônico do scanner, 30%); v5.19.1 corrigiu
 o default legado 0.25 que reclassificava o consolidado num piso MAIS FROUXO que
 um run single-thread (cartas 25–30% vazavam pro balde "limpos ≥30%"). Os
 workflows já passam `--threshold` explícito; o default importa pro uso manual.

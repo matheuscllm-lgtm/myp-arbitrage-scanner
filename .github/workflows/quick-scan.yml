@@ -93,6 +93,11 @@ jobs:
           PYTHONIOENCODING: utf-8
           # Sleep adaptativo v5.11.2 (0.3s/cache-miss) + zero 429 nos runners.
           POKEMONTCG_API_KEY: ${{ secrets.POKEMONTCG_API_KEY }}
+          # Via env (não interpolado inline entre aspas simples no script):
+          # edição com apóstrofo (ex. "Champion's Path", grupo 3 do scan-myp)
+          # quebraria o bash se chegasse dentro de '...' — e input interpolado
+          # em script é vetor de injeção. Env é o caminho seguro.
+          EDITIONS_INPUT: ${{ github.event.inputs.editions }}
         run: |
           THRESHOLD="${{ github.event.inputs.threshold || '30' }}"
           MIN_PRICE="${{ github.event.inputs.min_price || '50' }}"
@@ -104,7 +109,6 @@ jobs:
           # `eval set --` re-parseia preservando as aspas (o $ARGS cru do
           # weekly quebraria "Paldean Fates" em "Paldean" + "Fates").
           EDITIONS_DEFAULT='Prismatic Surging Journey Stellar Twilight Shrouded "Paldean Fates" 151 "Ascended Heroes" "Perfect Order" "Chaos Rising"'
-          EDITIONS_INPUT='${{ github.event.inputs.editions }}'
           EDS="${EDITIONS_INPUT:-$EDITIONS_DEFAULT}"
           eval "set -- $EDS"
           echo "Edições ($#): $@"

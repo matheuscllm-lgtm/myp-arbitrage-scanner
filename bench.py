@@ -17,7 +17,7 @@ Dois modos:
   • DEFAULT (mockado): substitui só a REDE (`session.get` + câmbio) por fixtures
     determinísticas. Todo o resto roda de verdade — `scrape_product`, `_get`,
     `_real_tcg_brl`, prefill (tcgcsv E pokemontcg), o cache `_ptcg_cache`. O
-    fixture agora serve tcgcsv.com TAMBÉM (v5.18.1), então o default
+    fixture agora serve tcgcsv.com TAMBÉM (v5.19.1), então o default
     `--tcg-source auto` exercita a rota REAL do CI/prod (tcgcsv-first): nele
     `tcgcsv_prefill_sets`/`tcg_from_tcgcsv` sobem e `ptcg_calls` fica 0
     (esperado — a pokemontcg.io não é tocada quando o tcgcsv cobre o set).
@@ -70,7 +70,7 @@ def _ptcg_set_json():
     }
 
 
-# ── Fixtures tcgcsv.com (v5.18.1) ───────────────────────────────────────────
+# ── Fixtures tcgcsv.com (v5.19.1) ───────────────────────────────────────────
 # O default do scanner é `--tcg-source auto` = tcgcsv PRIMEIRO (a fonte que o CI
 # usa). Sem estes fixtures o mock só servia api.pokemontcg.io, então no modo
 # default o prefill tcgcsv falhava (json None) e o bench caía no caminho
@@ -139,7 +139,7 @@ class _FakeSession:
         self.headers = {}
 
     def get(self, url, **kwargs):
-        # tcgcsv.com (v5.18.1): a fonte default (auto/tcgcsv). Roteada ANTES do
+        # tcgcsv.com (v5.19.1): a fonte default (auto/tcgcsv). Roteada ANTES do
         # fallthrough de produto pra que o prefill tcgcsv seja exercido no bench.
         if "tcgcsv.com" in url:
             if url.endswith("/groups"):
@@ -231,7 +231,7 @@ def main():
         ("pages_fetched", f"{stats.get('pages_fetched', 0):8d}"),
         ("ptcg_calls", f"{stats.get('ptcg_calls', 0):8d}"),
         ("ptcg_prefill_calls", f"{stats.get('ptcg_prefill_calls', 0):8d}"),
-        # v5.18.1: rota tcgcsv (default auto/tcgcsv = a do CI). tcgcsv_prefill_sets
+        # v5.19.1: rota tcgcsv (default auto/tcgcsv = a do CI). tcgcsv_prefill_sets
         # = sets pré-carregados via tcgcsv; tcg_from_tcgcsv = cards precificados
         # por ela. No default agora estes sobem e ptcg_calls fica 0 (esperado).
         ("tcgcsv_prefill_sets", f"{stats.get('tcgcsv_prefill_sets', 0):8d}"),
