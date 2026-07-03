@@ -2410,6 +2410,81 @@ def test_summary_pipe_in_name_escaped():
     print("  pipe em nome/edição: escapado, linha alinhada ao header ✓")
 
 
+def test_get_404_no_retry():
+    """v5.19.3: HTTP 404/410 (recurso não existe) aborta SEM retry — 1 fetch só,
+    contador http_4xx_no_retry incrementa, retorno None (produto pulado). Antes
+    queimava 3 tentativas + ~6s de backoff por URL morta."""
+    import requests
+    import myp_arbitrage_scanner as M
+    from myp_arbitrage_scanner import MYPScraper
+
+    class _Resp404:
+        status_code = 404
+        text = "not found"
+        def raise_for_status(self):
+            err = requests.HTTPError("404 Client Error")
+            err.response = self
+            raise err
+
+    calls = []
+    class _Sess:
+        headers = {}
+        def get(self, url, timeout=None, **kw):
+            calls.append(url)
+            return _Resp404()
+
+    sc = MYPScraper(delay=0.0)
+    sc.session = _Sess()
+    _orig_sleep = M.time.sleep
+    M.time.sleep = lambda s: None   # sem esperas reais no teste
+    try:
+        out = sc._get("https://mypcards.com/pokemon/produto/0/morto")
+    finally:
+        M.time.sleep = _orig_sleep
+    assert out is None, "404 deve retornar None"
+    assert len(calls) == 1, f"404 não pode ter retry (fez {len(calls)} fetches)"
+    assert sc._stats["http_4xx_no_retry"] == 1, sc._stats["http_4xx_no_retry"]
+    assert sc._stats["http_retries"] == 0, "não deve contar como retry"
+    print("  _get 404: 1 fetch, sem retry, None + contador ✓")
+
+
+def test_get_500_still_retries():
+    """v5.19.3 (guarda de regressão): 5xx CONTINUA transiente — retry com
+    backoff até HTTP_MAX_RETRIES, como antes. Só 404/410 são definitivos."""
+    import requests
+    import myp_arbitrage_scanner as M
+    from myp_arbitrage_scanner import MYPScraper, HTTP_MAX_RETRIES
+
+    class _Resp500:
+        status_code = 500
+        text = "oops"
+        def raise_for_status(self):
+            err = requests.HTTPError("500 Server Error")
+            err.response = self
+            raise err
+
+    calls = []
+    class _Sess:
+        headers = {}
+        def get(self, url, timeout=None, **kw):
+            calls.append(url)
+            return _Resp500()
+
+    sc = MYPScraper(delay=0.0)
+    sc.session = _Sess()
+    _orig_sleep = M.time.sleep
+    M.time.sleep = lambda s: None
+    try:
+        out = sc._get("https://mypcards.com/pokemon/produto/1/instavel")
+    finally:
+        M.time.sleep = _orig_sleep
+    assert out is None
+    assert len(calls) == HTTP_MAX_RETRIES,         f"500 deve tentar {HTTP_MAX_RETRIES}x (fez {len(calls)})"
+    assert sc._stats["http_4xx_no_retry"] == 0
+    assert sc._stats["http_retries"] == HTTP_MAX_RETRIES - 1
+    print("  _get 500: retries preservados (transiente) ✓")
+
+
 def main():
     tests = [
         ("threshold constant", test_threshold_constant),
@@ -2418,6 +2493,8 @@ def main():
         ("secret BOM/zero-width sanitization", test_clean_secret_strips_bom_and_zero_width),
         ("X-Api-Key c/ BOM → latin-1-encodável", test_ptcg_api_key_bom_header_is_latin1_encodable),
         ("X-Api-Key só-BOM → sem header", test_ptcg_api_key_bom_only_yields_no_key),
+        ("v5.19.3 _get: 404 aborta sem retry", test_get_404_no_retry),
+        ("v5.19.3 _get: 500 mantém retry", test_get_500_still_retries),
         ("rarity-mislabel gate (2026-06-19)", test_rarity_mislabel_gate),
         ("Jirachi ratio math", test_jirachi_ratio_math),
         ("v5.14.4 tcg_suspect boundary exatamente 10x", test_tcg_suspect_boundary_exactly_10x),

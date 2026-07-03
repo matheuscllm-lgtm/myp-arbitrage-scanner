@@ -18,7 +18,7 @@ Requisitos:
 
 Autor: Matheus Chillemi / Claude
 Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10) | 2026-06-07 (v5.10.1 → v5.11) | 2026-06-09 (v5.11.1) | 2026-06-10 (v5.11.2 → v5.11.3) | 2026-06-16 (v5.11.4 → v5.11.6) | 2026-06-13 (v5.11.7, doc-only) | 2026-06-17 (v5.11.8 — loop: timing + bench) | 2026-06-17 (v5.12 — batch pokemontcg.io por set) | 2026-06-17 (v5.13 — Iteração #2: atribuição de cobertura do fallback) | 2026-06-20 (v5.14 — coluna "TCG Source" explícita + enrich off-runner p/ preço real) | 2026-06-20 (v5.14.1 — cobertura de preço real no summary medida sobre o universo de cartas EN) | 2026-06-21 (v5.14.3 — deal com preço FALLBACK sai do balde "limpos" → balde dedicado; fix BLOCKER de honestidade) | 2026-06-21 (v5.14.4 — tcg_suspect boundary inclusivo `>=` (pega exatamente-10x); regressão de precisão minerada do eval asi-evolve) | 2026-06-26 (v5.18 — cobertura ME: `Chaos Rising`→me4→CRI e `Perfect Order`→me3→POR; destrava preço real tcgcsv pros sets ME04/ME03 que caíam em fallback indevido)
-Versão: v5.19.2
+Versão: v5.19.3
 
 Changelog v5.1 (2026-05-12 — auditoria C/H/M, mesma metodologia do CT scanner):
   - C1: --threshold < 1.0 auto-converte com warning (UX guard contra trap
@@ -106,6 +106,11 @@ MIN_EDITIONS_EXPECTED = 200      # v5.4 C2: catalog scrape sanity floor (~326 es
 CHECKPOINT_VERSION = 1
 TIMEOUT = 20                     # timeout HTTP em segundos
 HTTP_MAX_RETRIES = 3             # M1 fix: retries em transient errors
+# v5.19.3: status 4xx DEFINITIVOS — o recurso não existe e retry nunca muda o
+# resultado (só queima delay+backoff ~6s+2 fetches por URL morta, ex. produto
+# deletado do MYP). NÃO incluir 403 (challenge Cloudflare pode resolver no
+# retry) nem 429 (throttle é transiente por definição); 5xx segue com retry.
+HTTP_NO_RETRY_STATUSES = frozenset({404, 410})
 DEBUG_DIR = Path(__file__).resolve().parent / ".debug"   # M4 fix: subpasta dedicada
 SUPRANUMERARY_PRICE_THRESHOLD = 200.0  # H3 fix: TCG R$ acima disso + rarity="Comum" = SIR/HR suspeito
 # v5.8.3 (2026-05-18): cartas Jumbo (oversized ~25×35cm) têm mercado/preço
@@ -875,6 +880,9 @@ class MYPScraper:
             "skipped_low_price": 0,
             "supranumerary_warnings": 0,
             "http_retries": 0,
+            # v5.19.3: fetches abortados sem retry por 4xx definitivo (404/410 —
+            # produto/página deletados; ver HTTP_NO_RETRY_STATUSES).
+            "http_4xx_no_retry": 0,
             # 2026-05-12: contador de risco de truncamento de EN-NM
             # (alguma seller table cheia sem EN visível — caso bartsimpson Psyduck)
             "en_truncation_risks": 0,
@@ -969,8 +977,20 @@ class MYPScraper:
                     # AttributeError, MemoryError etc devem propagar — indicam
                     # mudança de HTML ou bug de código que merece crash, não retry.
                     last_err = e
+                    status = None
                     if hasattr(e, 'response') and e.response is not None:
-                        last_status = f" (HTTP {e.response.status_code})"
+                        status = e.response.status_code
+                        last_status = f" (HTTP {status})"
+                    # v5.19.3: 4xx DEFINITIVO (404/410) = recurso não existe;
+                    # retry nunca muda o resultado, só queima delay+backoff
+                    # (~6s + 2 fetches por URL morta). Aborta direto — o
+                    # chamador já trata None (produto pulado), mesmo desfecho
+                    # de antes, sem o custo. 403 (CF) e 429 (throttle) seguem
+                    # no caminho de retry.
+                    if status in HTTP_NO_RETRY_STATUSES:
+                        self._stats["http_4xx_no_retry"] += 1
+                        log.warning(f"HTTP {status} definitivo em {url} — sem retry (recurso não existe).")
+                        return None
                     if attempt < HTTP_MAX_RETRIES - 1:
                         wait = (attempt + 1) * 2  # backoff 2s, 4s
                         self._stats["http_retries"] += 1
