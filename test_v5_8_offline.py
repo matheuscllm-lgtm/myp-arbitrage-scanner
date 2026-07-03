@@ -2343,6 +2343,73 @@ def test_truncation_residual_flag_survives_break():
     print("  Residual >cap survives break → truncation_risk=True ✓")
 
 
+def test_summary_dual_flag_deal_single_bucket():
+    """v5.19.1: deal com AS DUAS flags (supranumerário-'Comum' E tcg_suspect)
+    sai em UM balde só — o de TCG Suspect (sinal mais forte: o preço de
+    referência é provavelmente de outra carta → margem fake). Antes era listado
+    nos DOIS baldes 'validar manualmente' (contagem dupla na entrega)."""
+    from myp_summary import build_markdown
+
+    dual = CardData(
+        name="Dualflag ex (290/217)", edition="Surging Sparks", rarity="Comum",
+        product_url="https://myp/dual", myp_lowest_en_nm=60.0,
+        tcg_player_price=1500.0, tcg_real_usd=None, tcg_source="myp_estat",
+        myp_last_sale_brl=20.0, margin_pct=24.0, margin_brl=1440.0,
+        en_nm_sellers=2, last_updated="2026-07-03", tcg_suspect=True,
+    )
+    assert dual.tcg_suspect and "(290/217)" in dual.name
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        xlsx = f.name
+    generate_xlsx([dual], xlsx, threshold=0.30)
+    with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as f:
+        md = f.name
+    rc = build_markdown(xlsx, md, scan_type="daily", run_id="", repo="x/y")
+    assert rc == 0, f"build_markdown retornou {rc}"
+    text = Path(md).read_text(encoding="utf-8")
+    # Dono da linha = balde TCG Suspect…
+    assert "## 🚨 TCG Suspect" in text, f"balde suspect ausente:\n{text[:800]}"
+    assert text.count("Dualflag ex") == 1, \
+        f"deal dual-flag deve aparecer 1x (saiu {text.count('Dualflag ex')}x):\n{text}"
+    # …e o balde supranumerário fica explicitamente vazio.
+    assert "Nenhum deal com flag supranumerário" in text, \
+        f"balde supranum deveria estar vazio:\n{text[:800]}"
+    Path(xlsx).unlink(); Path(md).unlink()
+    print("  dual-flag (supranum+suspect): 1 balde só (suspect), sem linha dupla ✓")
+
+
+def test_summary_pipe_in_name_escaped():
+    """v5.19.1: `|` em nome/edição vindo do scrape é escapado (`\\|`) na tabela
+    markdown — sem isso a célula suja desloca TODAS as colunas seguintes da
+    linha (inclusive a de Links), corrompendo a entrega."""
+    from myp_summary import build_markdown
+
+    piped = CardData(
+        name="Pika|chu ex (055/191)", edition="Surging|Sparks", rarity="Rara",
+        product_url="https://myp/pipe", myp_lowest_en_nm=80.0,
+        tcg_player_price=200.0, tcg_real_usd=40.0, tcg_source="pokemontcg.io",
+        myp_last_sale_brl=190.0, margin_pct=1.5, margin_brl=120.0,
+        en_nm_sellers=3, last_updated="2026-07-03",
+    )
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        xlsx = f.name
+    generate_xlsx([piped], xlsx, threshold=0.30)
+    with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as f:
+        md = f.name
+    rc = build_markdown(xlsx, md, scan_type="daily", run_id="", repo="x/y")
+    assert rc == 0, f"build_markdown retornou {rc}"
+    text = Path(md).read_text(encoding="utf-8")
+    row = next((ln for ln in text.splitlines() if "Pika" in ln), None)
+    assert row is not None, f"linha do deal ausente:\n{text[:900]}"
+    assert "Pika\\|chu" in row, f"pipe do nome não escapado: {row}"
+    assert "Surging\\|Sparks" in row, f"pipe da edição não escapado: {row}"
+    # nº de colunas da linha = nº de colunas do header (linha não desalinhou)
+    header = next(ln for ln in text.splitlines() if ln.startswith("| # | Margem %"))
+    assert row.count("|") - row.count("\\|") == header.count("|"), \
+        f"linha desalinhada ({row.count('|') - row.count('\\|')} pipes vs {header.count('|')}):\n{row}"
+    Path(xlsx).unlink(); Path(md).unlink()
+    print("  pipe em nome/edição: escapado, linha alinhada ao header ✓")
+
+
 def main():
     tests = [
         ("threshold constant", test_threshold_constant),
@@ -2401,6 +2468,8 @@ def main():
         ("v5.14.3 mix real/fallback → cada um no seu balde", test_summary_mix_real_and_fallback_deals),
         ("v5.14.3 gate fallback em XLSX antigo (infere por USD)", test_summary_fallback_gate_old_xlsx),
         ("fix: generate_xlsx cria dir-alvo ausente (clone limpo sem results/)", test_xlsx_creates_missing_output_dir),
+        ("v5.19.1 dual-flag (supranum+suspect) sai em 1 balde só", test_summary_dual_flag_deal_single_bucket),
+        ("v5.19.1 pipe em nome/edição escapado na tabela", test_summary_pipe_in_name_escaped),
     ]
     failed = 0
     for name, fn in tests:

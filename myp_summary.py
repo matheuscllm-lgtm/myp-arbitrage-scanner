@@ -128,6 +128,17 @@ def is_rarity_mislabel(name: str | None, rarity: str | None) -> bool:
     return is_supranumerary(name) and (str(rarity or "").strip() == "Comum")
 
 
+def md_cell(s) -> str:
+    """Sanitiza texto pra célula de tabela markdown: escapa `|` (que quebraria a
+    linha em colunas extras, desalinhando a tabela inteira — inclusive a coluna
+    de Links) e achata quebras de linha. Nome/edição/raridade vêm de scrape do
+    MYP — não há garantia de que nunca tragam `|`. Aplicar em TODA célula de
+    texto livre; células numéricas/links formatados por nós não precisam."""
+    if s is None:
+        return ""
+    return str(s).replace("\r", " ").replace("\n", " ").replace("|", "\\|")
+
+
 def fmt_brl(v) -> str:
     """Formata valor BRL pra display."""
     if v is None:
@@ -250,7 +261,15 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
         c for c in deals_sorted
         if not _is_rarity_mislabel(c) and not _is_suspect(c) and not _is_real(c)
     ]
-    deals_supranum = [c for c in deals_sorted if _is_rarity_mislabel(c)]
+    # v5.19.1: baldes "validar manualmente" mutuamente EXCLUSIVOS. Antes um deal
+    # com AS DUAS flags (rarity-mislabel E tcg_suspect) era listado em DOIS
+    # baldes — contagem dupla no stats e o operador validava a mesma linha 2x.
+    # Precedência: tcg_suspect é o sinal mais forte (o PREÇO de referência é
+    # provavelmente de outra carta → margem fake), então ele fica dono da linha;
+    # o supranumerário fica com o resto. Nenhum deal some: limpos + fallback +
+    # suspect + supranum = todos os deals ≥threshold, cada um em UM balde.
+    deals_supranum = [c for c in deals_sorted
+                      if _is_rarity_mislabel(c) and not _is_suspect(c)]
     deals_suspect = [c for c in deals_sorted if _is_suspect(c)]
 
     truncations = [c for c in all_cards if c.get("⚠️ EN Trunc")]
@@ -370,9 +389,9 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
         lines.append("|---|---:|---:|---:|---:|---|---|---|---|---:|---|")
         for i, c in enumerate(deals_clean[:50], 1):
             name = c.get("Card Name")
-            carta = carta_label(name)
-            ed = (c.get("Edition") or "").strip()
-            rarity = (c.get("Rarity") or "").strip() or "—"
+            carta = md_cell(carta_label(name))
+            ed = md_cell((c.get("Edition") or "").strip())
+            rarity = md_cell((c.get("Rarity") or "").strip()) or "—"
             myp = fmt_brl(c.get("MYP EN NM (R$)"))
             tcg_usd = fmt_usd(c.get("TCG US$"))
             margin = fmt_pct(c.get("Margin %"))
@@ -408,8 +427,8 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
         lines.append("|---|---|---|---:|---:|---:|---|")
         for i, c in enumerate(deals_supranum[:50], 1):
             name = c.get("Card Name")
-            carta = carta_label(name)
-            ed = (c.get("Edition") or "")[:30]
+            carta = md_cell(carta_label(name))
+            ed = md_cell((c.get("Edition") or "")[:30])
             myp = fmt_brl(c.get("MYP EN NM (R$)"))
             tcg = fmt_brl(c.get("TCG Player (R$)"))
             margin = fmt_pct(c.get("Margin %"))
@@ -437,8 +456,8 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
         lines.append("|---|---|---|---:|---:|---:|---:|---|")
         for i, c in enumerate(deals_suspect[:50], 1):
             name = c.get("Card Name")
-            carta = carta_label(name)
-            ed = (c.get("Edition") or "")[:30]
+            carta = md_cell(carta_label(name))
+            ed = md_cell((c.get("Edition") or "")[:30])
             myp = fmt_brl(c.get("MYP EN NM (R$)"))
             tcg = fmt_brl(c.get("TCG Player (R$)"))
             last = fmt_brl(c.get("MYP Last Sale (R$)"))
@@ -471,9 +490,9 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
         lines.append("|---|---:|---:|---:|---:|---|---|---|---|---:|---|")
         for i, c in enumerate(deals_fallback[:50], 1):
             name = c.get("Card Name")
-            carta = carta_label(name)
-            ed = (c.get("Edition") or "").strip()
-            rarity = (c.get("Rarity") or "").strip() or "—"
+            carta = md_cell(carta_label(name))
+            ed = md_cell((c.get("Edition") or "").strip())
+            rarity = md_cell((c.get("Rarity") or "").strip()) or "—"
             myp = fmt_brl(c.get("MYP EN NM (R$)"))
             tcg = fmt_brl(c.get("TCG Player (R$)"))
             margin = fmt_pct(c.get("Margin %"))
@@ -500,8 +519,8 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
         lines.append("| Carta | Edição | MYP R$ reportado | TCG R$ |")
         lines.append("|---|---|---:|---:|")
         for c in truncations[:50]:
-            name = (c.get("Card Name") or "")[:55]
-            ed = (c.get("Edition") or "")[:30]
+            name = md_cell((c.get("Card Name") or "")[:55])
+            ed = md_cell((c.get("Edition") or "")[:30])
             myp = fmt_brl(c.get("MYP EN NM (R$)"))
             tcg = fmt_brl(c.get("TCG Player (R$)"))
             lines.append(f"| {name} | {ed} | {myp} | {tcg} |")
