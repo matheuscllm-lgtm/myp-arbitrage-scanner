@@ -1,5 +1,33 @@
 # Changelog
 
+## v5.19.1 — 2026-07-03 — entrega: baldes exclusivos + escape de `|` na tabela
+
+**O que muda em uma frase:** dois pontos cegos da entrega (`myp_summary.py`)
+apontados no code-review do repo (escopo-fora do #81) — nenhum afeta scan,
+preço ou margem; só a montagem do markdown de entrega.
+
+### Fix #1 — overlap de baldes "validar manualmente" (contagem dupla)
+Um deal com AS DUAS flags (supranumerário-'Comum' **e** `tcg_suspect`) era
+listado nos DOIS baldes — o operador validava a mesma linha duas vezes e o
+stats somava dobrado. Agora os baldes são mutuamente exclusivos, com
+precedência pro **TCG Suspect** (sinal mais forte: o preço de referência é
+provavelmente de outra carta → margem fake); o supranumerário fica com o
+resto. Nenhum deal some: limpos + fallback + suspect + supranum = todos os
+deals ≥threshold, cada um em UM balde.
+
+### Fix #2 — `|` em nome/edição quebrava a linha da tabela
+Nome/edição/raridade vêm de scrape e entravam crus na tabela markdown; um `|`
+na célula desloca TODAS as colunas seguintes da linha (inclusive a de Links),
+corrompendo a entrega. Novo helper `md_cell()` escapa `|` → `\|` e achata
+quebras de linha, aplicado a toda célula de texto livre nos 5 blocos (limpos,
+supranum, suspect, fallback, truncation).
+
+### Validação
+- `python test_v5_8_offline.py`: **56/56** (54 + 2 novos:
+  `test_summary_dual_flag_deal_single_bucket`,
+  `test_summary_pipe_in_name_escaped`).
+- `python -m pytest -q`: **63 passed**.
+
 ## v5.19 — 2026-07-02 — cobertura ME: ME05 Pitch Black destrava preço real tcgcsv
 
 **O que muda em uma frase:** o set **ME05: Pitch Black** (apareceu no MYP como
