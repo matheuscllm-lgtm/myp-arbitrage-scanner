@@ -1,5 +1,33 @@
 # Changelog
 
+## v5.19.3 — 2026-07-03 — `_get` sem retry em 404/410 + limpeza drift_check
+
+**O que muda em uma frase:** os dois últimos itens do backlog do code-review
+(escopo-fora do #81) — retry inútil em página morta e uma constante
+morta/doc mentirosa no canário de drift. Sem efeito em preço/margem/baldes.
+
+### Fix #1 — `_get` re-tentava 4xx definitivo (404/410)
+`raise_for_status()` levanta erro pra qualquer status ruim e o `except`
+re-tentava TUDO com backoff — inclusive 404/410, onde o recurso não existe e
+retry nunca muda o resultado (~6s + 2 fetches desperdiçados por URL morta,
+ex. produto deletado do MYP). Agora `HTTP_NO_RETRY_STATUSES = {404, 410}`
+aborta no 1º fetch (mesmo desfecho: None → produto pulado) + contador
+`http_4xx_no_retry`. **403 (challenge Cloudflare) e 429 (throttle) seguem com
+retry** — são transientes; 5xx idem (guarda de regressão testada).
+
+### Fix #2 — `drift_check.py`: constante morta + doc mentirosa
+`MIN_EDITIONS = 200` nunca era usada — o check real valida a PAGE 1 do
+catálogo (~48 links, floor 20), e a docstring prometia "≥ MIN_EDITIONS
+extraíveis" (validação que não existe). Constante removida, docstrings
+corrigidas pro comportamento real; o floor 200 do catálogo COMPLETO continua
+no scanner (`MIN_EDITIONS_EXPECTED`). Zero mudança de comportamento.
+
+### Validação
+- `python test_v5_8_offline.py`: **60/60** (58 + 2 novos: 404 aborta sem
+  retry; 500 mantém retry).
+- `python -m pytest -q`: **67 passed**.
+- `import drift_check` OK.
+
 ## v5.19.2 — 2026-07-03 — robustez: truncation flag, NM separator, aggregate threshold, bench tcgcsv
 
 **O que muda em uma frase:** quatro correções de robustez/honestidade vindas de

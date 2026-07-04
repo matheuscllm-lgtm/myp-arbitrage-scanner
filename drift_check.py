@@ -7,7 +7,8 @@ desperdiçar 30min de CI scrappando HTML quebrado.
 
 Canaries:
   1. /pokemon/edicoes — catalog page (CRÍTICO: scanner não inicia sem isso)
-     Validação: >= MIN_EDITIONS edition links extraíveis
+     Validação: >= 20 edition links extraíveis na PAGE 1 (~48 esperados; o
+     catálogo completo ~348 é paginado e o canário só lê a 1ª página)
   2. Stable product page (Mega Dragonite ex 271/217 — ME:AH)
      Validação: seller table + flag-icons + R$ prices
 
@@ -36,7 +37,11 @@ from myp_arbitrage_scanner import _clean_secret
 
 FIRECRAWL_API = "https://api.firecrawl.dev/v1/scrape"
 TIMEOUT = 60   # firecrawl pode levar até ~30s pra páginas com CF
-MIN_EDITIONS = 200   # mesmo floor do scanner v5.4 (catalog sanity)
+# v5.19.3: removida a constante morta MIN_EDITIONS=200 — o check real (em
+# check_catalog) valida a PAGE 1 do catálogo (~48 links, floor 20), não o
+# catálogo inteiro; a constante nunca era usada e a doc que a citava mentia.
+# O floor de 200 sobre o catálogo COMPLETO vive no scanner
+# (MIN_EDITIONS_EXPECTED em myp_arbitrage_scanner.py), que lê todas as páginas.
 
 CANARY_CATALOG = "https://mypcards.com/pokemon/edicoes"
 CANARY_PRODUCT = "https://mypcards.com/pokemon/produto/310508/mega-dragonite-ex"
@@ -69,7 +74,7 @@ def firecrawl_scrape(url: str, api_key: str) -> Optional[str]:
 
 
 def check_catalog(html: str) -> tuple[bool, str]:
-    """Valida catalog page: >= MIN_EDITIONS edition links extraíveis."""
+    """Valida catalog page 1: >= 20 edition links extraíveis (~48 esperados)."""
     soup = BeautifulSoup(html, "lxml")
 
     # Mesmas estratégias do scanner get_all_editions (Strategy 1, 2, 3)
