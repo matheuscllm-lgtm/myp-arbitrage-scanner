@@ -203,8 +203,9 @@ Cinco workflows em `.github/workflows/`:
   Cada chunk roda num runner do GitHub com **IP próprio** (sem conflito de CF),
   6 chunks default ≈ **10-15 min** de relógio pras 11 edições do quick
   (principais SV + Ascended Heroes/Perfect Order/Chaos Rising). Usa o secret
-  `POKEMONTCG_API_KEY` (sleep adaptativo, sem 429). Sai XLSX consolidado como
-  artifact + `results/latest-quick.md` commitado. Edições custom: input
+  `POKEMONTCG_API_KEY` (sleep adaptativo, sem 429). Sai XLSX consolidado +
+  `results/latest-quick.md` como **artifact do run — nunca commitado** (postura
+  de repo público: dado de deal não entra no repo). Edições custom: input
   `editions` (multi-palavra entre aspas — o input chega via env
   `EDITIONS_INPUT` e é re-parseado com `eval set --`, então edição com
   apóstrofo, ex. "Champion's Path" do grupo 3 do scan-myp, também é segura).
@@ -276,9 +277,11 @@ nunca improvisa um formato diferente.
 
 #### O que o `myp_summary.py` gera (e que você entrega assim, sem mexer)
 
-São até **quatro tabelas** (a 4ª só aparece se houver deals com preço fallback),
-e **TODAS** trazem a coluna **`Carta`** (nome + número) e a coluna **`Links`**
-(`[oferta](url_MYP) · [TCG](url_TCGplayer)`):
+São até **quatro tabelas de deals** (a 4ª só aparece se houver deals com preço
+fallback) — mais uma **5ª seção diagnóstica condicional** (`🚨 EN truncation
+risk`, sobre o universo de cartas, não sobre deals; por isso é a única sem
+coluna Links). **TODAS as tabelas de deals** trazem a coluna **`Carta`**
+(nome + número) e a coluna **`Links`** (`[oferta](url_MYP) · [TCG](url_TCGplayer)`):
 
 1. **🟢 Top 50 deals limpos** (sem flag SIR/HR/SAR **e com preço REAL** — os
    confiáveis). Colunas, nesta ordem:
@@ -383,7 +386,7 @@ Pra otimizar (velocidade/correção/custo/qualidade) há **um caminho só**: o l
 iterativo de dev — **medir → mudar → verificar → repetir**:
 
 1. **Medir** o baseline: `python bench.py > before.txt` (modo mockado, sem rede).
-   No default (`--tcg-source auto`, a rota tcgcsv do CI/prod, v5.19.1) as
+   No default (`--tcg-source auto`, a rota tcgcsv do CI/prod, v5.19.2) as
    métricas-chave são `tcgcsv_prefill_sets`/`tcg_from_tcgcsv` — e `ptcg_calls`
    fica **0 por design** (a pokemontcg.io não é tocada quando o tcgcsv cobre o
    set). Pra medir a rota legada (métrica `ptcg_calls`, os round-trips à
@@ -406,7 +409,7 @@ iterativo de dev — **medir → mudar → verificar → repetir**:
 
 ```
 myp_arbitrage_scanner.py   o scanner (MYP → preço TCG real → XLSX). Cabeçalho traz a versão
-myp_summary.py             a ENTREGA canônica: XLSX → markdown (4 buckets) — ver seção 📤
+myp_summary.py             a ENTREGA canônica: XLSX → markdown (4 buckets de deals + seção diagnóstica condicional) — ver seção 📤
 myp_aggregate.py           agrega os XLSX dos chunks dos workflows num consolidado
 bench.py                   micro-benchmark do loop de otimização (mockado; --live = real)
 drift_check.py             canário de drift: roda ANTES do scan no daily workflow, valida
