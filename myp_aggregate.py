@@ -27,8 +27,11 @@ import logging
 import sys
 from pathlib import Path
 
-# UTF-8 stdout obrigatório no Windows (emoji nas sheets)
-if sys.stdout.encoding.lower() != "utf-8":
+# UTF-8 stdout obrigatório no Windows (emoji nas sheets).
+# `sys.stdout.encoding` pode ser None quando stdout é redirecionado/pipe →
+# guarda `(... or "")` evita AttributeError na importação (paridade com
+# drift_check.py e test_v5_8_offline.py).
+if (sys.stdout.encoding or "").lower() != "utf-8":
     try:
         sys.stdout.reconfigure(encoding="utf-8")
     except Exception:
