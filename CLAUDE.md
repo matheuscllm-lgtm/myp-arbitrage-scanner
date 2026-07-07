@@ -1,7 +1,10 @@
-# CLAUDE.md — instruções para agentes (Claude Code) neste repo
+# CLAUDE.md — myp-arbitrage-scanner
 
-> Objetivo: "rodar o MYP scanner" tem **um caminho só**. Siga este arquivo e
-> evite re-descobrir coisas que já estão resolvidas no código.
+Scanner de arbitragem de singles Pokémon (EN, Near Mint): compara preços no
+**mypcards.com** (BR, R$) contra o preço real do **TCGplayer** (US$→R$) e lista
+deals com margem bruta ≥ 30%. Instruções para qualquer sessão Claude Code
+(local ou nuvem) que trabalhe neste repo: "rodar o MYP scanner" tem **um
+caminho só** — siga este arquivo e evite re-descobrir o que já está resolvido.
 
 ## 🚨 CONTRATO DE ENTREGA (LEIA ANTES DE MOSTRAR QUALQUER RESULTADO)
 
@@ -24,21 +27,25 @@ completo na seção 📤 lá embaixo. Contrato fleet-wide no `~/.claude/CLAUDE.m
 
 ## 🛰️ Convenções da frota (cross-scanner)
 
-> **Manual completo** (repo privado): https://github.com/matheuscllm-lgtm/scanners-commons — erros comuns, referências de preço, chaves, GitHub Actions e modelo de entrega de TODOS os scanners. Cópia-mestra local: `C:\Users\mathe\scanners-commons\`.
+> **Manual completo** (repo privado): https://github.com/matheuscllm-lgtm/scanners-commons — erros comuns, referências de preço, chaves, GitHub Actions e modelo de entrega de TODOS os scanners. Cópia-mestra local (PC do operador): `C:\Users\mathe\scanners-commons\`.
 
 Invariantes que valem para TODOS os scanners:
-- **Margem BRUTA, mínimo 30%** — só `(revenda − compra)/compra`, sem taxa embutida; piso de relevância R$50 (~US$10).
+
+- **Margem BRUTA, mínimo 30%** — só `(revenda − compra)/compra`, sem nenhuma taxa embutida (frete, cartão, IOF — o operador calcula por fora).
+- **Piso de relevância R$50 (~US$10) — SÓ para cartas avulsas (singles).** Produtos SELADOS não têm piso (decisão do operador, 2026-06-27); lá o único critério é a margem ≥30%.
 - **Só Near Mint** — condição por match EXATO `== "NM"`, nunca substring (já vazou SP).
 - **Nunca inventar preço** — fonte falhou → marca fallback/erro e segue; jamais fabrica número.
-- **Entrega = tabela markdown no chat** (nunca XLSX por padrão), gerada pela ferramenta do repo, mostrando TODAS as linhas (aprovadas + rejeitadas). Coluna `Carta` = nome + número; coluna `Links` combinada = `[oferta](url) · [TCG/referência](url)`.
+- **Nunca recomendar compra** — o scanner reporta margem, flags e fontes; a decisão de capital é do operador.
+- **Entrega = tabela markdown no chat** (nunca XLSX/CSV por padrão), gerada pela ferramenta do repo — nunca montada à mão —, mostrando TODAS as linhas (aprovadas + rejeitadas). Coluna `Carta` = nome + número; coluna `Links` combinada = `[oferta](url) · [TCG/referência](url)`.
 - ⚠️ **Convenção de threshold:** percentual inteiro (`30`) = MYP, Liga, eBay; fração (`0.30`) = CardTrader, COMC, Selados.
 
 Erros recorrentes (3 famílias — detalhe no manual):
+
 1. **Segredo/ambiente:** BOM/zero-width numa chave → crash latin-1 no header → scan "verde mas vazio". Setar sem BOM (`printf '%s' 'KEY' | gh secret set`) **e** sanitizar ao ler no código (`.strip()` NÃO tira BOM).
-2. **Git:** galho ou `main` local defasado por squash-merge PARECE pendência. O teste real de "já mergeado" é `git diff --stat origin/main <galho>` estar vazio (não `git merge-base`).
+2. **Git:** branch ou `main` local defasado por squash-merge PARECE pendência. O teste real de "já mergeado" é `git diff --stat origin/main <branch>` estar vazio (não `git merge-base`).
 3. **Honestidade de preço:** inflação de referência, fallback tratado como real, NM frouxo → sempre validar versão/condição e rotular fallback.
 
-**Este scanner:** referência de preço = `tcgcsv.com` (real, na nuvem via `--tcg-source tcgcsv`; mapa de sets ampliado na v5.16) → pokemontcg.io (secundário) → `.estat-tcg` (fallback rotulado); chaves = `POKEMONTCG_API_KEY`, `FIRECRAWL_API_KEY`.
+**Este scanner:** referência de preço = `tcgcsv.com` (real, na nuvem via `--tcg-source tcgcsv`; mapa de sets ampliado em v5.16 e de novo em v5.18/v5.19 — cobertura ME: Perfect Order me3, Chaos Rising me4, Pitch Black me5) → pokemontcg.io (secundário) → `.estat-tcg` (fallback rotulado); chaves = `POKEMONTCG_API_KEY` (preço) e `FIRECRAWL_API_KEY` (canário `drift_check.py` no daily).
 
 ## ▶️ Retomar de onde paramos (leia primeiro)
 
@@ -58,7 +65,9 @@ sessão** (`SESSION-HANDOFF-<data>.md`): se for manter um handoff, atualize o
 scanner (extraído do antigo monorepo `tcg-arbitrage-scanners` em 2026-05-13).
 Se você encontrar um `myp_arbitrage_scanner.py` em qualquer outro lugar
 (`tcg-arbitrage-scanners`, `Scripts/`, cópia em Drive/Obsidian), é **STALE
-pré-extração** — não rode. Confira o cabeçalho: `Versão: v5.10` (ou superior).
+pré-extração** — não rode. Confira o cabeçalho: `Versão: v5.19.3` (ou
+superior; a versão atual vive no cabeçalho de `myp_arbitrage_scanner.py` e no
+topo do `CHANGELOG.md` — histórico completo, uma entrada por versão, mora lá).
 
 ## Setup (env novo)
 
@@ -66,8 +75,11 @@ pré-extração** — não rode. Confira o cabeçalho: `Versão: v5.10` (ou supe
 pip install -r requirements.txt   # cloudscraper, bs4, lxml, openpyxl, brotli
 export PYTHONIOENCODING=utf-8      # Windows PowerShell: $env:PYTHONIOENCODING="utf-8"
 ```
-`brotli` é **obrigatório**: a Cloudflare serve `Content-Encoding: br`; sem ele o
-HTML volta cru e o parser acha 0 edições silenciosamente.
+
+- `brotli` é **obrigatório**: a Cloudflare serve `Content-Encoding: br`; sem ele
+  o HTML volta cru e o parser acha 0 edições silenciosamente.
+- **Python 3.12** é o requisito (o CI fixa 3.12 em `tests.yml`; a suíte de
+  testes usa f-string com backslash — `SyntaxError` em 3.11).
 
 ## ⚠️ Cloudflare — NÃO perca tempo testando fingerprint
 
@@ -106,82 +118,105 @@ python myp_arbitrage_scanner.py --editions "Ascended Heroes" \
   embutido** no cálculo (diferente do CardTrader, que usa `custo = preço × 1.06`).
   O operador calcula frete/câmbio/comissão por fora. **Não** adicionar
   multiplicador de custo ao cálculo de margem.
-- **Preço TCG = TCGplayer REAL (v5.11+)**, convertido USD→BRL com câmbio ao
-  vivo. O campo `.estat-tcg` do MYP **não** é a fonte primária (ele mapeava a
-  carta errada em Black Bolt/White Flare base-086 → preço furado); vira
-  **fallback** só onde não houver preço real. A conversão de moeda **não** é
-  taxa — é só pra comparar BRL com BRL.
-  - **🆕 v5.15 — duas rotas pro mesmo preço real (flag `--tcg-source`):**
-    - **`tcgcsv`** (dump diário grátis do TCGplayer via `tcgcsv.com`) é a **ÚNICA
-      fonte que funciona nos runners do GitHub Actions** — é o que o **CI usa**
-      agora (os 3 workflows passam `--tcg-source tcgcsv`). Cross-check confirmou
-      que tcgcsv = pokemontcg.io em **0–0,3%** (mesmo preço TCGplayer), e tcgcsv
-      ainda TEM preço pros sets **ME** (Ascended Heroes etc.) que a pokemontcg.io
-      devolve sem preço. Não usa key.
-    - **`pokemontcg`** (`api.pokemontcg.io`) é o caminho **local** clássico (o
-      PC alcança; os runners do GitHub não). Precisa de `POKEMONTCG_API_KEY` pra
-      evitar throttle 429.
-    - **`auto`** (default): tcgcsv primeiro; pokemontcg.io complementa por set
-      sem groupId tcgcsv. Em qualquer modo, sem fonte real = fallback honesto.
-  - **`POKEMONTCG_API_KEY`** (env;
-  key grátis em dev.pokemontcg.io, 20k req/dia): elimina o throttle 429
-  (backoff 5/15/30s) **e** ativa o sleep adaptativo de 0.3s (v5.11.2) — num
-  scan quick de 8 edições o ganho passa de **15-24 min**. No PowerShell:
-  `$env:POKEMONTCG_API_KEY="..."` (ou User env var pra persistir).
-  - ✅ **Onde a key mora (3 lugares automáticos, setados 1× pelo operador):**
-    1. **CI (workflows):** secret do GitHub Actions `POKEMONTCG_API_KEY`
-       (*Settings → Secrets and variables → Actions*). Os 3 workflows
-       (daily/weekly/quick) injetam no `env` do step de scan sozinhos (desde
-       #30). *(Atualização 2026-06-20: os repos foram tornados **públicos** →
-       minutos de GitHub Actions são gratuitos.)*
-       - ✅ **CI agora serve preço REAL sozinho (v5.15 — supersede o 🛑 de
-         2026-06-20):** os runners do GitHub **não alcançam** `api.pokemontcg.io`
-         (CF da API bloqueia os IPs de datacenter — achado 2026-06-20, ainda
-         vale pra **essa** fonte). A v5.15 resolveu **trocando a fonte do CI** pro
-         **`tcgcsv.com`**, que o runner **ALCANÇA** (sonda `probe-price-sources.yml`
-         run `27918333945`: HTTP 200, JSON real) e que tem o **mesmo** preço
-         TCGplayer (cross-check 0–0,3%). Os 3 workflows passam `--tcg-source
-         tcgcsv` → o CI entrega preço **real** (`TCG Source = real (tcgcsv)`),
-         sozinho, **sem nenhum passo manual de enriquecimento**. A
-         `POKEMONTCG_API_KEY` continua injetada, mas é **irrelevante** em modo
-         tcgcsv (o tcgcsv não usa key). O sinal real-vs-fallback segue
-         **explícito** (coluna `TCG Source` + linha "Cobertura de preço TCG real"
-         do `myp_summary.py`): real = `pokemontcg.io`/`tcgcsv`, fallback =
-         `.estat-tcg`. A cobertura é medida sobre **todas** as cartas EN
-         (universo, aba `All EN Cards`), não sobre o balde de deals (v5.14.1).
-    2. **Máquina local do operador (fluxo canônico — local-first):**
-       `POKEMONTCG_API_KEY` setada como **variável de ambiente de usuário do
-       Windows** (`[Environment]::SetEnvironmentVariable("POKEMONTCG_API_KEY",
-       "<key>", "User")`). Persiste entre reinícios; **toda sessão/terminal
-       novo** já nasce com a key no `os.environ`. ⚠️ Setar em escopo User **não**
-       atualiza um processo/sessão já aberto — vale a partir do próximo shell
-       (ou exporte inline na sessão atual).
-    3. **Sessões Claude Code na nuvem (run local no container):** configure
-       `POKEMONTCG_API_KEY` como **variável de ambiente do environment** do
-       Claude Code (config do environment em code.claude.com). Aí **toda sessão**
-       já nasce com a key no `os.environ` — o scanner usa automático, sem
-       re-passar. (Container é efêmero; export manual no shell só vale a sessão
-       atual.)
-    - **Nunca** commitar o valor da key em arquivo (o repo é versionado).
-      Obter/conferir/rotacionar a key: **dev.pokemontcg.io** → Dashboard.
 - `--min-price 50` = piso de relevância ("carta valiosa" > R$50). É **filtro**,
   não taxa — fica fora do cálculo de margem.
+- Outras flags úteis: `--max-editions N` / `--max-products N` (limitar escopo,
+  útil em smoke test), `--min-en-sellers N`, `--resume` (retoma scan que caiu),
+  `--chunk-index` / `--chunk-total` (particionam as edições — é o que os
+  workflows chunked usam). `--help` lista tudo.
 - Scan é **lento por design** (`--delay` × centenas de produtos × N edições →
   pode passar de 1h em scan largo). Para runs longos, rode detached/background.
 - Single-session sequencial. **Não paralelize fetches no mesmo IP** (a v5.9 segue
   paginação `?estoque-outros-page=N` da tabela marketplace; 2 sessões no mesmo IP
   = 403 CF).
-- **Jeito RÁPIDO de rodar o quick (2026-06-10): workflow `Quick MYP Scan
-  (chunked)`** — `gh workflow run quick-scan.yml` (ou pela aba Actions). Cada
-  chunk roda num runner do GitHub com **IP próprio** (sem conflito de CF), 6
-  chunks default ≈ **10-15 min** de relógio pras 11 edições do quick
+- Existe também o comando `/auto` da frota (`.claude/commands/auto.md`) — modo
+  autônomo master; use quando o operador o invocar.
+
+### Preço TCG: fontes e onde a key mora
+
+- **Preço TCG = TCGplayer REAL (v5.11+)**, convertido USD→BRL com câmbio ao
+  vivo. O campo `.estat-tcg` do MYP **não** é a fonte primária (ele mapeava a
+  carta errada em Black Bolt/White Flare base-086 → preço furado); vira
+  **fallback** só onde não houver preço real. A conversão de moeda **não** é
+  taxa — é só pra comparar BRL com BRL.
+- **v5.15 — duas rotas pro mesmo preço real (flag `--tcg-source`):**
+  - **`tcgcsv`** (dump diário grátis do TCGplayer via `tcgcsv.com`) é a **ÚNICA
+    fonte que funciona nos runners do GitHub Actions** — é o que o **CI usa**
+    (os 3 workflows de scan passam `--tcg-source tcgcsv`). Cross-check confirmou
+    que tcgcsv = pokemontcg.io em **0–0,3%** (mesmo preço TCGplayer), e tcgcsv
+    ainda TEM preço pros sets **ME** (Ascended Heroes etc.) que a pokemontcg.io
+    devolve sem preço. Não usa key. O mapa de sets tcgcsv foi ampliado em
+    v5.16, v5.18 (Chaos Rising me4/CRI + Perfect Order me3/POR) e v5.19
+    (Pitch Black me5/ME05).
+  - **`pokemontcg`** (`api.pokemontcg.io`) é o caminho **local** clássico (o
+    PC alcança; os runners do GitHub não). Precisa de `POKEMONTCG_API_KEY` pra
+    evitar throttle 429.
+  - **`auto`** (default): tcgcsv primeiro; pokemontcg.io complementa por set
+    sem groupId tcgcsv. Em qualquer modo, sem fonte real = fallback honesto.
+- **`POKEMONTCG_API_KEY`** (env; key grátis em dev.pokemontcg.io, 20k req/dia):
+  elimina o throttle 429 (backoff 5/15/30s) **e** ativa o sleep adaptativo de
+  0.3s (v5.11.2) — num scan quick de 8 edições o ganho passa de **15-24 min**.
+  No PowerShell: `$env:POKEMONTCG_API_KEY="..."` (ou User env var pra persistir).
+- ✅ **Onde a key mora (3 lugares automáticos, setados 1× pelo operador):**
+  1. **CI (workflows):** secret do GitHub Actions `POKEMONTCG_API_KEY`
+     (*Settings → Secrets and variables → Actions*). Os 3 workflows de scan
+     (daily/weekly/quick) injetam no `env` do step de scan sozinhos (desde
+     #30). *(Atualização 2026-06-20: os repos foram tornados **públicos** →
+     minutos de GitHub Actions são gratuitos.)*
+     - ✅ **CI serve preço REAL sozinho (v5.15 — supersede o 🛑 de
+       2026-06-20):** os runners do GitHub **não alcançam** `api.pokemontcg.io`
+       (CF da API bloqueia os IPs de datacenter — achado 2026-06-20, ainda
+       vale pra **essa** fonte). A v5.15 resolveu **trocando a fonte do CI** pro
+       **`tcgcsv.com`**, que o runner **ALCANÇA** (sonda `probe-price-sources.yml`
+       run `27918333945`: HTTP 200, JSON real) e que tem o **mesmo** preço
+       TCGplayer (cross-check 0–0,3%). Os 3 workflows passam `--tcg-source
+       tcgcsv` → o CI entrega preço **real** (`TCG Source = real (tcgcsv)`),
+       sozinho, **sem nenhum passo manual de enriquecimento**. A
+       `POKEMONTCG_API_KEY` continua injetada, mas é **irrelevante** em modo
+       tcgcsv (o tcgcsv não usa key). O sinal real-vs-fallback segue
+       **explícito** (coluna `TCG Source` + linha "Cobertura de preço TCG real"
+       do `myp_summary.py`): real = `pokemontcg.io`/`tcgcsv`, fallback =
+       `.estat-tcg`. A cobertura é medida sobre **todas** as cartas EN
+       (universo, aba `All EN Cards`), não sobre o balde de deals (v5.14.1).
+  2. **Máquina local do operador (fluxo canônico — local-first):**
+     `POKEMONTCG_API_KEY` setada como **variável de ambiente de usuário do
+     Windows** (`[Environment]::SetEnvironmentVariable("POKEMONTCG_API_KEY",
+     "<key>", "User")`). Persiste entre reinícios; **toda sessão/terminal
+     novo** já nasce com a key no `os.environ`. ⚠️ Setar em escopo User **não**
+     atualiza um processo/sessão já aberto — vale a partir do próximo shell
+     (ou exporte inline na sessão atual).
+  3. **Sessões Claude Code na nuvem (run local no container):** configure
+     `POKEMONTCG_API_KEY` como **variável de ambiente do environment** do
+     Claude Code (config do environment em code.claude.com). Aí **toda sessão**
+     já nasce com a key no `os.environ` — o scanner usa automático, sem
+     re-passar. (Container é efêmero; export manual no shell só vale a sessão
+     atual.)
+  - **Nunca** commitar o valor da key em arquivo (o repo é versionado).
+    Obter/conferir/rotacionar a key: **dev.pokemontcg.io** → Dashboard.
+
+### Workflows do GitHub Actions
+
+Cinco workflows em `.github/workflows/`:
+
+- **`quick-scan.yml` — `Quick MYP Scan (chunked)` — o jeito RÁPIDO de rodar o
+  quick (2026-06-10):** `gh workflow run quick-scan.yml` (ou pela aba Actions).
+  Cada chunk roda num runner do GitHub com **IP próprio** (sem conflito de CF),
+  6 chunks default ≈ **10-15 min** de relógio pras 11 edições do quick
   (principais SV + Ascended Heroes/Perfect Order/Chaos Rising). Usa o secret
-  `POKEMONTCG_API_KEY` (sleep adaptativo, sem 429). Sai XLSX consolidado como
-  artifact + `results/latest-quick.md` commitado. Edições custom: input
-  `editions` (multi-palavra entre aspas — o quick parseia certo via `eval
-  set --`; o input chega via env `EDITIONS_INPUT`, então edição com apóstrofo,
-  ex. "Champion's Path" do grupo 3 do scan-myp, também é segura; o weekly tem
-  bug latente com multi-palavra no `$ARGS` cru).
+  `POKEMONTCG_API_KEY` (sleep adaptativo, sem 429). Sai XLSX consolidado +
+  `results/latest-quick.md` como **artifact do run — nunca commitado** (postura
+  de repo público: dado de deal não entra no repo). Edições custom: input
+  `editions` (multi-palavra entre aspas — o input chega via env
+  `EDITIONS_INPUT` e é re-parseado com `eval set --`, então edição com
+  apóstrofo, ex. "Champion's Path" do grupo 3 do scan-myp, também é segura).
+- **`daily-scan.yml`** (hot sets, `--type daily`) e **`weekly-scan.yml`**
+  (catálogo, `--type weekly`) — ambos com `--tcg-source tcgcsv`. O weekly
+  também recebe `editions` via env `EDITIONS_INPUT` + `eval set --` (o antigo
+  bug latente de multi-palavra no `$ARGS` cru foi corrigido). O daily roda o
+  canário `drift_check.py` antes do scan (ver Arquitetura).
+- **`tests.yml`** — CI de testes: `python -m pytest -q` em Python 3.12.
+- **`probe-price-sources.yml`** — sonda de alcance das fontes de preço a
+  partir dos runners.
 
 ## 🔀 Preço TCG REAL no catálogo COMPLETO
 
@@ -212,46 +247,6 @@ sets de um scan local):
 > preço é **real** (`tcgcsv`/`pokemontcg.io`) ou **fallback** (`.estat-tcg`,
 > margem NÃO-confiável). **Nunca** trate fallback como real — o output não deixa.
 
-## Otimizar o scanner (loop iterativo)
-
-Pra otimizar (velocidade/correção/custo/qualidade) há **um caminho só**: o loop
-iterativo de dev — **medir → mudar → verificar → repetir**:
-
-1. **Medir** o baseline: `python bench.py > before.txt` (modo mockado, sem rede;
-   métrica-chave = `ptcg_calls`, os round-trips à pokemontcg.io). `--live` mede
-   tempo real contra o site + API.
-2. **Mudar** uma coisa por vez (uma otimização isolada).
-3. **Verificar**: `python bench.py > after.txt && diff before.txt after.txt`
-   (ganho mensurável?) **e** `python test_v5_8_offline.py` (54/54 verde —
-   nenhuma regressão).
-4. **Repetir**. Não improvise fora desse ciclo.
-
-> O playbook detalhado (`docs/optimization-loop.md`) e seu backlog priorizado são
-> **local-only / gitignored** (tirados do repo público no #47) — podem **não
-> existir** num clone limpo; sua ausência é esperada. O ciclo acima é o
-> essencial e basta. **Não** existe comando "loop engineering"; a skill `/loop` é
-> só agendador.
-
-## Saída e commit
-
-- Outputs vão pra `results/` como **subproduto de trabalho local** — **tudo
-  gitignored de propósito**: o `.xlsx` (`*.xlsx`) **e** o resumo markdown
-  (`results/*.md`). **Repo é público + discreto (desde #47/#49):** dados de deal
-  (margens, preços, cartas) **NÃO entram no repo**. A **entrega é a tabela no
-  chat** (gerada pelo `myp_summary.py` — ver seção 📤 abaixo); o `.md` é só o
-  insumo que você cola/mostra, não um arquivo versionado. Resultados são
-  reproduzíveis re-rodando o scan localmente, então não há perda em não commitar.
-- Mudanças de **código/doc** (scanner, summary, este CLAUDE.md, etc.) seguem o
-  workflow normal = **branch + PR** (não dê push direto em `main`; ele é gateado).
-  Só **dados de scan** é que ficam fora do repo.
-
-## Não confundir
-
-Existe um scanner irmão de **CardTrader** (repo `card-trader-scanner`, usa
-`.venv`, `--max-expansions`, threshold **fracionário**). É outro projeto.
-
----
-
 ## 📤 Entrega de resultados — tabela na plataforma, NUNCA arquivo
 
 **Regra dura (operador, 2026-06-06). Vale para TODOS os scanners (CardTrader / MYP / Liga / sealed / PSA).**
@@ -265,7 +260,7 @@ O resultado de um scan é entregue ao operador **como tabela no chat do Claude C
 ### ⛔ Formato da entrega é OBRIGATÓRIO — gere via `myp_summary.py`, NUNCA monte tabela à mão
 
 **Regra dura (operador, 2026-06-13). Não negociável, para qualquer agente — inclusive
-um Claude Code da nuvem que clonou este repo.**
+uma sessão Claude Code da nuvem que clonou este repo.**
 
 Quando você for **entregar o resultado de um scan**, há **um caminho só**:
 
@@ -282,9 +277,11 @@ nunca improvisa um formato diferente.
 
 #### O que o `myp_summary.py` gera (e que você entrega assim, sem mexer)
 
-São até **quatro tabelas** (a 4ª só aparece se houver deals com preço fallback),
-e **TODAS** trazem a coluna **`Carta`** (nome + número) e a coluna **`Links`**
-(`[oferta](url_MYP) · [TCG](url_TCGplayer)`):
+São até **quatro tabelas de deals** (a 4ª só aparece se houver deals com preço
+fallback) — mais uma **5ª seção diagnóstica condicional** (`🚨 EN truncation
+risk`, sobre o universo de cartas, não sobre deals; por isso é a única sem
+coluna Links). **TODAS as tabelas de deals** trazem a coluna **`Carta`**
+(nome + número) e a coluna **`Links`** (`[oferta](url_MYP) · [TCG](url_TCGplayer)`):
 
 1. **🟢 Top 50 deals limpos** (sem flag SIR/HR/SAR **e com preço REAL** — os
    confiáveis). Colunas, nesta ordem:
@@ -305,8 +302,9 @@ e **TODAS** trazem a coluna **`Carta`** (nome + número) e a coluna **`Links`**
    ```
 4. **⚠️ Deals com preço FALLBACK `.estat-tcg`** (v5.14.3 — preço TCG é estimativa
    do MYP, **não** o real do TCGplayer; margem pode ser ILUSÓRIA). Saem do balde
-   limpo de propósito; **"(validar manualmente)"**. Em CI (runners sem
-   pokemontcg.io) **todos** os deals caem aqui. Colunas:
+   limpo de propósito; **"(validar manualmente)"**. Desde a v5.15 o CI usa
+   `--tcg-source tcgcsv` e entrega preço REAL — um deal só cai neste balde
+   (localmente ou no CI) quando **nenhuma** fonte real cobriu o set. Colunas:
    ```
    | # | Margem (estimada) | MYP R$ | TCG est. R$ | Dif (est.) | Carta | Set | Raridade | Cond | Qtd | Links |
    ```
@@ -322,8 +320,9 @@ Significado das colunas:
   ou "monte" uma URL** — se a coluna não tem link, a célula fica sem aquele link, e
   ponto. (O `myp_summary.py` cai num redirect/busca por nome só internamente, via
   helper; você não fabrica URLs.)
-- **`TCG US$`** = preço **real** do TCGplayer em USD (via pokemontcg.io). `—` onde
-  só houve fallback `.estat-tcg` (sem USD real).
+- **`TCG US$`** = preço **real** do TCGplayer em USD (via `tcgcsv.com` ou
+  pokemontcg.io — a coluna `TCG Source` do XLSX diz qual). `—` onde só houve
+  fallback `.estat-tcg` (sem USD real).
 - **`Dif`** = lucro **bruto** em R$ (`TCG R$ − MYP R$`). A margem segue BRUTA pura.
 - **`Cond`** = `NM` (invariante NM-only).
 - **`Qtd`** = nº de ofertas EN-NM (`NM Sellers`). O scanner **não** captura estoque
@@ -331,12 +330,13 @@ Significado das colunas:
 
 #### Mostre TODOS os deals — nada de amostra curada
 
-A entrega traz **todos** os deals de cada bucket (limpos / supranumerário / suspeito),
-**não** uma seleção curada de "os melhores". Os buckets supranumerário e suspeito
-**sempre** vão marcados como **"validar manualmente"** com o caveat de que a
-margem pode ser falsa (mapeamento de carta errado / variante misclassificada).
-Você reporta margem, flags e fontes; **a decisão de comprar é do operador** — não
-rankeie "BUY NOW" nem recomende capital.
+A entrega traz **todos** os deals de cada bucket (limpos / supranumerário /
+suspeito / fallback), **não** uma seleção curada de "os melhores". Os buckets
+supranumerário, suspeito e fallback **sempre** vão marcados como **"validar
+manualmente"** com o caveat de que a margem pode ser falsa (mapeamento de carta
+errado / variante misclassificada / preço estimado). Você reporta margem, flags
+e fontes; **a decisão de comprar é do operador** — não rankeie "BUY NOW" nem
+recomende capital.
 
 #### Comando literal pra gerar a entrega
 
@@ -353,6 +353,8 @@ python myp_summary.py results/<scan>.xlsx --type weekly -o results/<scope>-<data
   `quick-scan.yml` faz). Passar um valor fora desses dois faz o script errar com
   argparse.
 - `-o`/`--output` é **obrigatório** (o script grava o `.md`; você abre/cola o conteúdo).
+- Flags opcionais: `--run-id` (carimba o run do workflow no markdown) e
+  `--repo` (default `matheuscllm-lgtm/myp-arbitrage-scanner`).
 - O markdown gerado é o que você entrega no chat (terminal **ou** app). Lembre:
   **entrega = tabela na plataforma**, arquivo `.xlsx`/`.csv` **só** se o operador
   pedir explicitamente.
@@ -366,3 +368,101 @@ consome). O formato composto (`Carta` + `Links` clicáveis) **só** existe na ta
 markdown de entrega que o `myp_summary.py` produz. Ou seja: o XLSX é o insumo; a
 entrega é o markdown do `myp_summary.py`. **Não tente entregar o XLSX "formatado à
 mão" — rode o script.**
+
+## Testes
+
+```bash
+python -m pytest -q               # suíte completa (é o que o CI roda em tests.yml)
+python test_v5_8_offline.py       # runner standalone offline (mesma suíte principal)
+```
+
+- Requer **Python 3.12** (f-string com backslash na suíte → `SyntaxError` em 3.11).
+- O pytest coleta `test_v5_8_offline.py` **e** `scripts/test_validate_setcode_map.py`.
+- Tudo offline, sem rede/segredos. Não commite mudança de código com teste vermelho.
+
+## Otimizar o scanner (loop iterativo)
+
+Pra otimizar (velocidade/correção/custo/qualidade) há **um caminho só**: o loop
+iterativo de dev — **medir → mudar → verificar → repetir**:
+
+1. **Medir** o baseline: `python bench.py > before.txt` (modo mockado, sem rede).
+   No default (`--tcg-source auto`, a rota tcgcsv do CI/prod, v5.19.2) as
+   métricas-chave são `tcgcsv_prefill_sets`/`tcg_from_tcgcsv` — e `ptcg_calls`
+   fica **0 por design** (a pokemontcg.io não é tocada quando o tcgcsv cobre o
+   set). Pra medir a rota legada (métrica `ptcg_calls`, os round-trips à
+   pokemontcg.io), rode `python bench.py --tcg-source pokemontcg`. `--live`
+   mede tempo real contra o site + a fonte (aceita `--editions`,
+   `--limit-products`; `--help` lista o resto).
+2. **Mudar** uma coisa por vez (uma otimização isolada).
+3. **Verificar**: `python bench.py > after.txt && diff before.txt after.txt`
+   (ganho mensurável?) **e** `python -m pytest -q` tudo verde (ou o runner
+   `python test_v5_8_offline.py`) — nenhuma regressão.
+4. **Repetir**. Não improvise fora desse ciclo.
+
+> O playbook detalhado (`docs/optimization-loop.md`) e seu backlog priorizado são
+> **local-only / gitignored** (tirados do repo público no #47) — podem **não
+> existir** num clone limpo; sua ausência é esperada. O ciclo acima é o
+> essencial e basta. **Não** existe comando "loop engineering"; a skill `/loop` é
+> só agendador.
+
+## Arquitetura
+
+```
+myp_arbitrage_scanner.py   o scanner (MYP → preço TCG real → XLSX). Cabeçalho traz a versão
+myp_summary.py             a ENTREGA canônica: XLSX → markdown (4 buckets de deals + seção diagnóstica condicional) — ver seção 📤
+myp_aggregate.py           agrega os XLSX dos chunks dos workflows num consolidado
+bench.py                   micro-benchmark do loop de otimização (mockado; --live = real)
+drift_check.py             canário de drift: roda ANTES do scan no daily workflow, valida
+                           via Firecrawl (FIRECRAWL_API_KEY) 2 páginas canário (catálogo +
+                           página de produto estável); site rebrandeou/markup mudou → falha
+                           LOUD antes de gastar 30min de CI em HTML quebrado
+test_v5_8_offline.py       suíte de testes offline (coletada pelo pytest)
+scripts/                   utilitários: validate_setcode_map.py (validação do mapa de
+                           setcodes, com teste próprio no pytest), revalidate_deals.py,
+                           cross_check_myp_api.py, add_card_hyperlinks.py,
+                           run_weekly_local.ps1 (PC do operador)
+experimental/              protótipos exploratórios, não-produção (ev_scanner_v01.py)
+.github/workflows/         daily-scan / weekly-scan / quick-scan / tests / probe-price-sources
+.claude/skills/scan-myp/   skill canônica de scan (6 grupos)
+.claude/commands/auto.md   comando /auto da frota (modo autônomo)
+```
+
+> ⚠️ **Pegadinha do `myp_aggregate.py`:** o `--threshold` dele é **FRAÇÃO**
+> (default `0.30` = 30%, classifica/colore as sheets do consolidado) —
+> convenção **OPOSTA** à do scanner (percent inteiro `30`). Os workflows já
+> passam o valor certo; se for rodar à mão, releia isto antes.
+
+## Saída e commit
+
+- Outputs vão pra `results/` como **subproduto de trabalho local** — o
+  `.gitignore` ignora o diretório **`results/` inteiro** (além de `*.xlsx`
+  globais, `*.resume.json`, logs, `.env`, `SESSION-HANDOFF*.md`,
+  `docs/optimization-loop.md` etc.). **Repo é público + discreto (desde
+  #47/#49):** dados de deal (margens, preços, cartas) **NÃO entram no repo**.
+  A **entrega é a tabela no chat** (gerada pelo `myp_summary.py` — ver seção 📤
+  acima); o `.md` é só o insumo que você cola/mostra, não um arquivo versionado.
+  Resultados são reproduzíveis re-rodando o scan localmente, então não há perda
+  em não commitar.
+- Mudanças de **código/doc** (scanner, summary, este CLAUDE.md, etc.) seguem o
+  workflow normal = **branch + PR** (não dê push direto em `main`; ele é gateado).
+  Só **dados de scan** é que ficam fora do repo.
+- Segredos (`POKEMONTCG_API_KEY`, `FIRECRAWL_API_KEY`) **nunca** vão em arquivo
+  versionado — vivem em env vars/secrets (ver "Onde a key mora").
+
+## Não confundir
+
+Existe um scanner irmão de **CardTrader** (repo `card-trader-scanner`, usa
+`.venv`, `--max-expansions`, threshold **fracionário** — ver a convenção de
+threshold no bloco da frota). É outro projeto.
+
+## Estado e histórico
+
+- Versão atual: **v5.19.3** (2026-07-03). O histórico completo — uma entrada
+  detalhada por versão, com racional de cada decisão — está no **`CHANGELOG.md`**
+  (fonte de verdade do estado, junto com o `main`).
+- Marcos já incorporados neste arquivo: margem bruta pura (2026-06-06), entrega
+  obrigatória via `myp_summary.py` (2026-06-13), quick chunked no Actions
+  (2026-06-10), balde fallback dedicado (v5.14.3), coluna `TCG Source` +
+  cobertura sobre o universo EN (v5.14/v5.14.1), tcgcsv no CI (v5.15),
+  ampliações do mapa de sets (v5.16/v5.18/v5.19), aposentadoria do
+  `myp_enrich.py` (v5.17), skill `scan-myp` em 6 grupos (2026-07-02).
