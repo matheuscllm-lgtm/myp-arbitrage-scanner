@@ -502,7 +502,9 @@ def test_summary_markdown_buckets_e_links():
         semref_line = next(l for l in md.splitlines() if "Beerus" in l)
         assert "número fora do índice" in semref_line
         assert "[oferta](" in semref_line
-        assert "tcgplayer.com/search" in semref_line
+        # link de BUSCA com o prefixo canônico ANCORADO no início do link
+        # markdown (nunca substring solta de domínio)
+        assert "[TCG](https://www.tcgplayer.com/search/" in semref_line
         # margem do deal limpo em negrito, percentual
         assert "**100.0%**" in md
         # cobertura honesta
@@ -539,7 +541,13 @@ def test_carta_label_e_links_helpers():
 
 def test_search_url():
     u = tcg_dbz_search_url("Son Goku - FB01-139 (Alternate Art)", "FB01-139")
-    assert u and "tcgplayer.com" in u and "Son+Goku" in u
+    # valida o HOST parseado, não substring (CodeQL: URL substring
+    # sanitization incompleta — "tcgplayer.com" poderia estar em qualquer
+    # posição de uma URL maliciosa)
+    from urllib.parse import urlparse
+    assert u is not None
+    assert urlparse(u).netloc == "www.tcgplayer.com"
+    assert "Son+Goku" in u
     assert tcg_dbz_search_url("", None) is None
 
 
