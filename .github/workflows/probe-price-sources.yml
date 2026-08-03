@@ -120,12 +120,14 @@ jobs:
                       game_slugs.add(m.group(1))
               print("slugs:", sorted(game_slugs))
 
-          cands = [g for g in sorted(game_slugs) if "dragon" in g or "dbz" in g or g == "dbs"]
+          cands = [g for g in sorted(game_slugs)
+                   if g.startswith("dbs") or "dragon" in g or "dbz" in g]
           if not cands:
-              cands = ["dragon-ball-super", "dragon-ball", "dragonball", "dragon-ball-fusion-world", "dbz"]
+              cands = ["dbsfusion", "dbsmasters"]
           print("candidatos DBZ:", cands)
 
-          dbz_slug, editions = None, []
+          # sonda TODAS as seções DBZ (dbsfusion E dbsmasters), não só a primeira
+          sections = []
           for slug in cands:
               print(f"== 2) /{slug}/edicoes ==")
               found, page = [], 1
@@ -157,18 +159,17 @@ jobs:
                       break
                   page += 1
               if found:
-                  dbz_slug, editions = slug, found
-                  break
-
-          print(f"== RESULTADO: slug={dbz_slug!r}, {len(editions)} edições ==")
-          for e in editions:
-              print(f"   {e['href']}  |  {e['title']}")
+                  sections.append((slug, found))
 
           prod_urls = []
-          if dbz_slug and editions:
+          for dbz_slug, editions in sections:
+              print(f"== RESULTADO {dbz_slug}: {len(editions)} edições ==")
+              for e in editions:
+                  print(f"   {e['href']}  |  {e['title']}")
               ed_url = BASE + editions[0]["href"]
-              print(f"== 3) Listagem da 1ª edição: {ed_url} ==")
+              print(f"== 3) Listagem da 1ª edição de {dbz_slug}: {ed_url} ==")
               soup = get(f"{ed_url}?page=1")
+              n_before = len(prod_urls)
               if soup is not None:
                   for sel in (f'a[href*="/{dbz_slug}/produto/"]', 'a[href*="/produto/"]'):
                       for a in soup.select(sel):
@@ -176,13 +177,17 @@ jobs:
                           full = BASE + href if href.startswith("/") else href
                           if full not in prod_urls:
                               prod_urls.append(full)
-                      if prod_urls:
+                      if len(prod_urls) > n_before:
                           break
-                  print(f"{len(prod_urls)} produtos na página 1; primeiros 8:")
-                  for u in prod_urls[:8]:
+                  novos = prod_urls[n_before:]
+                  print(f"{len(novos)} produtos na página 1; primeiros 6:")
+                  for u in novos[:6]:
                       print("   ", u)
+                  # estrutura de 1 produto POR seção
+                  if novos:
+                      prod_urls = prod_urls[:n_before] + [novos[0]]
 
-          for prod in prod_urls[:2]:
+          for prod in prod_urls:
               print(f"== 4) Estrutura de página de produto: {prod} ==")
               soup = get(prod)
               if soup is None:
@@ -225,14 +230,15 @@ jobs:
                   return json.load(r)
           for cat in (80, 27):
               res = jget(f"https://tcgcsv.com/tcgplayer/{cat}/groups").get("results", [])
-              print(f"cat {cat}: {len(res)} groups")
-              for grp in res:
-                  print(f"   {grp.get('groupId')}  {str(grp.get('abbreviation') or ''):<10} {grp.get('name')}")
+              print(f"cat {cat}: {len(res)} groups (lista completa já registrada na sonda de 2026-08-03 run 30780981509)")
               if res:
-                  gid = res[0]["groupId"]
+                  gid = res[1]["groupId"] if len(res) > 1 else res[0]["groupId"]
                   prods = jget(f"https://tcgcsv.com/tcgplayer/{cat}/{gid}/products").get("results", [])
-                  print(f"   amostra de produtos do group {gid} ({len(prods)} no total):")
-                  for p in prods[:4]:
+                  com_num = [p for p in prods
+                             if any(e.get("name") == "Number" and e.get("value")
+                                    for e in (p.get("extendedData") or []))]
+                  print(f"   group {gid}: {len(prods)} produtos, {len(com_num)} com Number; amostra:")
+                  for p in com_num[:5]:
                       ext = {e.get("name"): e.get("value") for e in (p.get("extendedData") or [])}
                       print(f"     name={p.get('name')!r} number={ext.get('Number')!r} rarity={ext.get('Rarity')!r}")
           PYEOF
