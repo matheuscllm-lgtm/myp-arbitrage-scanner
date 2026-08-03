@@ -91,6 +91,7 @@ jobs:
         run: |
           python3 << 'PYEOF'
           import json, re, time, urllib.request
+          from collections import Counter
           import cloudscraper
           from bs4 import BeautifulSoup
 
@@ -102,6 +103,7 @@ jobs:
               "Accept-Encoding": "gzip, deflate, br",
           })
           BASE = "https://mypcards.com"
+          CODE_RE = re.compile(r"\b[A-Z]{1,4}\d{0,3}-\d{2,4}[A-Z]?\b")
 
           def get(url):
               time.sleep(1.5)
@@ -109,136 +111,86 @@ jobs:
               print(f"GET {url} -> {r.status_code} ({len(r.text)} bytes)", flush=True)
               return BeautifulSoup(r.text, "lxml") if r.status_code == 200 else None
 
-          print("== 1) Home: slugs de topo (seções de jogo) ==")
-          soup = get(f"{BASE}/")
-          game_slugs = set()
-          if soup is not None:
-              for a in soup.select("a[href]"):
-                  href = a.get("href", "")
-                  m = re.match(r"^(?:https?://mypcards\.com)?/([a-z0-9-]+)/?$", href)
-                  if m:
-                      game_slugs.add(m.group(1))
-              print("slugs:", sorted(game_slugs))
-
-          cands = [g for g in sorted(game_slugs)
-                   if g.startswith("dbs") or "dragon" in g or "dbz" in g]
-          if not cands:
-              cands = ["dbsfusion", "dbsmasters"]
-          print("candidatos DBZ:", cands)
-
-          # sonda TODAS as seções DBZ (dbsfusion E dbsmasters), não só a primeira
-          sections = []
-          for slug in cands:
-              print(f"== 2) /{slug}/edicoes ==")
-              found, page = [], 1
-              while page <= 6:
-                  soup = get(f"{BASE}/{slug}/edicoes?page={page}")
-                  if soup is None:
-                      break
-                  links = soup.select("a.edicao-link")
-                  if not links:
-                      for c in soup.select('[class*="edicao"]'):
-                          a = c.select_one(f'a[href*="/{slug}/"]')
-                          if a and a not in links:
-                              links.append(a)
-                  if not links:
-                      for a in soup.select("a[href]"):
-                          href = a.get("href", "")
-                          if (re.match(rf"^/{slug}/[a-z0-9][\w-]+$", href)
-                                  and "edicoes" not in href and "produto" not in href):
-                              links.append(a)
-                  new, seen = 0, {e["href"] for e in found}
-                  for a in links:
-                      href = a.get("href", "")
-                      if not href or href in seen:
-                          continue
-                      found.append({"href": href, "title": a.get_text(strip=True)[:90]})
-                      seen.add(href)
-                      new += 1
-                  if new == 0:
-                      break
-                  page += 1
-              if found:
-                  sections.append((slug, found))
-
-          prod_urls = []
-          for dbz_slug, editions in sections:
-              print(f"== RESULTADO {dbz_slug}: {len(editions)} edições ==")
-              for e in editions:
-                  print(f"   {e['href']}  |  {e['title']}")
-              ed_url = BASE + editions[0]["href"]
-              print(f"== 3) Listagem da 1ª edição de {dbz_slug}: {ed_url} ==")
-              soup = get(f"{ed_url}?page=1")
-              n_before = len(prod_urls)
-              if soup is not None:
-                  for sel in (f'a[href*="/{dbz_slug}/produto/"]', 'a[href*="/produto/"]'):
-                      for a in soup.select(sel):
-                          href = a.get("href", "")
-                          full = BASE + href if href.startswith("/") else href
-                          if full not in prod_urls:
-                              prod_urls.append(full)
-                      if len(prod_urls) > n_before:
-                          break
-                  novos = prod_urls[n_before:]
-                  print(f"{len(novos)} produtos na página 1; primeiros 6:")
-                  for u in novos[:6]:
-                      print("   ", u)
-                  # estrutura de 1 produto POR seção
-                  if novos:
-                      prod_urls = prod_urls[:n_before] + [novos[0]]
-
-          for prod in prod_urls:
-              print(f"== 4) Estrutura de página de produto: {prod} ==")
-              soup = get(prod)
+          # v3: produto COM ofertas (v2 pegou 2 produtos sem nenhum seller) +
+          # onde mora o código de carta no dbsmasters (h1 não traz).
+          TARGETS = [("dbsfusion", "awakened-pulse"), ("dbsmasters", "galactic-battle")]
+          for section, ed_slug in TARGETS:
+              print(f"== {section}/{ed_slug} ==")
+              soup = get(f"{BASE}/{section}/{ed_slug}?page=1")
               if soup is None:
                   continue
-              h1 = soup.select_one("h1")
-              h1txt = h1.get_text(strip=True) if h1 else ""
-              print("   h1:", h1txt[:140])
-              print("   .estat-tcg presente?", soup.select_one(".estat-tcg") is not None)
-              print("   .estatistica-ultimo presente?", soup.select_one(".estatistica-ultimo") is not None)
-              print("   seller tables:", len(soup.select("table.table-striped.table-bordered")))
-              langs, quals, foils = {}, set(), set()
-              for row in soup.select("tr"):
-                  fl = row.select_one("span.flag-icon[title]")
-                  if fl:
-                      t = fl.get("title", "").strip()
-                      langs[t] = langs.get(t, 0) + 1
-                  q = row.select_one("td.estoque-lista-qualidadenome")
-                  if q:
-                      quals.add(q.get_text(" ", strip=True)[:30])
-                  f = row.select_one("td.estoque-lista-nomeenfoil")
-                  if f and f.get_text(strip=True):
-                      foils.add(f.get_text(strip=True)[:30])
-              print("   idiomas (contagem de rows):", langs)
-              print("   qualidades vistas:", sorted(quals)[:12])
-              print("   coluna foil/variante:", sorted(foils)[:12])
-              print("   #lista-anuncio-demais-vendedores?",
-                    soup.select_one("#lista-anuncio-demais-vendedores") is not None)
-              print("   paginação estoque-outros-page?",
-                    soup.select_one('a[href*="estoque-outros-page="]') is not None)
-              codes = re.findall(r"[a-z-]{3,24}_[a-z]{2,3}_[\w/-]{1,24}", soup.get_text())
-              print("   product_code candidatos:", sorted(set(codes))[:6])
-              print("   código de carta no h1:",
-                    re.findall(r"\(([A-Za-z]{1,4}\d{0,3}-\d{1,4}[A-Za-z]?)\)", h1txt))
+              urls, cards_txt = [], []
+              for a in soup.select(f'a[href*="/{section}/produto/"]'):
+                  href = a.get("href", "")
+                  full = BASE + href if href.startswith("/") else href
+                  if full not in urls:
+                      urls.append(full)
+                      cards_txt.append(" ".join(a.get_text(" ", strip=True).split())[:110])
+              print(f"{len(urls)} produtos na página 1")
+              for t in cards_txt[:3]:
+                  print(f"   card da listagem: {t!r}")
+              for prod in urls[:5]:
+                  soup = get(prod)
+                  if soup is None:
+                      continue
+                  tables = soup.select("table.table-striped.table-bordered") or [soup]
+                  n_rows = sum(1 for tb in tables for tr in tb.find_all("tr")
+                               if "R$" in tr.get_text())
+                  h1 = soup.select_one("h1")
+                  h1txt = " ".join((h1.get_text(" ", strip=True) if h1 else "").split())
+                  print(f"   → {prod.rsplit('/', 1)[-1]}: h1={h1txt[:80]!r} rows_com_preco={n_rows}")
+                  if n_rows == 0:
+                      continue
+                  langs, quals, foils = Counter(), set(), set()
+                  for row in soup.select("tr"):
+                      fl = row.select_one("span.flag-icon[title]")
+                      if fl:
+                          langs[fl.get("title", "").strip()] += 1
+                      q = row.select_one("td.estoque-lista-qualidadenome")
+                      if q:
+                          quals.add(q.get_text(" ", strip=True)[:30])
+                      f = row.select_one("td.estoque-lista-nomeenfoil")
+                      if f and f.get_text(strip=True):
+                          foils.add(f.get_text(strip=True)[:30])
+                  print("     idiomas:", dict(langs))
+                  print("     qualidades:", sorted(quals)[:12])
+                  print("     foil/variante:", sorted(foils)[:12])
+                  print("     marketplace container?",
+                        soup.select_one("#lista-anuncio-demais-vendedores") is not None,
+                        "| paginação?",
+                        soup.select_one('a[href*="estoque-outros-page="]') is not None)
+                  codes = Counter(CODE_RE.findall(soup.get_text()))
+                  print("     códigos no page_text (top 6):", codes.most_common(6))
+                  bc = soup.select_one(".breadcrumb, nav[aria-label*=readcrumb], ol.breadcrumb")
+                  if bc:
+                      print("     breadcrumb:", " ".join(bc.get_text(" ", strip=True).split())[:110])
+                  hits = 0
+                  for el in soup.find_all(["td", "li", "span", "div", "dt", "dd"]):
+                      txt = el.get_text(" ", strip=True)
+                      if txt and len(txt) < 60 and ("ódigo" in txt or "Code" in txt):
+                          parent_txt = " ".join(el.parent.get_text(" ", strip=True).split())[:90]
+                          print(f"     campo 'código': {parent_txt!r}")
+                          hits += 1
+                          if hits >= 4:
+                              break
+                  break
 
-          print("== 5) tcgcsv categorias 80 (Fusion World) e 27 (DBS Masters) ==")
+          print("== tcgcsv: colisões de Number DENTRO do grupo FB01 (alt arts) ==")
           def jget(url):
               req = urllib.request.Request(
                   url, headers={"User-Agent": "myp-arbitrage-scanner/probe (+github-actions)"})
               with urllib.request.urlopen(req, timeout=30) as r:
                   return json.load(r)
-          for cat in (80, 27):
-              res = jget(f"https://tcgcsv.com/tcgplayer/{cat}/groups").get("results", [])
-              print(f"cat {cat}: {len(res)} groups (lista completa já registrada na sonda de 2026-08-03 run 30780981509)")
-              if res:
-                  gid = res[1]["groupId"] if len(res) > 1 else res[0]["groupId"]
-                  prods = jget(f"https://tcgcsv.com/tcgplayer/{cat}/{gid}/products").get("results", [])
-                  com_num = [p for p in prods
-                             if any(e.get("name") == "Number" and e.get("value")
-                                    for e in (p.get("extendedData") or []))]
-                  print(f"   group {gid}: {len(prods)} produtos, {len(com_num)} com Number; amostra:")
-                  for p in com_num[:5]:
-                      ext = {e.get("name"): e.get("value") for e in (p.get("extendedData") or [])}
-                      print(f"     name={p.get('name')!r} number={ext.get('Number')!r} rarity={ext.get('Rarity')!r}")
+          prods = jget("https://tcgcsv.com/tcgplayer/80/23401/products").get("results", [])
+          by_num = {}
+          for p in prods:
+              ext = {e.get("name"): e.get("value") for e in (p.get("extendedData") or [])}
+              num = ext.get("Number")
+              if num:
+                  by_num.setdefault(num, []).append(p.get("name"))
+          coll = {n: names for n, names in by_num.items() if len(names) > 1}
+          print(f"FB01 (23401): {len(prods)} produtos, {len(by_num)} numbers, "
+                f"{len(coll)} numbers com >1 produto")
+          for n, names in list(coll.items())[:5]:
+              print(f"   {n}: {names}")
           PYEOF
