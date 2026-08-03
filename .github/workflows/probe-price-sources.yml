@@ -69,3 +69,170 @@ jobs:
           else
             echo "ℹ️ pokemontcg.io não serviu 200 do runner (resultado: '$code') — consistente com o achado: o CI cai no fallback."
           fi
+
+  # ── Sonda do catálogo DRAGON BALL do MYP (scanner paralelo myp_dbz_scanner) ──
+  # Mesma filosofia da sonda de preço acima: pergunta empírica respondida de
+  # DENTRO de um runner (o container de nuvem NÃO passa no Cloudflare do MYP;
+  # o runner comprovadamente passa — é onde os scans de produção rodam).
+  # Responde: (a) qual o slug da seção Dragon Ball no MYP e quais edições
+  # existem; (b) a página de produto DBZ usa os MESMOS seletores da de Pokémon
+  # (flag-icon de idioma, célula NM, container marketplace); (c) as categorias
+  # 80/27 do tcgcsv (Fusion World / DBS Masters) servem número+raridade por
+  # carta pro join determinístico. SÓ ESTRUTURA — nunca imprime preço/deal
+  # (postura de repo público).
+  probe-myp-dragonball:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Instalar deps da sonda (as mesmas do scanner)
+        run: pip install cloudscraper beautifulsoup4 lxml brotli
+
+      - name: Sonda MYP Dragon Ball (estrutura do catálogo, sem preços)
+        run: |
+          python3 << 'PYEOF'
+          import json, re, time, urllib.request
+          import cloudscraper
+          from bs4 import BeautifulSoup
+
+          s = cloudscraper.create_scraper(
+              browser={"browser": "firefox", "platform": "windows", "desktop": True})
+          s.headers.update({
+              "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+              "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+              "Accept-Encoding": "gzip, deflate, br",
+          })
+          BASE = "https://mypcards.com"
+
+          def get(url):
+              time.sleep(1.5)
+              r = s.get(url, timeout=25)
+              print(f"GET {url} -> {r.status_code} ({len(r.text)} bytes)", flush=True)
+              return BeautifulSoup(r.text, "lxml") if r.status_code == 200 else None
+
+          print("== 1) Home: slugs de topo (seções de jogo) ==")
+          soup = get(f"{BASE}/")
+          game_slugs = set()
+          if soup is not None:
+              for a in soup.select("a[href]"):
+                  href = a.get("href", "")
+                  m = re.match(r"^(?:https?://mypcards\.com)?/([a-z0-9-]+)/?$", href)
+                  if m:
+                      game_slugs.add(m.group(1))
+              print("slugs:", sorted(game_slugs))
+
+          cands = [g for g in sorted(game_slugs) if "dragon" in g or "dbz" in g or g == "dbs"]
+          if not cands:
+              cands = ["dragon-ball-super", "dragon-ball", "dragonball", "dragon-ball-fusion-world", "dbz"]
+          print("candidatos DBZ:", cands)
+
+          dbz_slug, editions = None, []
+          for slug in cands:
+              print(f"== 2) /{slug}/edicoes ==")
+              found, page = [], 1
+              while page <= 6:
+                  soup = get(f"{BASE}/{slug}/edicoes?page={page}")
+                  if soup is None:
+                      break
+                  links = soup.select("a.edicao-link")
+                  if not links:
+                      for c in soup.select('[class*="edicao"]'):
+                          a = c.select_one(f'a[href*="/{slug}/"]')
+                          if a and a not in links:
+                              links.append(a)
+                  if not links:
+                      for a in soup.select("a[href]"):
+                          href = a.get("href", "")
+                          if (re.match(rf"^/{slug}/[a-z0-9][\w-]+$", href)
+                                  and "edicoes" not in href and "produto" not in href):
+                              links.append(a)
+                  new, seen = 0, {e["href"] for e in found}
+                  for a in links:
+                      href = a.get("href", "")
+                      if not href or href in seen:
+                          continue
+                      found.append({"href": href, "title": a.get_text(strip=True)[:90]})
+                      seen.add(href)
+                      new += 1
+                  if new == 0:
+                      break
+                  page += 1
+              if found:
+                  dbz_slug, editions = slug, found
+                  break
+
+          print(f"== RESULTADO: slug={dbz_slug!r}, {len(editions)} edições ==")
+          for e in editions:
+              print(f"   {e['href']}  |  {e['title']}")
+
+          prod_urls = []
+          if dbz_slug and editions:
+              ed_url = BASE + editions[0]["href"]
+              print(f"== 3) Listagem da 1ª edição: {ed_url} ==")
+              soup = get(f"{ed_url}?page=1")
+              if soup is not None:
+                  for sel in (f'a[href*="/{dbz_slug}/produto/"]', 'a[href*="/produto/"]'):
+                      for a in soup.select(sel):
+                          href = a.get("href", "")
+                          full = BASE + href if href.startswith("/") else href
+                          if full not in prod_urls:
+                              prod_urls.append(full)
+                      if prod_urls:
+                          break
+                  print(f"{len(prod_urls)} produtos na página 1; primeiros 8:")
+                  for u in prod_urls[:8]:
+                      print("   ", u)
+
+          for prod in prod_urls[:2]:
+              print(f"== 4) Estrutura de página de produto: {prod} ==")
+              soup = get(prod)
+              if soup is None:
+                  continue
+              h1 = soup.select_one("h1")
+              h1txt = h1.get_text(strip=True) if h1 else ""
+              print("   h1:", h1txt[:140])
+              print("   .estat-tcg presente?", soup.select_one(".estat-tcg") is not None)
+              print("   .estatistica-ultimo presente?", soup.select_one(".estatistica-ultimo") is not None)
+              print("   seller tables:", len(soup.select("table.table-striped.table-bordered")))
+              langs, quals, foils = {}, set(), set()
+              for row in soup.select("tr"):
+                  fl = row.select_one("span.flag-icon[title]")
+                  if fl:
+                      t = fl.get("title", "").strip()
+                      langs[t] = langs.get(t, 0) + 1
+                  q = row.select_one("td.estoque-lista-qualidadenome")
+                  if q:
+                      quals.add(q.get_text(" ", strip=True)[:30])
+                  f = row.select_one("td.estoque-lista-nomeenfoil")
+                  if f and f.get_text(strip=True):
+                      foils.add(f.get_text(strip=True)[:30])
+              print("   idiomas (contagem de rows):", langs)
+              print("   qualidades vistas:", sorted(quals)[:12])
+              print("   coluna foil/variante:", sorted(foils)[:12])
+              print("   #lista-anuncio-demais-vendedores?",
+                    soup.select_one("#lista-anuncio-demais-vendedores") is not None)
+              print("   paginação estoque-outros-page?",
+                    soup.select_one('a[href*="estoque-outros-page="]') is not None)
+              codes = re.findall(r"[a-z-]{3,24}_[a-z]{2,3}_[\w/-]{1,24}", soup.get_text())
+              print("   product_code candidatos:", sorted(set(codes))[:6])
+              print("   código de carta no h1:",
+                    re.findall(r"\(([A-Za-z]{1,4}\d{0,3}-\d{1,4}[A-Za-z]?)\)", h1txt))
+
+          print("== 5) tcgcsv categorias 80 (Fusion World) e 27 (DBS Masters) ==")
+          def jget(url):
+              req = urllib.request.Request(
+                  url, headers={"User-Agent": "myp-arbitrage-scanner/probe (+github-actions)"})
+              with urllib.request.urlopen(req, timeout=30) as r:
+                  return json.load(r)
+          for cat in (80, 27):
+              res = jget(f"https://tcgcsv.com/tcgplayer/{cat}/groups").get("results", [])
+              print(f"cat {cat}: {len(res)} groups")
+              for grp in res:
+                  print(f"   {grp.get('groupId')}  {str(grp.get('abbreviation') or ''):<10} {grp.get('name')}")
+              if res:
+                  gid = res[0]["groupId"]
+                  prods = jget(f"https://tcgcsv.com/tcgplayer/{cat}/{gid}/products").get("results", [])
+                  print(f"   amostra de produtos do group {gid} ({len(prods)} no total):")
+                  for p in prods[:4]:
+                      ext = {e.get("name"): e.get("value") for e in (p.get("extendedData") or [])}
+                      print(f"     name={p.get('name')!r} number={ext.get('Number')!r} rarity={ext.get('Rarity')!r}")
+          PYEOF
