@@ -1,5 +1,46 @@
 # Changelog
 
+## DBZ v1.0 — 2026-08-03 — scanner paralelo DRAGON BALL + skill scan-myp-dbz (PR #95)
+
+**O que muda em uma frase:** o repo ganha um scanner PARALELO de Dragon Ball
+(`myp_dbz_scanner.py` + `myp_dbz_summary.py` + skill `scan-myp-dbz` + workflow
+`dbz-scan.yml`), no mesmo formato do fluxo Pokémon — que segue **intocado**
+(fora do versionamento v5.x; precedente da frota: dbs/op scanners do
+card-trader-scanner).
+
+### O que entrou
+- **Sonda `probe-myp-dragonball`** (+ smoke `smoke-dbz-scanner`) no
+  `probe-price-sources.yml`: provou de dentro do runner os slugs
+  `dbsfusion`/`dbsmasters`, a enumeração das 123 edições, os seletores de
+  seller idênticos aos do Pokémon, o campo `Código` do produto
+  (`dbsm_bt1-073_spr` / `dbsf_fb01_fb01-139p1`) e as colisões
+  base × `(SPR)`/`(Alternate Art)` no tcgcsv.
+- **`myp_dbz_scanner.py` v1.0**: herda do `MYPScraper` a infra de PLATAFORMA
+  (sessão CF firefox, `_get`, parser NM/EN, paginação marketplace,
+  checkpoint/`--resume`) e implementa o próprio pipeline de referência:
+  índice bulk tcgcsv cats 80/27, resolução edição→grupo (nome exato → código
+  canônico com aliases {B≡BT}/{BE≡EB≡EX} → contenção única), join por
+  código **variant-aware** (sufixo `_spr` só casa produto `(SPR)`; base
+  nunca pega ref de variante; escopo grupo-principal evita os grupos
+  Release Event/Alt Art que duplicam número e nome), fallback grupo+nome
+  exato pro dbsmasters (h1 sem código). Sem referência → aba "Sem Ref TCG"
+  com motivo; **sem fallback `.estat-tcg`** (referência real ou nada); sem
+  câmbio real o run falha alto.
+- **`myp_dbz_summary.py`**: entrega canônica (espelho do `myp_summary.py`) —
+  🟢 limpos / 🚨 REVISAR (possível lixo <50% da ref · ref volátil >2× ·
+  1 seller EN, com flag por linha) / ⚠️ Sem referência / 🚨 EN truncation;
+  2 links em toda linha; threshold lido do XLSX (lição v5.14.1).
+- **Skill `scan-myp-dbz`**: 123 edições em 6 grupos por recência
+  (G1-G2 Fusion World, G3-G6 Masters), mesmo contrato do `scan-myp`
+  (perguntar grupos, um por vez, rota nuvem = `dbz-scan.yml`, entrega
+  verbatim). Partição travada por teste.
+
+### Validação
+- `python -m pytest -q` (Python 3.12): **101 passed** (67 pré-existentes +
+  30 do `test_myp_dbz_offline.py` + 4 do `test_scan_dbz_skill_profiles.py`).
+- Smoke real ponta a ponta no runner (mini-scan Rivals Clash, job
+  `smoke-dbz-scanner` do PR #95).
+
 ## v5.19.3 — 2026-07-03 — `_get` sem retry em 404/410 + limpeza drift_check
 
 **O que muda em uma frase:** os dois últimos itens do backlog do code-review

@@ -194,3 +194,41 @@ jobs:
           for n, names in list(coll.items())[:5]:
               print(f"   {n}: {names}")
           PYEOF
+
+  # ── Smoke REAL do scanner DBZ (myp_dbz_scanner) ──
+  # Mini-scan de verdade (1 edição, ≤10 produtos) de dentro do runner — valida
+  # ponta a ponta: Cloudflare do MYP, catálogo dbsfusion, campo Código, índice
+  # tcgcsv cat 80, join, XLSX e entrega via myp_dbz_summary. Mesma exposição de
+  # log dos scans Pokémon do quick-scan (aceita pela frota); resultado nunca é
+  # commitado.
+  smoke-dbz-scanner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Mini-scan real (Rivals Clash FB06, ≤10 produtos)
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          python myp_dbz_scanner.py \
+            --sections dbsfusion --editions "Rivals Clash" \
+            --max-editions 1 --max-products 10 --delay 1.0 \
+            -o smoke_dbz.xlsx
+          python myp_dbz_summary.py smoke_dbz.xlsx -o smoke_dbz.md
+          echo "═══════════ ENTREGA GERADA (smoke) ═══════════"
+          cat smoke_dbz.md
+          grep -q "Cobertura de referência real" smoke_dbz.md
+          echo "✅ smoke DBZ ponta a ponta OK"

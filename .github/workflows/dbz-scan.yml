@@ -1,0 +1,129 @@
+name: DBZ MYP Scan
+
+# 2026-08-03: rota NUVEM do skill scan-myp-dbz (scanner paralelo Dragon Ball,
+# myp_dbz_scanner.py). Mesma razão de existir do quick-scan Pokémon: o runner
+# do GitHub tem IP próprio que comprovadamente passa no Cloudflare do MYP
+# (sessão de nuvem NUNCA roda o scraper no container). Só dispatch manual —
+# postura da frota: sem agendamento; resultado sai APENAS como artifact
+# (repo público: dado de deal nunca é commitado).
+#
+# Sem chunking na v1: o catálogo DBZ por grupo do skill (≤ ~25 edições) cabe
+# num job só; o --resume não se aplica aqui (runner efêmero) — o timeout de
+# 330 min é o teto de segurança.
+
+on:
+  workflow_dispatch:
+    inputs:
+      editions:
+        description: 'Substrings de edições DBZ (espaço-separadas; multi-palavra em ""). Vazio = TODAS as edições das seções.'
+        required: false
+        default: ''
+      sections:
+        description: 'Seções: "dbsfusion dbsmasters" (default), ou só uma'
+        required: false
+        default: 'dbsfusion dbsmasters'
+      threshold:
+        description: 'Margem BRUTA mínima em percent INTEIRO (default 30 = 30%)'
+        required: false
+        default: '30'
+      min_price:
+        description: 'Preço mínimo BRL (default 50 — piso canônico de singles)'
+        required: false
+        default: '50'
+      delay:
+        description: 'Delay entre requests em segundos (default 1.5)'
+        required: false
+        default: '1.5'
+
+concurrency:
+  group: myp-scan          # mesmo grupo dos scans Pokémon: nunca 2 scans MYP simultâneos
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run DBZ scanner
+        env:
+          PYTHONIOENCODING: utf-8
+          # Via env (não interpolado inline): edição com apóstrofo
+          # ("Saiyan's Pride", "ZENKAI Series Fighter's Ambition") quebraria
+          # aspas simples no script — mesma defesa do quick-scan.yml.
+          EDITIONS_INPUT: ${{ github.event.inputs.editions }}
+          SECTIONS_INPUT: ${{ github.event.inputs.sections }}
+        run: |
+          THRESHOLD="${{ github.event.inputs.threshold || '30' }}"
+          MIN_PRICE="${{ github.event.inputs.min_price || '50' }}"
+          DELAY="${{ github.event.inputs.delay || '1.5' }}"
+
+          SECTIONS="${SECTIONS_INPUT:-dbsfusion dbsmasters}"
+          eval "set -- $SECTIONS"
+          SECTION_ARGS="$@"
+
+          OUT="myp_dbz_$(date -u +%Y%m%d_%H%M).xlsx"
+          echo "Seções: $SECTION_ARGS | threshold=$THRESHOLD | out=$OUT"
+
+          if [ -n "$EDITIONS_INPUT" ]; then
+            eval "set -- $EDITIONS_INPUT"
+            echo "Edições ($#): $@"
+            python myp_dbz_scanner.py \
+              --threshold "$THRESHOLD" --min-price "$MIN_PRICE" --delay "$DELAY" \
+              --sections $SECTION_ARGS \
+              --output "$OUT" \
+              --editions "$@"
+          else
+            echo "Edições: TODAS (catálogo das seções)"
+            python myp_dbz_scanner.py \
+              --threshold "$THRESHOLD" --min-price "$MIN_PRICE" --delay "$DELAY" \
+              --sections $SECTION_ARGS \
+              --output "$OUT"
+          fi
+
+      - name: Generate markdown summary
+        if: always()
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          XLSX=$(ls -t myp_dbz_*.xlsx 2>/dev/null | head -1)
+          if [ -z "$XLSX" ]; then
+            echo "::warning::Sem XLSX, pulando summary"
+            exit 0
+          fi
+          DATE=$(date -u +%Y-%m-%d)
+          mkdir -p results
+          python myp_dbz_summary.py "$XLSX" \
+            --output "results/dbz-${DATE}.md" \
+            --run-id "${{ github.run_id }}" \
+            --repo "${{ github.repository }}"
+          cp "results/dbz-${DATE}.md" "results/latest-dbz.md"
+
+      - name: Upload artifact (resultado NUNCA é commitado)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: myp-dbz-consolidated-${{ github.run_id }}
+          path: |
+            myp_dbz_*.xlsx
+            results/dbz-*.md
+            results/latest-dbz.md
+          retention-days: 14
+          if-no-files-found: warn

@@ -196,7 +196,7 @@ python myp_arbitrage_scanner.py --editions "Ascended Heroes" \
 
 ### Workflows do GitHub Actions
 
-Cinco workflows em `.github/workflows/`:
+Seis workflows em `.github/workflows/`:
 
 - **`quick-scan.yml` — `Quick MYP Scan (chunked)` — o jeito RÁPIDO de rodar o
   quick (2026-06-10):** `gh workflow run quick-scan.yml` (ou pela aba Actions).
@@ -216,7 +216,12 @@ Cinco workflows em `.github/workflows/`:
   canário `drift_check.py` antes do scan (ver Arquitetura).
 - **`tests.yml`** — CI de testes: `python -m pytest -q` em Python 3.12.
 - **`probe-price-sources.yml`** — sonda de alcance das fontes de preço a
-  partir dos runners.
+  partir dos runners; desde 2026-08-03 também carrega a sonda do catálogo
+  Dragon Ball (`probe-myp-dragonball`) e o smoke real do scanner DBZ
+  (`smoke-dbz-scanner`), que rodam em PR que toque o próprio arquivo.
+- **`dbz-scan.yml`** ("DBZ MYP Scan") — rota NUVEM do scanner paralelo de
+  Dragon Ball (ver seção própria). Só dispatch manual; resultado só como
+  artifact.
 
 ## 🔀 Preço TCG REAL no catálogo COMPLETO
 
@@ -369,6 +374,64 @@ markdown de entrega que o `myp_summary.py` produz. Ou seja: o XLSX é o insumo; 
 entrega é o markdown do `myp_summary.py`. **Não tente entregar o XLSX "formatado à
 mão" — rode o script.**
 
+## Scanner paralelo: Dragon Ball (`myp_dbz_scanner.py`)
+
+> **Pedido do operador (2026-08-03):** skill "MYP cards" para Dragon Ball no
+> mesmo formato do Pokémon. Segue o precedente da frota (dbs/op scanners do
+> card-trader-scanner): jogo paralelo = **script separado**, sem tocar o
+> fluxo Pokémon (o modo `--game` embutido foi rejeitado lá, PR #56 fechado
+> como superado).
+
+- **O que faz:** varre as DUAS seções Dragon Ball do MYP — **`dbsfusion`**
+  (Fusion World, 35 edições) e **`dbsmasters`** (DBS clássico, 88 edições),
+  slugs provados pela sonda `probe-myp-dragonball` (PR #95) — com a MESMA
+  infra de plataforma do scanner Pokémon (sessão cloudscraper firefox,
+  parser de seller NM/EN herdado por import, paginação marketplace,
+  checkpoint/`--resume`), e compara a menor oferta EN NM com o **market
+  price do TCGplayer** via tcgcsv.com (**cat 80** = Fusion World, **cat
+  27** = Masters; USD→BRL com câmbio ao vivo — sem câmbio real o run FALHA
+  ALTO, não há fallback de preço no DBZ).
+- **Join determinístico (nunca fuzzy), em camadas:** edição→grupo tcgcsv
+  (nome exato → código de set canônico único, com classes de alias
+  {B≡BT}/{BE≡EB≡EX} → contenção de nome única); carta por **código**
+  ("FB11-112" no h1 do dbsfusion; no dbsmasters o código vem do campo
+  `Código` da página — `dbsm_bt1-073_spr`, que também traz o **sufixo de
+  variante**: `_spr` só casa o produto `(SPR)` do TCGplayer, nunca o base) e
+  desambiguação por nome EN exato; sem código → grupo+nome exato. Ambíguo/
+  sem match → aba **"Sem Ref TCG"** com motivo (nunca margem inventada; sem
+  fallback `.estat-tcg` — decisão v1).
+- **Convenções:** margem BRUTA base compra `(TCG_BRL − MYP_BRL)/MYP_BRL`;
+  `--threshold` percent INTEIRO (30); piso R$50; NM/EN herdados; guardas da
+  frota: oferta <50% da ref = flag **possível lixo**, market vs menor
+  anúncio TCG >2× = flag **ref volátil** — ambos rebaixam pra REVISAR na
+  entrega.
+- **Entrega** = `myp_dbz_summary.py` (espelho do `myp_summary.py`): buckets
+  🟢 limpos / 🚨 REVISAR (flag por linha) / ⚠️ Sem referência / 🚨 EN
+  truncation, TODOS com `Carta` = nome+código e 2 links por linha
+  (`[oferta] · [TCG]`; linha sem produto casado leva link de BUSCA). Colar
+  VERBATIM — mesmo contrato de entrega do Pokémon.
+- 🎯 **Skill `scan-myp-dbz`** (`.claude/skills/scan-myp-dbz/SKILL.md`):
+  mesmo formato do `scan-myp` — 123 edições em **6 grupos por recência**
+  (G1-G2 Fusion World, G3-G6 Masters), pergunta quais rodar, um por vez,
+  rota nuvem = workflow `dbz-scan.yml` / rota local = `--resume`. Partição
+  travada por `test_scan_dbz_skill_profiles.py` (cobertura 123/123, zero
+  sobreposição).
+- **Como rodar (fora do skill, debug):**
+
+  ```bash
+  python myp_dbz_scanner.py --list-editions
+  python myp_dbz_scanner.py --sections dbsfusion --editions "Rivals Clash" \
+    --threshold 30 --min-price 50 --delay 1.5 -o results/dbz.xlsx --resume
+  python myp_dbz_summary.py results/dbz.xlsx -o results/dbz.md
+  ```
+
+- **Contratos travados em teste:** `test_myp_dbz_offline.py` (30 testes
+  offline: parsing de título/edição/campo Código, join variant-aware SPR/Alt
+  Art, escopo grupo-principal vs Release Event, threshold inteiro, XLSX +
+  summary com 2 links) + `test_scan_dbz_skill_profiles.py` (4). Fatos de
+  estrutura do site provados pela sonda estão no cabeçalho do scanner — não
+  re-descobrir.
+
 ## Testes
 
 ```bash
@@ -410,6 +473,8 @@ iterativo de dev — **medir → mudar → verificar → repetir**:
 ```
 myp_arbitrage_scanner.py   o scanner (MYP → preço TCG real → XLSX). Cabeçalho traz a versão
 myp_summary.py             a ENTREGA canônica: XLSX → markdown (4 buckets de deals + seção diagnóstica condicional) — ver seção 📤
+myp_dbz_scanner.py         scanner PARALELO de DRAGON BALL (dbsfusion+dbsmasters vs tcgcsv 80/27) — ver seção própria
+myp_dbz_summary.py         a ENTREGA do scan DBZ (espelho do myp_summary.py)
 myp_aggregate.py           agrega os XLSX dos chunks dos workflows num consolidado
 bench.py                   micro-benchmark do loop de otimização (mockado; --live = real)
 drift_check.py             canário de drift: roda ANTES do scan no daily workflow, valida
@@ -417,13 +482,16 @@ drift_check.py             canário de drift: roda ANTES do scan no daily workfl
                            página de produto estável); site rebrandeou/markup mudou → falha
                            LOUD antes de gastar 30min de CI em HTML quebrado
 test_v5_8_offline.py       suíte de testes offline (coletada pelo pytest)
+test_myp_dbz_offline.py    suíte offline do scanner DBZ (30 testes)
+test_scan_dbz_skill_profiles.py  trava a partição dos 6 grupos do skill DBZ
 scripts/                   utilitários: validate_setcode_map.py (validação do mapa de
                            setcodes, com teste próprio no pytest), revalidate_deals.py,
                            cross_check_myp_api.py, add_card_hyperlinks.py,
                            run_weekly_local.ps1 (PC do operador)
 experimental/              protótipos exploratórios, não-produção (ev_scanner_v01.py)
-.github/workflows/         daily-scan / weekly-scan / quick-scan / tests / probe-price-sources
-.claude/skills/scan-myp/   skill canônica de scan (6 grupos)
+.github/workflows/         daily-scan / weekly-scan / quick-scan / dbz-scan / tests / probe-price-sources
+.claude/skills/scan-myp/       skill canônica de scan Pokémon (6 grupos)
+.claude/skills/scan-myp-dbz/   skill de scan DRAGON BALL (6 grupos próprios)
 .claude/commands/auto.md   comando /auto da frota (modo autônomo)
 ```
 
@@ -460,6 +528,10 @@ threshold no bloco da frota). É outro projeto.
 - Versão atual: **v5.19.3** (2026-07-03). O histórico completo — uma entrada
   detalhada por versão, com racional de cada decisão — está no **`CHANGELOG.md`**
   (fonte de verdade do estado, junto com o `main`).
+- **Pós-v5.19.3 mergeado** (script paralelo, fora do versionamento do scanner
+  Pokémon): `myp_dbz_scanner.py` v1.0 + `myp_dbz_summary.py` + skill
+  `scan-myp-dbz` + workflow `dbz-scan.yml` (2026-08-03, PR #95) — ver a
+  seção "Scanner paralelo: Dragon Ball".
 - Marcos já incorporados neste arquivo: margem bruta pura (2026-06-06), entrega
   obrigatória via `myp_summary.py` (2026-06-13), quick chunked no Actions
   (2026-06-10), balde fallback dedicado (v5.14.3), coluna `TCG Source` +
