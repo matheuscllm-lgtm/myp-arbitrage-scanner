@@ -89,16 +89,23 @@ def delivery_links(myp_url: str | None, name: str | None, edition: str | None,
     v5.11.4: aceita `tcg_url` explícito (coluna `TCG URL` do XLSX, plain-text
     desde v5.11.2) e o prefere sobre o recompute via import do scanner — assim a
     entrega usa o MESMO link que o XLSX já carrega, e funciona mesmo quando
-    `myp_arbitrage_scanner` não é importável (teste isolado / env sem o módulo)."""
+    `myp_arbitrage_scanner` não é importável (teste isolado / env sem o módulo).
+
+    URLs são percent-encodadas (espaço, aspas, parênteses) sem re-encodar %XX
+    existentes: em `[label](url)` o `)` cru fecha o link no primeiro parêntese
+    e o wrap `<url>` não é respeitado por todo renderizador (oferta truncada
+    no remote-control, operador 2026-08-04 — fix cross-scanner, espelho do
+    sealed snapshot.md_link)."""
+    from urllib.parse import quote
     parts = []
     if myp_url:
-        parts.append(f"[oferta]({myp_url})")
+        parts.append(f"[oferta]({quote(myp_url, safe='%/?&=:+,*')})")
     tcg = tcg_url or (
         tcg_direct_url(name or "", edition or "", oversized_collector_risk=oversized)
         or tcg_search_url(name or "")
     )
     if tcg:
-        parts.append(f"[TCG]({tcg})")
+        parts.append(f"[TCG]({quote(tcg, safe='%/?&=:+,*')})")
     return " · ".join(parts) if parts else "—"
 
 
