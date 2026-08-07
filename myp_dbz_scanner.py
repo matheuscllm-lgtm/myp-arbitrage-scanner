@@ -2,7 +2,7 @@
 """
 ╔══════════════════════════════════════════════════════════════════════╗
 ║   MYP Cards Arbitrage Scanner — DRAGON BALL (paralelo ao Pokémon)    ║
-║   mypcards.com (BR, R$) vs TCGplayer (tcgcsv.com) · v1.0             ║
+║   mypcards.com (BR, R$) vs TCGplayer (tcgcsv.com) · v1.1             ║
 ╚══════════════════════════════════════════════════════════════════════╝
 
 Scanner PARALELO ao fluxo Pokémon deste repo — precedente da frota:
@@ -67,7 +67,7 @@ Uso:
     python myp_dbz_scanner.py -o results/dbz_full.xlsx   # catálogo inteiro
 
 Autor: Matheus Chillemi / Claude
-Data: 2026-08-03 (v1.0)
+Data: 2026-08-07 (v1.1)
 """
 from __future__ import annotations
 
@@ -97,7 +97,7 @@ from myp_arbitrage_scanner import (
     log,
 )
 
-DBZ_VERSION = "v1.0"
+DBZ_VERSION = "v1.1"
 
 # Seções Dragon Ball do MYP ↔ categoria tcgcsv correspondente (sonda 2026-08-03).
 GAME_SECTIONS: tuple[tuple[str, int], ...] = (
@@ -173,6 +173,7 @@ def _clean_card_name(s: Optional[str]) -> str:
     'Son Goku - FB01-001' vs 'Son Goku - FB01-139 (Alternate Art)' — provado
     na sonda v3); o MYP idem. Todos convergem pra 'Nome (Qualificador)'."""
     t = CARD_CODE_RE.sub(" ", str(s or ""))
+    t = re.sub(r"\(\s*\)", " ", t)             # "Marker (E-60)" → sem "( )" órfão
     t = re.sub(r"\s*[-–—]\s+(?=\()", " ", t)   # "Goku - (Alt)" → "Goku (Alt)"
     t = re.sub(r"\s*[-–—]\s*$", "", t)
     return " ".join(t.split())
@@ -266,7 +267,13 @@ def split_myp_title(h1_text: str) -> tuple[str, Optional[str], str]:
         code = m.group(1)
         before = _clean_card_name(txt[: m.start()])
         after = _clean_card_name(txt[m.end():])
-        en_name = after or before
+        if before and after.startswith("("):
+            # "Energy Marker (E-128) (Gold)": o que segue o código é
+            # QUALIFICADOR do nome que o precede — um nome EN bilíngue
+            # nunca começa com parêntese
+            en_name = f"{before} {after}"
+        else:
+            en_name = after or before
         display = f"{en_name} - {code}" if en_name else code
         return display, code, en_name
     # formato dbsfusion real: "Bardock - FB11-112 [(Alternate Art)]"
