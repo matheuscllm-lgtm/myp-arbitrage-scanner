@@ -97,6 +97,17 @@ def test_clean_card_name():
         "Broly, The Rampaging Horror"
 
 
+def test_clean_card_name_codigo_entre_parenteses():
+    # caso REAL do scan G2 2026-08-06 (Energy Markers): o tcgcsv escreve o
+    # código ENTRE PARÊNTESES — remover o código não pode deixar "( )" órfão,
+    # senão o produto BASE parece "qualificado" e o cascade recusa como ambíguo
+    assert _clean_card_name("Energy Marker (E-60)") == "Energy Marker"
+    assert _clean_card_name("Energy Marker (E-60) (Gold)") == \
+        "Energy Marker (Gold)"
+    assert _clean_card_name("Energy Marker (E01-01) (Alternate Art Gold)") == \
+        "Energy Marker (Alternate Art Gold)"
+
+
 def test_split_myp_title_fusion_dash():
     # h1 real do dbsfusion (sonda v2), com prefixo de pré-venda e \n interno
     d, c, e = split_myp_title("[Pré-Venda]\n         Bardock - FB11-112")
@@ -121,6 +132,19 @@ def test_split_myp_title_bilingue_parens():
         "Trunks, o Guerreiro (FB02-070)Trunks, Warrior of the Future")
     assert c == "FB02-070"
     assert e == "Trunks, Warrior of the Future"   # o EN, nunca o PT duplicado
+
+
+def test_split_myp_title_qualificador_apos_codigo():
+    # h1 real dos Energy Markers (scan G2 2026-08-06): "Energy Marker (E-128)
+    # (Gold)" — o "(Gold)" depois do código é QUALIFICADOR do nome que o
+    # precede, NÃO um nome EN bilíngue (que nunca começa com parêntese)
+    d, c, e = split_myp_title("Energy Marker (E-128) (Gold)")
+    assert c == "E-128"
+    assert e == "Energy Marker (Gold)"
+    d, c, e = split_myp_title("Energy Marker (E-60)")
+    assert c == "E-60" and e == "Energy Marker"
+    d, c, e = split_myp_title("Energy Marker (E01-01) (Alternate Art Gold)")
+    assert c == "E01-01" and e == "Energy Marker (Alternate Art Gold)"
 
 
 # ── título de edição (concat real da sonda) ─────────────────────────────
@@ -293,6 +317,39 @@ def test_join_fw_alt_art_por_nome():
     assert mt is alt
     mt, _ = find_reference("FB1-139", "Son Goku", primary, sec, group_id=20)
     assert mt is b
+
+
+def test_join_energy_marker_base_gold_alt_art():
+    # caso REAL do G2 2026-08-06: mesmo número E-xx com produto base, (Gold)
+    # e (Alternate Art Gold) no tcgcsv; o título MYP declara a variante →
+    # o join resolve cada um pro produto certo, nunca cruza variantes
+    b = make_entry(1, "Energy Marker (E01-01)", 30, number="E01-01", cat=80)
+    g = make_entry(2, "Energy Marker (E01-01) (Gold)", 30, number="E01-01",
+                   cat=80)
+    aag = make_entry(3, "Energy Marker (E01-01) (Alternate Art Gold)", 30,
+                     number="E01-01", cat=80)
+    primary = {"by_code": {"E1-1": [b, g, aag]}, "by_group": {30: [b, g, aag]}}
+    sec = {"by_code": {}, "by_group": {}}
+    mt, _ = find_reference("E1-1", "Energy Marker", primary, sec, group_id=30)
+    assert mt is b
+    mt, _ = find_reference("E1-1", "Energy Marker (Gold)", primary, sec,
+                           group_id=30)
+    assert mt is g
+    mt, _ = find_reference("E1-1", "Energy Marker (Alternate Art Gold)",
+                           primary, sec, group_id=30)
+    assert mt is aag
+
+
+def test_join_ambiguidade_genuina_continua_fora():
+    # 2 produtos NÃO-qualificados com o mesmo número (dup real do índice) —
+    # sem discriminador no título MYP, o join continua recusando (nunca chuta)
+    d1 = make_entry(1, "Energy Marker (E-99)", 30, number="E-99", cat=80)
+    d2 = make_entry(2, "Energy Marker (E-99)", 31, number="E-99", cat=80)
+    primary = {"by_code": {"E-99": [d1, d2]}, "by_group": {}}
+    sec = {"by_code": {}, "by_group": {}}
+    mt, how = find_reference("E-99", "Energy Marker", primary, sec,
+                             group_id=None)
+    assert mt is None and "ambíguo" in how
 
 
 def test_join_escopo_grupo_principal_vs_prerelease():

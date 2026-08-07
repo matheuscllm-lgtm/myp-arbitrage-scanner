@@ -1,5 +1,40 @@
 # Changelog
 
+## DBZ v1.1 — 2026-08-07 — join resolve código entre parênteses (Energy Markers)
+
+**O que muda em uma frase:** cartas cujo código vem ENTRE PARÊNTESES no título
+(padrão real dos Fusion World Energy Markers: "Energy Marker (E-60) (Gold)")
+agora casam a referência tcgcsv certa — antes caíam TODAS em "Sem referência"
+como falso "ambíguo".
+
+### O bug (achado no 1º scan real do G2, 2026-08-06)
+
+14 das 16 linhas "Sem referência" do grupo 2 eram Energy Markers. Dois defeitos
+compostos, ambos de parsing de NOME (o cascade de join em si estava certo):
+
+1. **`_clean_card_name` deixava "( )" órfão** ao remover o código de dentro dos
+   parênteses ("Energy Marker (E-60)" → "Energy Marker ( )") — o produto BASE
+   do tcgcsv passava a parecer "qualificado" (`name_norm != base_norm`) e o
+   passo nome-base do cascade nunca disparava → "ambíguo (2 produtos)".
+2. **`split_myp_title` no formato "(COD)"** tratava o que vem depois do código
+   como nome EN bilíngue; em "Energy Marker (E-128) (Gold)" o en_name virava só
+   "(Gold)" e perdia o nome — variante nunca casava por nome exato.
+
+### O fix (cirúrgico, join continua NUNCA-fuzzy)
+
+- `_clean_card_name`: remove parênteses vazios deixados pela remoção do código.
+- `split_myp_title`: se o que segue o código começa com "(", é QUALIFICADOR do
+  nome que o precede (nome EN bilíngue nunca começa com parêntese) →
+  `en_name = "<antes> (<qualificador>)"`.
+- Validado contra o índice tcgcsv REAL: E-60 base, E-128 Gold, E01-01
+  Alternate Art Gold, E03-02 Gold e E-19 Gold casam o produto exato; FP-050
+  "(P2)" (variante sem produto no tcgcsv) **continua fora** — nenhuma
+  ambiguidade genuína passou a casar.
+- Testes novos: `test_clean_card_name_codigo_entre_parenteses`,
+  `test_split_myp_title_qualificador_apos_codigo`,
+  `test_join_energy_marker_base_gold_alt_art`,
+  `test_join_ambiguidade_genuina_continua_fora` (suíte 105/105).
+
 ## DBZ v1.0 — 2026-08-03 — scanner paralelo DRAGON BALL + skill scan-myp-dbz (PR #95)
 
 **O que muda em uma frase:** o repo ganha um scanner PARALELO de Dragon Ball
