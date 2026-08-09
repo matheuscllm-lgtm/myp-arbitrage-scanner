@@ -218,10 +218,15 @@ Seis workflows em `.github/workflows/`:
 - **`probe-price-sources.yml`** — sonda de alcance das fontes de preço a
   partir dos runners; desde 2026-08-03 também carrega a sonda do catálogo
   Dragon Ball (`probe-myp-dragonball`) e o smoke real do scanner DBZ
-  (`smoke-dbz-scanner`), que rodam em PR que toque o próprio arquivo.
+  (`smoke-dbz-scanner`); desde 2026-08-09, a sonda do catálogo One Piece
+  (`probe-myp-onepiece`) e o smoke real do scanner OP (`smoke-op-scanner`).
+  Tudo roda em PR que toque o próprio arquivo.
 - **`dbz-scan.yml`** ("DBZ MYP Scan") — rota NUVEM do scanner paralelo de
   Dragon Ball (ver seção própria). Só dispatch manual; resultado só como
   artifact.
+- **`op-scan.yml`** ("OP MYP Scan") — rota NUVEM do scanner paralelo de
+  One Piece (ver seção própria). Só dispatch manual; resultado só como
+  artifact. (Sétimo workflow, 2026-08-09.)
 
 ## 🔀 Preço TCG REAL no catálogo COMPLETO
 
@@ -432,6 +437,70 @@ mão" — rode o script.**
   estrutura do site provados pela sonda estão no cabeçalho do scanner — não
   re-descobrir.
 
+## Scanner paralelo: One Piece (`myp_op_scanner.py`)
+
+> **Pedido do operador (2026-08-09):** skill "MYP cards" para One Piece no
+> mesmo formato do Pokémon — mesmo precedente do Dragon Ball (PR #95):
+> jogo paralelo = **script separado**, sem tocar o fluxo Pokémon.
+
+- **O que faz:** varre a seção One Piece do MYP — **`/onepiece`** (65
+  edições: OP01→OP17, ST01→ST-36, EB, PRB, LT, SD, promos; slug e catálogo
+  provados pela sonda `probe-myp-onepiece`, PR #98, run 31300834735) — com
+  a MESMA infra de plataforma do scanner Pokémon (sessão cloudscraper
+  firefox, parser de seller NM/EN herdado por import, paginação
+  marketplace, checkpoint/`--resume`), e compara a menor oferta EN NM com o
+  **market price do TCGplayer** via tcgcsv.com (**cat 68** = One Piece Card
+  Game, catálogo INGLÊS; USD→BRL com câmbio ao vivo — sem câmbio real o
+  run FALHA ALTO, não há fallback de preço no OP).
+- **Join determinístico (nunca fuzzy), em camadas:** edição→grupo tcgcsv
+  (nome exato → código de set canônico único **sem** os aliases do DBZ —
+  em One Piece EB = Extra Booster, nunca ≡ EX → contenção de nome única);
+  carta por **código** do campo `Código` da página (`one_st-35_op13-004` —
+  o código é o ÚLTIMO token com formato de carta, porque o token de edição
+  também tem hífen) com escopo em camadas (grupo da edição → grupos
+  principais → global — crítico: starter decks REIMPRIMEM números OPxx com
+  produto/preço próprios no tcgcsv); desambiguação por nome com a
+  equivalência de vocabulário **{"(Alternate Art)" MYP ≡ "(Parallel)"
+  TCGplayer}** e a regra dura: nome qualificado nunca casa o produto base
+  (nem vice-versa). ⚠️ O marcador `p1` do campo Código **NÃO** é sinal de
+  variante — a sonda provou par com códigos invertidos (Edward.Newgate
+  OP17-001); quem marca variante é o qualificador do h1. Ambíguo/sem
+  match → aba **"Sem Ref TCG"** com motivo (nunca margem inventada; sem
+  fallback `.estat-tcg` — decisão v1, igual ao DBZ).
+- **Convenções:** margem BRUTA base compra `(TCG_BRL − MYP_BRL)/MYP_BRL`;
+  `--threshold` percent INTEIRO (30); piso R$50; NM/EN herdados (idioma é
+  o risco nº 1 em One Piece — lição do op_scanner do card-trader; o filtro
+  EN herdado é o guard); guardas da frota: oferta <50% da ref = flag
+  **possível lixo**, market vs menor anúncio TCG >2× = flag **ref
+  volátil** — ambos rebaixam pra REVISAR na entrega.
+- **Entrega** = `myp_op_summary.py` (espelho do `myp_dbz_summary.py`):
+  buckets 🟢 limpos / 🚨 REVISAR (flag por linha) / ⚠️ Sem referência /
+  🚨 EN truncation, TODOS com `Carta` = nome+código e 2 links por linha
+  (`[oferta] · [TCG]`; linha sem produto casado leva link de BUSCA). Colar
+  VERBATIM — mesmo contrato de entrega do Pokémon.
+- 🎯 **Skill `scan-myp-op`** (`.claude/skills/scan-myp-op/SKILL.md`):
+  mesmo formato do `scan-myp` — 65 edições em **6 grupos por recência**,
+  pergunta quais rodar, um por vez, rota nuvem = workflow `op-scan.yml` /
+  rota local = `--resume`. Partição travada por
+  `test_scan_op_skill_profiles.py` (cobertura 65/65, zero sobreposição).
+- **Como rodar (fora do skill, debug):**
+
+  ```bash
+  python myp_op_scanner.py --list-editions
+  python myp_op_scanner.py --editions "Romance Dawn" \
+    --threshold 30 --min-price 50 --delay 1.5 -o results/op.xlsx --resume
+  python myp_op_summary.py results/op.xlsx -o results/op.md
+  ```
+
+- **Contratos travados em teste:** `test_myp_op_offline.py` (27 testes
+  offline: normalização OP com número curto "(001)", equivalência
+  Alternate Art≡Parallel, campo Código one_ com último-token, joins por
+  escopo incl. reprint de starter deck, box topper, threshold inteiro,
+  XLSX + summary com 2 links) + `test_scan_op_skill_profiles.py` (4).
+  Fatos de estrutura do site provados pela sonda estão no cabeçalho do
+  scanner — não re-descobrir. Cache tcgcsv próprio em `results/op_cache/`
+  (nunca compartilhado com o `dbz_cache/`).
+
 ## Testes
 
 ```bash
@@ -475,6 +544,8 @@ myp_arbitrage_scanner.py   o scanner (MYP → preço TCG real → XLSX). Cabeça
 myp_summary.py             a ENTREGA canônica: XLSX → markdown (4 buckets de deals + seção diagnóstica condicional) — ver seção 📤
 myp_dbz_scanner.py         scanner PARALELO de DRAGON BALL (dbsfusion+dbsmasters vs tcgcsv 80/27) — ver seção própria
 myp_dbz_summary.py         a ENTREGA do scan DBZ (espelho do myp_summary.py)
+myp_op_scanner.py          scanner PARALELO de ONE PIECE (/onepiece vs tcgcsv 68) — ver seção própria
+myp_op_summary.py          a ENTREGA do scan OP (espelho do myp_dbz_summary.py)
 myp_aggregate.py           agrega os XLSX dos chunks dos workflows num consolidado
 bench.py                   micro-benchmark do loop de otimização (mockado; --live = real)
 drift_check.py             canário de drift: roda ANTES do scan no daily workflow, valida
@@ -484,14 +555,17 @@ drift_check.py             canário de drift: roda ANTES do scan no daily workfl
 test_v5_8_offline.py       suíte de testes offline (coletada pelo pytest)
 test_myp_dbz_offline.py    suíte offline do scanner DBZ (30 testes)
 test_scan_dbz_skill_profiles.py  trava a partição dos 6 grupos do skill DBZ
+test_myp_op_offline.py     suíte offline do scanner ONE PIECE (27 testes)
+test_scan_op_skill_profiles.py   trava a partição dos 6 grupos do skill OP
 scripts/                   utilitários: validate_setcode_map.py (validação do mapa de
                            setcodes, com teste próprio no pytest), revalidate_deals.py,
                            cross_check_myp_api.py, add_card_hyperlinks.py,
                            run_weekly_local.ps1 (PC do operador)
 experimental/              protótipos exploratórios, não-produção (ev_scanner_v01.py)
-.github/workflows/         daily-scan / weekly-scan / quick-scan / dbz-scan / tests / probe-price-sources
+.github/workflows/         daily-scan / weekly-scan / quick-scan / dbz-scan / op-scan / tests / probe-price-sources
 .claude/skills/scan-myp/       skill canônica de scan Pokémon (6 grupos)
 .claude/skills/scan-myp-dbz/   skill de scan DRAGON BALL (6 grupos próprios)
+.claude/skills/scan-myp-op/    skill de scan ONE PIECE (6 grupos próprios)
 .claude/commands/auto.md   comando /auto da frota (modo autônomo)
 ```
 
@@ -528,10 +602,13 @@ threshold no bloco da frota). É outro projeto.
 - Versão atual: **v5.19.3** (2026-07-03). O histórico completo — uma entrada
   detalhada por versão, com racional de cada decisão — está no **`CHANGELOG.md`**
   (fonte de verdade do estado, junto com o `main`).
-- **Pós-v5.19.3 mergeado** (script paralelo, fora do versionamento do scanner
-  Pokémon): `myp_dbz_scanner.py` v1.0 + `myp_dbz_summary.py` + skill
-  `scan-myp-dbz` + workflow `dbz-scan.yml` (2026-08-03, PR #95) — ver a
-  seção "Scanner paralelo: Dragon Ball".
+- **Pós-v5.19.3 mergeado** (scripts paralelos, fora do versionamento do
+  scanner Pokémon): `myp_dbz_scanner.py` v1.0/v1.1 + `myp_dbz_summary.py` +
+  skill `scan-myp-dbz` + workflow `dbz-scan.yml` (2026-08-03, PR #95;
+  v1.1 no #97) — ver a seção "Scanner paralelo: Dragon Ball"; e
+  `myp_op_scanner.py` v1.0 + `myp_op_summary.py` + skill `scan-myp-op` +
+  workflow `op-scan.yml` (2026-08-09, PR #98) — ver a seção "Scanner
+  paralelo: One Piece".
 - Marcos já incorporados neste arquivo: margem bruta pura (2026-06-06), entrega
   obrigatória via `myp_summary.py` (2026-06-13), quick chunked no Actions
   (2026-06-10), balde fallback dedicado (v5.14.3), coluna `TCG Source` +

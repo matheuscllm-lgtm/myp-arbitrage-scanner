@@ -195,6 +195,246 @@ jobs:
               print(f"   {n}: {names}")
           PYEOF
 
+  # ── Sonda do catálogo ONE PIECE do MYP (scanner paralelo myp_op_scanner) ──
+  # Mesma filosofia da sonda Dragon Ball acima: pergunta empírica respondida
+  # de DENTRO de um runner (o container de nuvem NÃO passa no Cloudflare do
+  # MYP; o runner comprovadamente passa). Responde: (a) o MYP TEM seção One
+  # Piece? qual slug? quais edições existem (enumeração completa, insumo dos
+  # grupos do skill); (b) a página de produto OP usa os MESMOS seletores da
+  # de Pokémon/DBZ (flag-icon de idioma, célula NM, container marketplace) e
+  # qual o formato do h1/campo Código; (c) a categoria 68 do tcgcsv (One
+  # Piece EN) serve Number+Rarity por carta pro join determinístico, e como
+  # os alt arts colidem por Number. SÓ ESTRUTURA — nunca imprime preço/deal
+  # (postura de repo público).
+  probe-myp-onepiece:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Instalar deps da sonda (as mesmas do scanner)
+        run: pip install cloudscraper beautifulsoup4 lxml brotli
+
+      - name: Sonda MYP One Piece (estrutura do catálogo, sem preços)
+        run: |
+          python3 << 'PYEOF'
+          import json, re, time, urllib.request
+          from collections import Counter
+          import cloudscraper
+          from bs4 import BeautifulSoup
+
+          s = cloudscraper.create_scraper(
+              browser={"browser": "firefox", "platform": "windows", "desktop": True})
+          s.headers.update({
+              "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+              "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+              "Accept-Encoding": "gzip, deflate, br",
+          })
+          BASE = "https://mypcards.com"
+          CODE_RE = re.compile(r"\b(?:OP|ST|EB|PRB|P)[\d-]{0,3}-?\d{2,4}[A-Za-z]?\b", re.I)
+
+          def get(url):
+              time.sleep(1.5)
+              r = s.get(url, timeout=25)
+              print(f"GET {url} -> {r.status_code} ({len(r.text)} bytes)", flush=True)
+              return BeautifulSoup(r.text, "lxml") if r.status_code == 200 else None
+
+          # 1) seções do site (nav da home): onde mora o One Piece?
+          print("== 1) home: links de seção ==")
+          soup = get(BASE)
+          sections = []
+          if soup is not None:
+              hrefs = sorted({a.get("href", "") for a in soup.select("a[href]")})
+              roots = [h for h in hrefs if re.match(r"^/[a-z0-9-]+/?$", h)]
+              print("links raiz no nav:", roots)
+              piece = [h for h in hrefs
+                       if "piece" in h.lower() or re.search(r"/op(?:cg|tcg)?/?$", h.lower())]
+              print("links com cara de One Piece:", piece[:20])
+
+          # 2) candidatos de slug: qual /<slug>/edicoes responde com edições?
+          print("== 2) teste de slugs candidatos ==")
+          found = None
+          for cand in ("onepiece", "op", "one-piece", "onepiecetcg", "onepiececg", "optcg"):
+              soup = get(f"{BASE}/{cand}/edicoes?page=1")
+              if soup is None:
+                  continue
+              links = soup.select("a.edicao-link")
+              if not links:
+                  links = [a for a in soup.select("a[href]")
+                           if re.match(rf"^/{cand}/[a-z0-9][\w-]+$", a.get("href", ""))
+                           and not any(x in a.get("href", "") for x in
+                                       ("edicoes", "produto", "outros", "selados", "acessorios"))]
+              print(f"  /{cand}/edicoes: {len(links)} cards de edição")
+              if links and found is None:
+                  found = cand
+          if not found:
+              print("🛑 NENHUM slug One Piece respondeu com edições — o MYP pode não ter a seção.")
+              raise SystemExit(1)
+          print(f"✅ seção One Piece do MYP: /{found}")
+
+          # 3) enumeração COMPLETA das edições (insumo dos grupos do skill)
+          print(f"== 3) enumeração de edições de /{found} ==")
+          editions = []
+          page = 1
+          while page <= 30:
+              soup = get(f"{BASE}/{found}/edicoes?page={page}")
+              if soup is None:
+                  break
+              links = soup.select("a.edicao-link")
+              if not links:
+                  links = [a for a in soup.select("a[href]")
+                           if re.match(rf"^/{found}/[a-z0-9][\w-]+$", a.get("href", ""))
+                           and not any(x in a.get("href", "") for x in
+                                       ("edicoes", "produto", "outros", "selados", "acessorios"))]
+              new = 0
+              seen = {e[1] for e in editions}
+              for a in links:
+                  href = a.get("href", "")
+                  if not href or href in seen:
+                      continue
+                  editions.append((a.get_text(strip=True)[:120], href))
+                  seen.add(href)
+                  new += 1
+              if new == 0:
+                  break
+              page += 1
+          print(f"TOTAL: {len(editions)} edições")
+          for title, href in editions:
+              print(f"   EDICAO: {title!r}  slug={href.rsplit('/', 1)[-1]}")
+
+          # 4) páginas de produto (edição mais recente com ofertas): estrutura
+          print("== 4) páginas de produto ==")
+          probed = 0
+          for ed_title, ed_href in editions:
+              if probed >= 2:
+                  break
+              soup = get(f"{BASE}{ed_href}?page=1")
+              if soup is None:
+                  continue
+              urls = []
+              for a in soup.select(f'a[href*="/{found}/produto/"]'):
+                  href = a.get("href", "")
+                  full = BASE + href if href.startswith("/") else href
+                  if full not in urls:
+                      urls.append(full)
+              print(f"[{ed_title!r}] {len(urls)} produtos na página 1")
+              for prod in urls[:6]:
+                  soup = get(prod)
+                  if soup is None:
+                      continue
+                  tables = soup.select("table.table-striped.table-bordered") or [soup]
+                  n_rows = sum(1 for tb in tables for tr in tb.find_all("tr")
+                               if "R$" in tr.get_text())
+                  h1 = soup.select_one("h1")
+                  h1txt = " ".join((h1.get_text(" ", strip=True) if h1 else "").split())
+                  print(f"   → {prod.rsplit('/', 1)[-1]}: h1={h1txt[:90]!r} rows_com_preco={n_rows}")
+                  hits = 0
+                  for el in soup.find_all(["td", "th", "li", "span", "div", "dt", "dd"]):
+                      txt = el.get_text(" ", strip=True)
+                      if txt and len(txt) < 60 and ("ódigo" in txt or "Code" in txt):
+                          parent_txt = " ".join(el.parent.get_text(" ", strip=True).split())[:100]
+                          print(f"     campo 'código': {parent_txt!r}")
+                          hits += 1
+                          if hits >= 3:
+                              break
+                  if n_rows == 0:
+                      continue
+                  langs, quals, foils = Counter(), set(), set()
+                  for row in soup.select("tr"):
+                      fl = row.select_one("span.flag-icon[title]")
+                      if fl:
+                          langs[fl.get("title", "").strip()] += 1
+                      q = row.select_one("td.estoque-lista-qualidadenome")
+                      if q:
+                          quals.add(q.get_text(" ", strip=True)[:30])
+                      f = row.select_one("td.estoque-lista-nomeenfoil")
+                      if f and f.get_text(strip=True):
+                          foils.add(f.get_text(strip=True)[:30])
+                  print("     idiomas:", dict(langs))
+                  print("     qualidades:", sorted(quals)[:12])
+                  print("     foil/variante:", sorted(foils)[:12])
+                  print("     marketplace container?",
+                        soup.select_one("#lista-anuncio-demais-vendedores") is not None,
+                        "| paginação?",
+                        soup.select_one('a[href*="estoque-outros-page="]') is not None)
+                  codes = Counter(CODE_RE.findall(soup.get_text()))
+                  print("     códigos no page_text (top 6):", codes.most_common(6))
+                  probed += 1
+                  if probed >= 2:
+                      break
+
+          # 5) tcgcsv cat 68 (One Piece EN): groups + colisões de Number (alt arts)
+          print("== 5) tcgcsv categoria 68 ==")
+          def jget(url):
+              req = urllib.request.Request(
+                  url, headers={"User-Agent": "myp-arbitrage-scanner/probe (+github-actions)"})
+              with urllib.request.urlopen(req, timeout=30) as r:
+                  return json.load(r)
+          groups = jget("https://tcgcsv.com/tcgplayer/68/groups").get("results", [])
+          print(f"{len(groups)} groups na cat 68; primeiros 40 (name | abbreviation):")
+          for g in groups[:40]:
+              print(f"   {g.get('name')!r} | {g.get('abbreviation')!r} | id={g.get('groupId')}")
+          rd = [g for g in groups if "romance dawn" in (g.get("name") or "").lower()]
+          if rd:
+              gid = rd[0]["groupId"]
+              prods = jget(f"https://tcgcsv.com/tcgplayer/68/{gid}/products").get("results", [])
+              by_num = {}
+              no_num = 0
+              for p in prods:
+                  ext = {e.get("name"): e.get("value") for e in (p.get("extendedData") or [])}
+                  num = ext.get("Number")
+                  if num:
+                      by_num.setdefault(num, []).append(p.get("name"))
+                  else:
+                      no_num += 1
+              coll = {n: names for n, names in by_num.items() if len(names) > 1}
+              print(f"Romance Dawn ({gid}): {len(prods)} produtos, {len(by_num)} numbers, "
+                    f"{no_num} SEM number (selado?), {len(coll)} numbers com >1 produto")
+              for n, names in list(coll.items())[:8]:
+                  print(f"   {n}: {names}")
+              ext_keys = Counter()
+              for p in prods[:200]:
+                  for e in (p.get("extendedData") or []):
+                      ext_keys[e.get("name")] += 1
+              print("chaves extendedData (amostra):", ext_keys.most_common(10))
+          PYEOF
+
+  # ── Smoke REAL do scanner ONE PIECE (myp_op_scanner) ──
+  # Mini-scan de verdade (1 edição, ≤10 produtos) de dentro do runner —
+  # valida ponta a ponta: Cloudflare do MYP, catálogo /onepiece, campo
+  # Código one_, índice tcgcsv cat 68, join, XLSX e entrega via
+  # myp_op_summary. Mesma exposição de log dos scans do quick-scan (aceita
+  # pela frota); resultado nunca é commitado.
+  smoke-op-scanner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Mini-scan real (Romance Dawn OP01, ≤10 produtos)
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          python myp_op_scanner.py \
+            --editions "Romance Dawn" \
+            --max-editions 1 --max-products 10 --delay 1.0 \
+            -o smoke_op.xlsx
+          python myp_op_summary.py smoke_op.xlsx -o smoke_op.md
+          echo "═══════════ ENTREGA GERADA (smoke) ═══════════"
+          cat smoke_op.md
+          grep -q "Cobertura de referência real" smoke_op.md
+          echo "✅ smoke OP ponta a ponta OK"
+
   # ── Smoke REAL do scanner DBZ (myp_dbz_scanner) ──
   # Mini-scan de verdade (1 edição, ≤10 produtos) de dentro do runner — valida
   # ponta a ponta: Cloudflare do MYP, catálogo dbsfusion, campo Código, índice
