@@ -397,6 +397,44 @@ jobs:
               print("chaves extendedData (amostra):", ext_keys.most_common(10))
           PYEOF
 
+  # ── Smoke REAL do scanner ONE PIECE (myp_op_scanner) ──
+  # Mini-scan de verdade (1 edição, ≤10 produtos) de dentro do runner —
+  # valida ponta a ponta: Cloudflare do MYP, catálogo /onepiece, campo
+  # Código one_, índice tcgcsv cat 68, join, XLSX e entrega via
+  # myp_op_summary. Mesma exposição de log dos scans do quick-scan (aceita
+  # pela frota); resultado nunca é commitado.
+  smoke-op-scanner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Mini-scan real (Romance Dawn OP01, ≤10 produtos)
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          python myp_op_scanner.py \
+            --editions "Romance Dawn" \
+            --max-editions 1 --max-products 10 --delay 1.0 \
+            -o smoke_op.xlsx
+          python myp_op_summary.py smoke_op.xlsx -o smoke_op.md
+          echo "═══════════ ENTREGA GERADA (smoke) ═══════════"
+          cat smoke_op.md
+          grep -q "Cobertura de referência real" smoke_op.md
+          echo "✅ smoke OP ponta a ponta OK"
+
   # ── Smoke REAL do scanner DBZ (myp_dbz_scanner) ──
   # Mini-scan de verdade (1 edição, ≤10 produtos) de dentro do runner — valida
   # ponta a ponta: Cloudflare do MYP, catálogo dbsfusion, campo Código, índice

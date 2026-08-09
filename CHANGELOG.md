@@ -1,5 +1,46 @@
 # Changelog
 
+## OP v1.0 — 2026-08-09 — scanner paralelo ONE PIECE + skill scan-myp-op (PR #98)
+
+**O que muda em uma frase:** o repo ganha um scanner PARALELO de One Piece
+(`myp_op_scanner.py` + `myp_op_summary.py` + skill `scan-myp-op` + workflow
+`op-scan.yml`), no mesmo molde do Dragon Ball (PR #95) — o fluxo Pokémon segue
+**intocado** (jogo paralelo = script separado, precedente da frota).
+
+### Fatos provados pela sonda `probe-myp-onepiece` (PR #98, run 31300834735)
+
+- O MYP tem UMA seção One Piece: **`/onepiece`** (65 edições, OP01→OP17 +
+  starters + EB/PRB/LT/SD + promos), espelhando a **categoria 68** do tcgcsv
+  (catálogo INGLÊS do TCGplayer, 84 groups).
+- Campo `Código` = `one_<edição>_<código>[marcador]` — o token de edição
+  TAMBÉM pode ter hífen (`one_st-35_p-105`), então o código da carta é o
+  ÚLTIMO token com formato de carta. ⚠️ O marcador `p1` é NÃO-CONFIÁVEL
+  (par Edward.Newgate OP17-001 com códigos invertidos entre base e Alternate
+  Art) → variante vem do QUALIFICADOR do h1, nunca do marcador.
+- Vocabulário de variante diverge: MYP "(Alternate Art)" ↔ tcgcsv
+  "(Parallel)" — equivalência aplicada na normalização de nome; qualquer
+  outro qualificador ("(Box Topper)", "(Manga)"…) exige match exato, e nome
+  qualificado NUNCA cai no produto base (nem vice-versa).
+- Starter decks REIMPRIMEM números OPxx (Sabo OP13-004 no grupo ST-35 do
+  tcgcsv, com produto/preço próprios) → o escopo grupo-edição do join
+  precifica a versão certa.
+- Seletores de seller idênticos à plataforma (flag-icon "Inglês", célula NM)
+  → parser NM/EN herdado por import; JP fica fora pelo filtro EN (idioma é
+  o risco nº 1 em One Piece — lição do op_scanner do card-trader).
+
+### Decisões v1 (mesmas do DBZ)
+
+- Referência REAL ou nada: sem fallback `.estat-tcg`; sem match → aba
+  "Sem Ref TCG" com motivo. Sem câmbio real o run falha alto.
+- Margem BRUTA base compra; `--threshold` percent INTEIRO; piso R$50;
+  guardas possível-lixo (<50% da ref) e ref-volátil (>2×) rebaixam pra
+  REVISAR. Canônico de set próprio SEM os aliases do DBZ (EB = Extra
+  Booster, nunca ≡ EX).
+- Skill `scan-myp-op` em 6 grupos por recência (65/65 cobertas, zero
+  sobreposição — travado em `test_scan_op_skill_profiles.py`); rota nuvem
+  `op-scan.yml` (dispatch manual, artifact-only), rota local `--resume`.
+- Testes: `test_myp_op_offline.py` (27) + partição (4) — suíte 136/136.
+
 ## DBZ v1.1 — 2026-08-07 — join resolve código entre parênteses (Energy Markers)
 
 **O que muda em uma frase:** cartas cujo código vem ENTRE PARÊNTESES no título
