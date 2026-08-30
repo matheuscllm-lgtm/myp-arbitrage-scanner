@@ -252,6 +252,17 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
             return "pokemontcg" in s or "tcgcsv" in s
         return c.get("TCG US$") not in (None, "", "—")
 
+    def _is_verified(c) -> bool:
+        return str(c.get("Match Status") or "").strip().upper() == "VERIFIED"
+
+    def _has_operational_risk(c) -> bool:
+        return any((
+            bool(c.get("⚠️ EN Trunc")),
+            bool(c.get("⚠️ TCG Suspect")),
+            bool(c.get("⚠️ Single Seller")),
+            bool(c.get("⚠️ COLLECTOR#")),
+        ))
+
     # v5.14.3 (fix BLOCKER de honestidade): um "deal limpo" precisa de preço REAL.
     # Um preço FALLBACK (.estat-tcg) tem margem NÃO-confiável por definição (o
     # próprio v5.11 nasceu pra não confiar nele). Um fallback inflado SEM última
@@ -262,7 +273,8 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
     # CLAUDE.md: "Nunca trate fallback como real".
     deals_clean = [
         c for c in deals_sorted
-        if not _is_rarity_mislabel(c) and not _is_suspect(c) and _is_real(c)
+        if (not _is_rarity_mislabel(c) and not _is_suspect(c) and _is_real(c)
+            and _is_verified(c) and not _has_operational_risk(c))
     ]
     deals_fallback = [
         c for c in deals_sorted
@@ -276,8 +288,15 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
     # o supranumerário fica com o resto. Nenhum deal some: limpos + fallback +
     # suspect + supranum = todos os deals ≥threshold, cada um em UM balde.
     deals_supranum = [c for c in deals_sorted
-                      if _is_rarity_mislabel(c) and not _is_suspect(c)]
+                      if _is_rarity_mislabel(c) and not _is_suspect(c) and _is_real(c)]
     deals_suspect = [c for c in deals_sorted if _is_suspect(c)]
+    deals_match_review = [
+        c for c in deals_sorted
+        if (_is_real(c) and not _is_suspect(c) and not _is_rarity_mislabel(c)
+            and (not _is_verified(c) or _has_operational_risk(c)))
+    ]
+    review_total = (len(deals_match_review) + len(deals_fallback)
+                    + len(deals_supranum) + len(deals_suspect))
 
     truncations = [c for c in all_cards if c.get("⚠️ EN Trunc")]
 
@@ -298,12 +317,13 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
 
     # Stats line
     total = summary_data.get("Total EN Cards", len(all_cards))
-    deals_n = summary_data.get("Deals Found (clean)", summary_data.get("Deals Found", len(deals)))
+    deals_n = len(deals)
     threshold = summary_data.get("Margin Threshold", "25%")
-    lines.append(f"**Cards EN escaneados:** {total} | **Deals (≥{threshold}):** {deals_n} | "
-                 f"**Limpos (preço real):** {len(deals_clean)} | "
-                 f"**Fallback:** {len(deals_fallback)} | "
-                 f"**🚨 TCG suspects:** {len(deals_suspect)} | "
+    lines.append(f"**Cards EN escaneados:** {total} | **Candidatos brutos (≥{threshold}):** {deals_n} | "
+                 f"**COMPRA verificada:** {len(deals_clean)} | "
+                 f"**REVISAR:** {review_total} (match/risco {len(deals_match_review)}; "
+                 f"fallback {len(deals_fallback)}; preço suspeito {len(deals_suspect)}; "
+                 f"raridade {len(deals_supranum)}) | "
                  f"**Truncation:** {len(truncations)}")
     lines.append("")
 
@@ -387,18 +407,19 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
     # - Qtd = nº de ofertas EN-NM (NM Sellers) — quantos lotes o operador pode
     #   comprar; o scanner não captura estoque por seller, então é a contagem.
     # - Links = [oferta](MYP) · [TCG](TCGplayer) — clicáveis; TCG p/ validação NM.
-    lines.append("## 🟢 Top 50 deals limpos (sem flag SIR/HR/SAR)")
+    lines.append("## 🟢 COMPRA — match estrito verificado")
     lines.append("")
     if not deals_clean:
-        lines.append("> Nenhum deal limpo nesta run.")
+        lines.append("> Nenhuma compra foi aprovada pelo gate estrito nesta run.")
     else:
-        lines.append("| # | Margem % | MYP R$ | TCG US$ | Dif | Carta | Set | Raridade | Cond | Qtd | Links |")
-        lines.append("|---|---:|---:|---:|---:|---|---|---|---|---:|---|")
+        lines.append("| # | Margem % | MYP R$ | TCG US$ | Dif | Carta | Set | Acabamento | Product ID | Cond | Qtd | Links |")
+        lines.append("|---|---:|---:|---:|---:|---|---|---|---:|---|---:|---|")
         for i, c in enumerate(deals_clean[:50], 1):
             name = c.get("Card Name")
             carta = md_cell(carta_label(name))
             ed = md_cell((c.get("Edition") or "").strip())
-            rarity = md_cell((c.get("Rarity") or "").strip()) or "—"
+            finish = md_cell((c.get("MYP Finish") or "").strip()) or "—"
+            product_id = c.get("TCG Product ID") or "—"
             myp = fmt_brl(c.get("MYP EN NM (R$)"))
             tcg_usd = fmt_usd(c.get("TCG US$"))
             margin = fmt_pct(c.get("Margin %"))
@@ -411,12 +432,48 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
             )
             lines.append(
                 f"| {i} | **{margin}** | {myp} | {tcg_usd} | {diff} | "
-                f"{carta} | {ed} | {rarity} | NM | {qty} | {links} |"
+                f"{carta} | {ed} | {finish} | {product_id} | NM | {qty} | {links} |"
+            )
+    lines.append("")
+
+    # Match real de preço sem prova suficiente de identidade/acabamento, ou com
+    # algum risco operacional. Em artifacts legados, a ausência das novas
+    # colunas é tratada como REVIEW (fail closed), nunca como COMPRA.
+    lines.append("## 🟠 REVISAR — match, acabamento ou risco não comprovado")
+    lines.append("")
+    lines.append("> A margem histórica foi retirada desta tabela. Sem edição, número, "
+                 "nome/sufixo, acabamento e `productId` exatos, a comparação não "
+                 "é utilizável para compra.")
+    lines.append("")
+    if not deals_match_review:
+        lines.append("> Nenhuma linha neste balde.")
+    else:
+        lines.append("| # | MYP R$ | TCG US$ | Carta | Set | Acab. MYP | Acab. TCG | Product ID | Motivo | Cond | Qtd | Links |")
+        lines.append("|---|---:|---:|---|---|---|---|---:|---|---|---:|---|")
+        for i, c in enumerate(deals_match_review[:100], 1):
+            name = c.get("Card Name")
+            carta = md_cell(carta_label(name))
+            ed = md_cell((c.get("Edition") or "").strip())
+            myp = fmt_brl(c.get("MYP EN NM (R$)"))
+            tcg_usd = fmt_usd(c.get("TCG US$"))
+            myp_finish = md_cell(c.get("MYP Finish") or "não registrado")
+            tcg_finish = md_cell(c.get("TCG Finish") or "não registrado")
+            product_id = c.get("TCG Product ID") or "—"
+            reason = md_cell(c.get("Match Reason") or "artifact legado sem auditoria de match")
+            qty = c.get("NM Sellers") or 0
+            links = delivery_links(
+                c.get("URL"), name, ed,
+                oversized=bool(c.get("⚠️ COLLECTOR#")),
+                tcg_url=c.get("TCG URL"),
+            )
+            lines.append(
+                f"| {i} | {myp} | {tcg_usd} | {carta} | {ed} | {myp_finish} | "
+                f"{tcg_finish} | {product_id} | {reason} | NM | {qty} | {links} |"
             )
     lines.append("")
 
     # ── Deals com flag SIR (alto risco) ──
-    lines.append("## ⚠️ Deals com raridade suspeita (supranumerário + 'Comum' — validar)")
+    lines.append("## 🟠 REVISAR — raridade suspeita (supranumerário + 'Comum')")
     lines.append("")
     lines.append("> `card_num > set_total` **com raridade 'Comum'** = a MYP provavelmente errou a "
                  "RARIDADE (a carta costuma ser uma SIR/SAR/ex real marcada 'Comum'). **A carta/deal "
@@ -430,26 +487,26 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
         # v5.11.4: Carta (nome+número via carta_label) + Links (oferta MYP · TCG)
         # no formato canônico — esses deals são a MAIOR PARTE da entrega do
         # operador e antes saíam sem links clicáveis.
-        lines.append("| # | Carta | Edição | MYP R$ | TCG R$ | Margem (suspeita) | Links |")
-        lines.append("|---|---|---|---:|---:|---:|---|")
+        lines.append("| # | Carta | Edição | MYP R$ | TCG R$ | Motivo | Links |")
+        lines.append("|---|---|---|---:|---:|---|---|")
         for i, c in enumerate(deals_supranum[:50], 1):
             name = c.get("Card Name")
             carta = md_cell(carta_label(name))
             ed = md_cell((c.get("Edition") or "")[:30])
             myp = fmt_brl(c.get("MYP EN NM (R$)"))
             tcg = fmt_brl(c.get("TCG Player (R$)"))
-            margin = fmt_pct(c.get("Margin %"))
             links = delivery_links(
                 c.get("URL"), name, (c.get("Edition") or "").strip(),
                 oversized=bool(c.get("⚠️ COLLECTOR#")),
                 tcg_url=c.get("TCG URL"),
             )
-            lines.append(f"| {i} | {carta} | {ed} | {myp} | {tcg} | {margin} | {links} |")
+            lines.append(f"| {i} | {carta} | {ed} | {myp} | {tcg} | "
+                         f"raridade/match requer validação | {links} |")
     lines.append("")
 
     # ── TCG Suspect (v5.8 — MYP infla .estat-tcg) ──
     if deals_suspect:
-        lines.append("## 🚨 TCG Suspect (campo .estat-tcg inflado pelo MYP)")
+        lines.append("## 🟠 REVISAR — preço TCG suspeito")
         lines.append("")
         lines.append("> Cards onde TCG declarado pelo MYP é ≥10x a última venda real "
                      "do próprio MYP. Provável bug do `.estat-tcg`. Caso Jirachi "
@@ -459,8 +516,8 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
         lines.append("")
         # v5.11.4: Carta + Links também no balde de suspeitos (auditoria do
         # operador precisa do link de oferta MYP + TCG pra validar manualmente).
-        lines.append("| # | Carta | Edição | MYP R$ | TCG decl R$ | Última venda R$ | Margem (fake) | Links |")
-        lines.append("|---|---|---|---:|---:|---:|---:|---|")
+        lines.append("| # | Carta | Edição | MYP R$ | TCG decl R$ | Última venda R$ | Motivo | Links |")
+        lines.append("|---|---|---|---:|---:|---:|---|---|")
         for i, c in enumerate(deals_suspect[:50], 1):
             name = c.get("Card Name")
             carta = md_cell(carta_label(name))
@@ -468,13 +525,13 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
             myp = fmt_brl(c.get("MYP EN NM (R$)"))
             tcg = fmt_brl(c.get("TCG Player (R$)"))
             last = fmt_brl(c.get("MYP Last Sale (R$)"))
-            margin = fmt_pct(c.get("Margin %"))
             links = delivery_links(
                 c.get("URL"), name, (c.get("Edition") or "").strip(),
                 oversized=bool(c.get("⚠️ COLLECTOR#")),
                 tcg_url=c.get("TCG URL"),
             )
-            lines.append(f"| {i} | {carta} | {ed} | {myp} | {tcg} | {last} | {margin} | {links} |")
+            lines.append(f"| {i} | {carta} | {ed} | {myp} | {tcg} | {last} | "
+                         f"referência anômala; sem margem operacional | {links} |")
         lines.append("")
 
     # ── Deals com preço FALLBACK (v5.14.3 — margem NÃO-confiável) ──
@@ -483,7 +540,7 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
     # vezes mapeia a carta errada e infla o "preço TCG" (caso Darumaka). Saem do
     # balde limpo de propósito; ficam aqui pra validação manual.
     if deals_fallback:
-        lines.append("## ⚠️ Deals com preço FALLBACK `.estat-tcg` (margem NÃO-confiável — validar)")
+        lines.append("## 🟠 REVISAR — preço FALLBACK `.estat-tcg`")
         lines.append("")
         lines.append("> O preço TCG destes deals é uma **estimativa do próprio MYP** "
                      "(`.estat-tcg`), **não** o preço real do TCGplayer (pokemontcg.io). "
@@ -493,8 +550,8 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
                      "NM no Link TCG. (Desde a v5.15 o CI entrega preço real via tcgcsv; "
                      "deals nesse balde indicam sets sem cobertura tcgcsv/pokemontcg.io.)")
         lines.append("")
-        lines.append("| # | Margem (estimada) | MYP R$ | TCG est. R$ | Dif (est.) | Carta | Set | Raridade | Cond | Qtd | Links |")
-        lines.append("|---|---:|---:|---:|---:|---|---|---|---|---:|---|")
+        lines.append("| # | MYP R$ | TCG est. R$ | Carta | Set | Raridade | Motivo | Cond | Qtd | Links |")
+        lines.append("|---|---:|---:|---|---|---|---|---|---:|---|")
         for i, c in enumerate(deals_fallback[:50], 1):
             name = c.get("Card Name")
             carta = md_cell(carta_label(name))
@@ -502,8 +559,6 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
             rarity = md_cell((c.get("Rarity") or "").strip()) or "—"
             myp = fmt_brl(c.get("MYP EN NM (R$)"))
             tcg = fmt_brl(c.get("TCG Player (R$)"))
-            margin = fmt_pct(c.get("Margin %"))
-            diff = fmt_brl(c.get("Diff (R$)"))
             qty = c.get("NM Sellers") or 0
             links = delivery_links(
                 c.get("URL"), name, ed,
@@ -511,8 +566,8 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
                 tcg_url=c.get("TCG URL"),
             )
             lines.append(
-                f"| {i} | {margin} | {myp} | {tcg} | {diff} | "
-                f"{carta} | {ed} | {rarity} | NM | {qty} | {links} |"
+                f"| {i} | {myp} | {tcg} | {carta} | {ed} | {rarity} | "
+                f"fallback sem match determinístico; sem margem | NM | {qty} | {links} |"
             )
         lines.append("")
 
