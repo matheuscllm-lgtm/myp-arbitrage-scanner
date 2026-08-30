@@ -65,6 +65,17 @@ def card_from_row(headers: list[str], row: tuple) -> CardData | None:
     # v5.11.1 (2026-06-09): preservar preço real em USD entre chunks pra a
     # tabela de ENTREGA (myp_summary.py). .get() → None em chunks antigos.
     card.tcg_real_usd = rec.get("TCG US$")
+    card.myp_finish = rec.get("MYP Finish") or "unknown"
+    card.tcg_finish = rec.get("TCG Finish") or "unknown"
+    _product_id = rec.get("TCG Product ID")
+    try:
+        card.tcg_product_id = int(_product_id) if _product_id not in (None, "") else None
+    except (TypeError, ValueError):
+        card.tcg_product_id = None
+    card.match_status = rec.get("Match Status") or "REVIEW"
+    card.match_reason = rec.get("Match Reason") or "legacy_missing_match_audit"
+    card.tcg_product_name = rec.get("TCG Product Name") or ""
+    card.tcg_collector_number = rec.get("TCG Collector #") or ""
     # v5.14 (2026-06-20): preservar a FONTE do preço entre chunks/round-trips
     # (real pokemontcg.io/tcgcsv vs fallback .estat-tcg). É o sinal de
     # honestidade do output. Chunks antigos não têm a coluna "TCG Source" →
@@ -111,8 +122,11 @@ def card_from_row(headers: list[str], row: tuple) -> CardData | None:
     card.product_url = rec.get("URL") or ""
     card.last_updated = rec.get("Updated") or ""
     # margin_brl: derived
-    if card.tcg_player_price and card.myp_lowest_en_nm:
+    if (card.match_status == "VERIFIED" and card.tcg_player_price
+            and card.myp_lowest_en_nm):
         card.margin_brl = card.tcg_player_price - card.myp_lowest_en_nm
+    else:
+        card.margin_pct = None
     return card
 
 
