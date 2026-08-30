@@ -12,6 +12,9 @@ name: DBZ MYP Scan
 # 330 min é o teto de segurança.
 
 on:
+  push:
+    branches:
+      - ops/full-scan-dbz-20260829
   workflow_dispatch:
     inputs:
       editions:
