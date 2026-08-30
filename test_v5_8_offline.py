@@ -36,6 +36,9 @@ from myp_arbitrage_scanner import (
     TCG_SUSPECT_RATIO_THRESHOLD,
     OVERSIZED_TITLE_RE,
     OVERSIZED_FOIL_RE,
+    normalize_finish,
+    normalize_collector_number,
+    normalize_product_name,
 )
 
 # NOTE (v5.8.8, 2026-05-29): PT_CONDITION_MARKERS / EN_CONDITION_MARKERS foram
@@ -75,11 +78,18 @@ def make_clean_deal():
         product_url="https://mypcards.com/pokemon/surging-sparks/charizard-ex",
         myp_lowest_en_nm=80.00,
         tcg_player_price=200.00,
+        tcg_real_usd=40.0,
+        tcg_source="tcgcsv",
         myp_last_sale_brl=180.00,
         tcg_suspect=False,
         margin_pct=1.5,
         margin_brl=120.00,
         en_nm_sellers=4,
+        myp_finish="holofoil",
+        tcg_finish="holofoil",
+        tcg_product_id=500001,
+        match_status="VERIFIED",
+        match_reason="verified",
         last_updated="2026-05-16 19:30",
     )
 
@@ -93,11 +103,18 @@ def make_borderline_deal():
         product_url="https://mypcards.com/pokemon/x/mew-v",
         myp_lowest_en_nm=50.00,
         tcg_player_price=950.00,
+        tcg_real_usd=190.0,
+        tcg_source="tcgcsv",
         myp_last_sale_brl=100.00,
         tcg_suspect=False,
         margin_pct=18.0,
         margin_brl=900.00,
         en_nm_sellers=2,
+        myp_finish="holofoil",
+        tcg_finish="holofoil",
+        tcg_product_id=500002,
+        match_status="VERIFIED",
+        match_reason="verified",
         last_updated="2026-05-16 19:30",
     )
 
@@ -248,6 +265,11 @@ def test_price_cell_hyperlinks():
         margin_pct=1.00,
         margin_brl=120.0,
         en_nm_sellers=5,
+        myp_finish="holofoil",
+        tcg_finish="holofoil",
+        tcg_product_id=500070,
+        match_status="VERIFIED",
+        match_reason="verified",
         last_updated="2026-05-29 12:00",
     )
     cards = [clean, border, jirachi, trunc, direct]
@@ -335,7 +357,7 @@ def test_price_cell_hyperlinks():
         elif "Psyduck" in str(nv):
             psyduck_link = tcg_cell.hyperlink.target
     assert direct_link is not None, "Iron Hands sumiu de All EN Cards"
-    assert direct_link == "https://prices.pokemontcg.io/tcgplayer/sv5-70", \
+    assert direct_link == "https://www.tcgplayer.com/product/500070", \
         f"Iron Hands não pegou direct link: {direct_link!r}"
     assert psyduck_link is not None, "Psyduck sumiu de All EN Cards"
     assert "tcgplayer.com/search" in psyduck_link, \
@@ -365,6 +387,11 @@ def test_tcg_url_column():
         margin_pct=1.00,
         margin_brl=120.0,
         en_nm_sellers=5,
+        myp_finish="holofoil",
+        tcg_finish="holofoil",
+        tcg_product_id=500070,
+        match_status="VERIFIED",
+        match_reason="verified",
         last_updated="2026-06-10 12:00",
     )
     cards = [clean, direct]
@@ -376,9 +403,7 @@ def test_tcg_url_column():
 
     ws = wb["All EN Cards"]
     hdr = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
-    # v5.14: +1 coluna "TCG Source" (real/fallback) → 18 colunas. "TCG URL"
-    # segue sendo a última (o source foi inserido no meio, após "TCG US$").
-    assert len(hdr) == 18, f"esperava 18 colunas, veio {len(hdr)}: {hdr}"
+    assert len(hdr) == 25, f"esperava 25 colunas auditáveis, veio {len(hdr)}: {hdr}"
     assert hdr[-1] == "TCG URL", f"última coluna deveria ser 'TCG URL': {hdr[-1]!r}"
     assert "TCG Source" in hdr, f"coluna 'TCG Source' (v5.14) ausente: {hdr}"
     url_col = hdr.index("TCG URL") + 1
@@ -399,15 +424,49 @@ def test_tcg_url_column():
             assert plain == price_cell.hyperlink.target, \
                 f"r{r} ({nv}): TCG URL {plain!r} != hyperlink {price_cell.hyperlink.target!r}"
         if "Iron Hands" in str(nv):
-            assert plain == "https://prices.pokemontcg.io/tcgplayer/sv5-70", \
+            assert plain == "https://www.tcgplayer.com/product/500070", \
                 f"direct esperado: {plain!r}"
         elif "Charizard" in str(nv):
-            assert "tcgplayer.com/search" in plain, f"fallback search esperado: {plain!r}"
+            assert plain == "https://www.tcgplayer.com/product/500001", \
+                f"productId direto esperado: {plain!r}"
         rows_checked += 1
     assert rows_checked == 2, f"esperava 2 rows, vi {rows_checked}"
 
     Path(out).unlink()
-    print(f"  Coluna 'TCG URL' (última, 18 cols) OK: direct + fallback ✓")
+    print(f"  Coluna 'TCG URL' (última, 25 cols) OK: productId + fallback ✓")
+
+
+def test_strict_variant_and_finish_match():
+    """Lugia V cannot match Lugia; Holofoil cannot borrow Normal price."""
+    assert normalize_finish("Reverse Holofoil") == "reverse_holofoil"
+    assert normalize_finish("Foil") == "holofoil"
+    assert normalize_finish("", cell_present=True) == "normal"
+    assert normalize_finish(None, cell_present=False) == "unknown"
+    assert normalize_collector_number("014/132") == "14/132"
+    assert normalize_product_name("Lugia V (138/195)") == "lugia v"
+
+    sc = MYPScraper(delay=0.0)
+    sc._tcgcsv_candidates["dp3-14"] = [{
+        "product_id": 123,
+        "product_name": "Lugia",
+        "collector_number": "14/132",
+        "prices_by_finish": {"holofoil": 142.55, "reverse_holofoil": 187.0},
+    }]
+    quote, reason = sc._strict_tcgcsv_quote(
+        "Lugia (014/132)", "Secret Wonders", "holofoil",
+    )
+    assert reason == "verified" and quote["product_id"] == 123
+    assert quote["usd"] == 142.55
+
+    quote, reason = sc._strict_tcgcsv_quote(
+        "Lugia V (014/132)", "Secret Wonders", "holofoil",
+    )
+    assert quote is None and reason == "no_exact_name_number_finish_match"
+    quote, reason = sc._strict_tcgcsv_quote(
+        "Lugia (014/132)", "Secret Wonders", "normal",
+    )
+    assert quote is None and reason == "no_exact_name_number_finish_match"
+    print("  Match estrito: nome/sufixo + número + acabamento + productId ✓")
 
 
 def test_myp_edition_to_setcode():
@@ -645,9 +704,10 @@ def test_marketplace_pagination():
     # O CORAÇÃO DO FIX: lowest EN-NM = 398, não 498.
     assert card.myp_lowest_en_nm == 398.0, \
         f"BUG truncation: lowest EN-NM={card.myp_lowest_en_nm} (esperado 398.0 da pág 2)"
-    # Margem vira deal real ≥25% (+40%).
-    assert abs(card.margin_pct - 0.4005) < 0.01, \
-        f"margem={card.margin_pct} (esperado ~0.40 / +40%)"
+    # Sem productId/finish TCG exatos, a paginação ainda corrige o preço MYP,
+    # mas o novo gate não publica margem operacional.
+    assert card.margin_pct is None
+    assert card.match_status == "REVIEW"
     # Paginação seguida com sucesso → risco resolvido.
     assert card.en_truncation_risk is False, \
         "truncation_risk deveria ser resolvido (paginação seguiu sem falha)"
@@ -657,8 +717,8 @@ def test_marketplace_pagination():
     assert sc._stats["seller_page_fetch_failures"] == 0
     # EN sellers = lojistas(2) + pág2(2 EN) + pág3(2 EN) = 6.
     assert card.en_nm_sellers == 6, f"en_nm_sellers={card.en_nm_sellers} (esperado 6)"
-    print(f"  Psyduck lowest EN-NM = R${card.myp_lowest_en_nm} "
-          f"(margem +{card.margin_pct*100:.0f}%), {sc._stats['seller_pages_followed']} págs seguidas ✓")
+    print(f"  Psyduck lowest EN-NM = R${card.myp_lowest_en_nm}; "
+          f"sem match exato → REVIEW, {sc._stats['seller_pages_followed']} págs seguidas ✓")
 
 
 def test_pagination_gate_skips_untruncated():
@@ -803,8 +863,8 @@ def test_a3_real_price_rescues_pagination():
         f"A3: devia paginar pág 2, got {sc._stats['seller_pages_followed']}"
     # Achou o EN-NM barato da página 2 (R$85 < 90 visível).
     assert card.myp_lowest_en_nm == 85.0, f"lowest_en={card.myp_lowest_en_nm} (esperado 85 da pág 2)"
-    assert card.tcg_source == "pokemontcg.io"
-    print("  A3: declarado R$50<80 mas real R$500 → paginou, achou EN R$85 (deal salvo) ✓")
+    assert card.match_status == "REVIEW"
+    print("  A3: preço auxiliar abriu paginação; sem productId/finish → REVIEW ✓")
 
 
 def _real_price_page(card_h1, estat_tcg_brl, en_prices):
@@ -835,14 +895,14 @@ def test_real_tcg_overrides_estat():
     card = sc.scrape_product("https://mypcards.com/pokemon/produto/9/darumaka",
                              "SV: Black Bolt")
     assert card is not None
-    assert card.tcg_source == "pokemontcg.io", f"source={card.tcg_source}"
-    assert abs(card.tcg_real_usd - 13.42) < 0.001, card.tcg_real_usd
-    assert abs(card.tcg_player_price - 67.10) < 0.01, card.tcg_player_price
+    assert card.tcg_source == "myp_estat", f"source={card.tcg_source}"
+    assert card.tcg_real_usd is None
+    assert abs(card.tcg_player_price - 2867.75) < 0.01, card.tcg_player_price
     assert abs(card.myp_declared_tcg_brl - 2867.75) < 0.01, card.myp_declared_tcg_brl
     # O deal fake morreu: TCG real R$67,10 < EN-NM R$120 ⟹ margem negativa.
-    assert card.margin_pct is not None and card.margin_pct < 0, card.margin_pct
-    assert sc._stats["tcg_from_real"] == 1
-    print("  Darumaka: .estat-tcg R$2867 → real US$13,42×5=R$67,10, deal fake morto ✓")
+    assert card.margin_pct is None and card.match_status == "REVIEW"
+    assert sc._stats["tcg_from_real"] == 0
+    print("  Darumaka: fonte sem productId/finish não vira margem → REVIEW ✓")
 
 
 def test_fallback_to_estat_when_no_coverage():
@@ -921,11 +981,10 @@ def test_real_price_clears_suspect():
     card = sc.scrape_product("https://mypcards.com/pokemon/produto/9/daru",
                              "SV: Black Bolt")
     assert card is not None
-    assert card.tcg_source == "pokemontcg.io", card.tcg_source
-    assert card.tcg_suspect is False, "A1: suspect deveria ter sido limpo"
-    assert sc._stats["tcg_suspects"] == 0, sc._stats["tcg_suspects"]
-    assert abs(card.tcg_player_price - 67.10) < 0.01, card.tcg_player_price
-    print("  A1: .estat-tcg inflado → suspect setado e LIMPO após preço real ✓")
+    assert card.tcg_source == "myp_estat", card.tcg_source
+    assert card.tcg_suspect is True
+    assert card.match_status == "REVIEW" and card.margin_pct is None
+    print("  A1: sem match determinístico, suspect permanece e margem é retirada ✓")
 
 
 def test_prices_card_without_estat_tcg():
@@ -941,12 +1000,8 @@ def test_prices_card_without_estat_tcg():
 
     card = sc.scrape_product("https://mypcards.com/pokemon/produto/9/foo",
                              "SV: Black Bolt")
-    assert card is not None, "A2: não deveria skipar — preço real disponível"
-    assert card.myp_declared_tcg_brl is None, card.myp_declared_tcg_brl
-    assert card.tcg_source == "pokemontcg.io", card.tcg_source
-    assert abs(card.tcg_player_price - 200.0) < 0.01, card.tcg_player_price
-    assert card.margin_pct is not None and abs(card.margin_pct - 1.0) < 0.01, card.margin_pct
-    print("  A2: card sem .estat-tcg precificado via fonte real (R$200, +100%) ✓")
+    assert card is None, "sem .estat-tcg e sem productId/finish exatos deve falhar fechado"
+    print("  A2: preço avulso sem productId/finish não é aceito ✓")
 
 
 def test_skip_when_no_tcg_at_all():
@@ -1091,7 +1146,7 @@ def test_delivery_table_format():
     md = Path(md_out).read_text(encoding="utf-8")
 
     # Header no formato aprovado.
-    assert "| # | Margem % | MYP R$ | TCG US$ | Dif | Carta | Set | Raridade | Cond | Qtd | Links |" in md, \
+    assert "| # | Margem % | MYP R$ | TCG US$ | Dif | Carta | Set | Acabamento | Product ID | Cond | Qtd | Links |" in md, \
         "header da tabela de entrega não bate o formato aprovado"
     # Carta composta + link de oferta clicável + Cond NM + USD.
     assert "Charizard ex 125/191" in md, "Carta composta ausente do markdown"
@@ -1464,11 +1519,13 @@ def test_tcgcsv_end_to_end_real_source_label():
                              "SV07: Stellar Crown")
     assert card is not None
     assert card.tcg_source == "tcgcsv", f"source={card.tcg_source}"
-    assert abs(card.tcg_real_usd - 12.0) < 1e-6, card.tcg_real_usd
-    assert abs(card.tcg_player_price - 60.0) < 1e-6, card.tcg_player_price
+    assert abs(card.tcg_real_usd - 18.0) < 1e-6, card.tcg_real_usd
+    assert abs(card.tcg_player_price - 90.0) < 1e-6, card.tcg_player_price
     # o preço real (R$60) sobrepôs o `.estat-tcg` declarado (R$300, fake)
     assert abs(card.myp_declared_tcg_brl - 300.0) < 1e-6, card.myp_declared_tcg_brl
-    assert abs(card.margin_pct - 0.20) < 1e-6, card.margin_pct
+    assert abs(card.margin_pct - 0.80) < 1e-6, card.margin_pct
+    assert card.match_status == "VERIFIED" and card.tcg_product_id == 1001
+    assert card.myp_finish == card.tcg_finish == "normal"
     assert sc._stats["tcg_from_tcgcsv"] == 1, sc._stats["tcg_from_tcgcsv"]
     assert sc._stats["tcg_from_real"] == 1
     print("  v5.15 e2e: card sai tcg_source='tcgcsv' (REAL), preço real na margem ✓")
@@ -1482,6 +1539,8 @@ def _tcgcsv_deal(name, myp, tcg_brl, usd, rarity="Double Rare"):
         tcg_player_price=tcg_brl, tcg_real_usd=usd, tcg_source="tcgcsv",
         myp_last_sale_brl=myp, margin_pct=(tcg_brl - myp) / myp,
         margin_brl=tcg_brl - myp, en_nm_sellers=3, last_updated="2026-06-20",
+        myp_finish="normal", tcg_finish="normal", tcg_product_id=1001,
+        match_status="VERIFIED", match_reason="verified",
     )
 
 
@@ -1502,8 +1561,8 @@ def test_tcgcsv_recognized_as_real_in_summary():
     assert rc == 0
     text = Path(md).read_text(encoding="utf-8")
     sec = _section_of(text, "Venusaur ex")
-    assert sec is not None and "limpos" in sec.lower(), \
-        f"deal tcgcsv (REAL) devia estar no balde limpo, está em: {sec!r}\n{text[:900]}"
+    assert sec is not None and "compra" in sec.lower(), \
+        f"deal tcgcsv (REAL+VERIFIED) devia estar no balde COMPRA, está em: {sec!r}\n{text[:900]}"
     # NÃO pode aparecer no balde fallback
     assert "FALLBACK `.estat-tcg`" not in text or "Venusaur ex" not in \
         text.split("FALLBACK `.estat-tcg`")[-1], \
@@ -1923,6 +1982,8 @@ def _real_deal(name, myp, tcg_brl, usd, rarity="Ultra Rara"):
         tcg_player_price=tcg_brl, tcg_real_usd=usd, tcg_source="pokemontcg.io",
         myp_last_sale_brl=myp, margin_pct=(tcg_brl - myp) / myp,
         margin_brl=tcg_brl - myp, en_nm_sellers=3, last_updated="2026-06-20",
+        myp_finish="normal", tcg_finish="normal", tcg_product_id=2001,
+        match_status="VERIFIED", match_reason="verified",
     )
 
 
@@ -1969,8 +2030,8 @@ def test_summary_real_deal_stays_clean():
     assert rc == 0
     text = Path(md).read_text(encoding="utf-8")
     sec = _section_of(text, "Pikachu ex")
-    assert sec is not None and "limpos" in sec.lower(), \
-        f"deal real devia estar no balde limpo, está em: {sec!r}"
+    assert sec is not None and "compra" in sec.lower(), \
+        f"deal real+verified devia estar no balde COMPRA, está em: {sec!r}"
     assert "FALLBACK `.estat-tcg`" not in text or "Pikachu ex" not in \
         text.split("FALLBACK `.estat-tcg`")[-1], "deal real não pode estar no balde fallback"
     Path(xlsx).unlink(); Path(md).unlink()
@@ -1995,7 +2056,7 @@ def test_summary_ci_all_fallback_zero_clean():
     text = Path(md).read_text(encoding="utf-8")
     # Bloco limpo presente mas vazio:
     clean_block = text.split("## ⚠️")[0]
-    assert "Nenhum deal limpo nesta run" in clean_block, \
+    assert "Nenhuma compra foi aprovada pelo gate estrito nesta run" in clean_block, \
         f"CI all-fallback devia dar 0 deals limpos:\n{clean_block[:600]}"
     # Os 2 fallbacks listados no balde dedicado:
     assert "FALLBACK `.estat-tcg`" in text, "balde fallback ausente"
@@ -2021,8 +2082,8 @@ def test_summary_mix_real_and_fallback_deals():
     rc = build_markdown(xlsx, md, scan_type="weekly", run_id="", repo="x/y")
     assert rc == 0
     text = Path(md).read_text(encoding="utf-8")
-    assert "limpos" in (_section_of(text, "Iron Hands ex") or "").lower(), \
-        "deal real devia estar no balde limpo"
+    assert "compra" in (_section_of(text, "Iron Hands ex") or "").lower(), \
+        "deal real+verified devia estar no balde COMPRA"
     assert "FALLBACK" in (_section_of(text, "Roaring Moon") or ""), \
         "deal fallback devia estar no balde fallback"
     Path(xlsx).unlink(); Path(md).unlink()
@@ -2047,8 +2108,8 @@ def test_summary_fallback_gate_old_xlsx():
     rc = build_markdown(xlsx, md, scan_type="weekly", run_id="", repo="x/y")
     assert rc == 0
     text = Path(md).read_text(encoding="utf-8")
-    assert "limpos" in (_section_of(text, "Iron Hands ex") or "").lower(), \
-        "deal real (com USD) devia ficar limpo mesmo em XLSX antigo"
+    assert "compra" in (_section_of(text, "Iron Hands ex") or "").lower(), \
+        "deal real (com USD+match audit) devia ficar em COMPRA"
     assert "FALLBACK" in (_section_of(text, "Roaring Moon") or ""), \
         "deal fallback (sem USD) devia ir pro balde fallback em XLSX antigo"
     Path(xlsx).unlink(); Path(md).unlink()
@@ -2367,7 +2428,8 @@ def test_summary_dual_flag_deal_single_bucket():
     assert rc == 0, f"build_markdown retornou {rc}"
     text = Path(md).read_text(encoding="utf-8")
     # Dono da linha = balde TCG Suspect…
-    assert "## 🚨 TCG Suspect" in text, f"balde suspect ausente:\n{text[:800]}"
+    assert "## 🟠 REVISAR — preço TCG suspeito" in text, \
+        f"balde suspect ausente:\n{text[:800]}"
     assert text.count("Dualflag ex") == 1, \
         f"deal dual-flag deve aparecer 1x (saiu {text.count('Dualflag ex')}x):\n{text}"
     # …e o balde supranumerário fica explicitamente vazio.
@@ -2389,6 +2451,8 @@ def test_summary_pipe_in_name_escaped():
         tcg_player_price=200.0, tcg_real_usd=40.0, tcg_source="pokemontcg.io",
         myp_last_sale_brl=190.0, margin_pct=1.5, margin_brl=120.0,
         en_nm_sellers=3, last_updated="2026-07-03",
+        myp_finish="normal", tcg_finish="normal", tcg_product_id=3001,
+        match_status="VERIFIED", match_reason="verified",
     )
     with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
         xlsx = f.name
@@ -2503,6 +2567,7 @@ def main():
         ("oversized/jumbo regex (v5.8.10)", test_oversized_regex),
         ("XLSX end-to-end", test_xlsx_end_to_end),
         ("tcg_search_url (v5.8.8)", test_tcg_search_url),
+        ("strict variant/finish/productId match", test_strict_variant_and_finish_match),
         ("price cell hyperlinks (v5.8.8/v5.8.9)", test_price_cell_hyperlinks),
         ("coluna TCG URL texto plano (v5.11.2)", test_tcg_url_column),
         ("myp_edition_to_ptcg_setcode (v5.8.9)", test_myp_edition_to_setcode),
