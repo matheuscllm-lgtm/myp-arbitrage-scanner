@@ -407,19 +407,21 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
     # - Qtd = nº de ofertas EN-NM (NM Sellers) — quantos lotes o operador pode
     #   comprar; o scanner não captura estoque por seller, então é a contagem.
     # - Links = [oferta](MYP) · [TCG](TCGplayer) — clicáveis; TCG p/ validação NM.
-    lines.append("## 🟢 COMPRA — match estrito verificado")
+    # Mantém o contrato visual histórico da entrega MYP. O gate estrito é
+    # aplicado em `deals_clean`; os campos de auditoria adicionais permanecem
+    # no XLSX e no balde REVISAR, sem alterar as colunas usadas pelo operador.
+    lines.append("## 🟢 Top 50 deals limpos (sem flag SIR/HR/SAR)")
     lines.append("")
+    lines.append("| # | Margem % | MYP R$ | TCG US$ | Dif | Carta | Set | Raridade | Cond | Qtd | Links |")
+    lines.append("|---|---:|---:|---:|---:|---|---|---|---|---:|---|")
     if not deals_clean:
-        lines.append("> Nenhuma compra foi aprovada pelo gate estrito nesta run.")
+        lines.append("| — | — | — | — | — | Nenhuma compra aprovada pelo gate estrito nesta run | — | — | — | — | — |")
     else:
-        lines.append("| # | Margem % | MYP R$ | TCG US$ | Dif | Carta | Set | Acabamento | Product ID | Cond | Qtd | Links |")
-        lines.append("|---|---:|---:|---:|---:|---|---|---|---:|---|---:|---|")
         for i, c in enumerate(deals_clean[:50], 1):
             name = c.get("Card Name")
             carta = md_cell(carta_label(name))
             ed = md_cell((c.get("Edition") or "").strip())
-            finish = md_cell((c.get("MYP Finish") or "").strip()) or "—"
-            product_id = c.get("TCG Product ID") or "—"
+            rarity = md_cell((c.get("Rarity") or "").strip()) or "—"
             myp = fmt_brl(c.get("MYP EN NM (R$)"))
             tcg_usd = fmt_usd(c.get("TCG US$"))
             margin = fmt_pct(c.get("Margin %"))
@@ -432,7 +434,7 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
             )
             lines.append(
                 f"| {i} | **{margin}** | {myp} | {tcg_usd} | {diff} | "
-                f"{carta} | {ed} | {finish} | {product_id} | NM | {qty} | {links} |"
+                f"{carta} | {ed} | {rarity} | NM | {qty} | {links} |"
             )
     lines.append("")
 
