@@ -1,5 +1,24 @@
 # Changelog
 
+## Pokémon v5.20 — 2026-08-30 — match estrito por variante, acabamento e productId
+
+**O que muda em uma frase:** uma comparação só vira `COMPRA` quando edição,
+número completo, nome/sufixo, acabamento e `TCGplayer productId` formam um
+único match determinístico; qualquer lacuna vira `REVISAR` sem margem.
+
+- O parser preserva o acabamento do anúncio MYP (`normal`, `holofoil` ou
+  `reverse_holofoil`) junto do menor preço EN/NM.
+- O prefill TCGCSV deixa de colapsar todos os acabamentos no menor preço e
+  mantém candidatos auditáveis por `productId`, nome, número e subtype.
+- O XLSX ganha `MYP Finish`, `TCG Finish`, `TCG Product ID`, `Match Status`,
+  `Match Reason`, `TCG Product Name` e `TCG Collector #`.
+- `🔥 Deals` aceita somente `VERIFIED`, preço real e zero flags operacionais;
+  artifacts antigos sem os novos campos falham fechado em `REVISAR`.
+- O relatório Markdown mantém links MYP/TCG, separa `COMPRA` de `REVISAR` e
+  não mostra margem para linhas sem prova completa do match.
+- Regressão explícita: `Lugia V` não casa `Lugia`; Holofoil não usa preço
+  Normal/Reverse; `productId` ambíguo é recusado.
+
 ## OP v1.0 — 2026-08-09 — scanner paralelo ONE PIECE + skill scan-myp-op (PR #98)
 
 **O que muda em uma frase:** o repo ganha um scanner PARALELO de One Piece

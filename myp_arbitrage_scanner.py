@@ -18,7 +18,7 @@ Requisitos:
 
 Autor: Matheus Chillemi / Claude
 Data: 2026-04-15 (v5) | 2026-05-12 (v5.1 → v5.3) | 2026-05-14 (v5.4 → v5.6) | 2026-05-16 (v5.8) | 2026-05-19 (v5.8.4 → v5.8.6) | 2026-05-29 (v5.8.7 → v5.8.9) | 2026-06-01 (v5.8.10) | 2026-06-03 (v5.9) | 2026-06-06 (v5.10) | 2026-06-07 (v5.10.1 → v5.11) | 2026-06-09 (v5.11.1) | 2026-06-10 (v5.11.2 → v5.11.3) | 2026-06-16 (v5.11.4 → v5.11.6) | 2026-06-13 (v5.11.7, doc-only) | 2026-06-17 (v5.11.8 — loop: timing + bench) | 2026-06-17 (v5.12 — batch pokemontcg.io por set) | 2026-06-17 (v5.13 — Iteração #2: atribuição de cobertura do fallback) | 2026-06-20 (v5.14 — coluna "TCG Source" explícita + enrich off-runner p/ preço real) | 2026-06-20 (v5.14.1 — cobertura de preço real no summary medida sobre o universo de cartas EN) | 2026-06-21 (v5.14.3 — deal com preço FALLBACK sai do balde "limpos" → balde dedicado; fix BLOCKER de honestidade) | 2026-06-21 (v5.14.4 — tcg_suspect boundary inclusivo `>=` (pega exatamente-10x); regressão de precisão minerada do eval asi-evolve) | 2026-06-26 (v5.18 — cobertura ME: `Chaos Rising`→me4→CRI e `Perfect Order`→me3→POR; destrava preço real tcgcsv pros sets ME04/ME03 que caíam em fallback indevido)
-Versão: v5.19.3
+Versão: v5.20
 
 Changelog v5.1 (2026-05-12 — auditoria C/H/M, mesma metodologia do CT scanner):
   - C1: --threshold < 1.0 auto-converte com warning (UX guard contra trap
@@ -61,6 +61,7 @@ Changelog v5.3 (2026-05-12 — após caso Psyduck/bartsimpson):
 # NameError em qualquer setup que tenha cloudscraper (todos os production runs).
 import os
 import requests
+import unicodedata
 try:
     import cloudscraper
     HAS_CLOUDSCRAPER = True
@@ -403,6 +404,46 @@ MYP_EDITION_SUBSTR_TO_PTCG = {
 # Regex (NNN/MMM) — captura numerator e denominator. Reutilizado de
 # write_card_row L871. Definido aqui pra tcg_direct_url também.
 _COLLECTOR_NUM_RE = re.compile(r"\((\d+)\s*/\s*(\d+)\)")
+
+
+def normalize_finish(value: Optional[str], *, cell_present: bool = True) -> str:
+    """Normalize MYP/TCGplayer finish labels to a closed vocabulary.
+
+    An empty existing MYP finish cell represents the regular/non-foil copy.
+    A missing cell is unknown and must fail the strict match gate.
+    """
+    if value is None:
+        return "unknown"
+    text = unicodedata.normalize("NFKD", str(value)).encode("ascii", "ignore").decode()
+    text = re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+    if not text:
+        return "normal" if cell_present else "unknown"
+    if "reverse" in text:
+        return "reverse_holofoil"
+    if "holo" in text or "foil" in text:
+        return "holofoil"
+    if text in {"normal", "regular", "non holo", "nonholo"}:
+        return "normal"
+    return "unknown"
+
+
+def normalize_collector_number(value: Optional[str]) -> Optional[str]:
+    """Return canonical ``numerator/denominator`` or None."""
+    if not value:
+        return None
+    match = re.search(r"(\d+)\s*/\s*(\d+)", str(value))
+    if not match:
+        return None
+    return f"{int(match.group(1))}/{int(match.group(2))}"
+
+
+def normalize_product_name(value: Optional[str]) -> str:
+    """Canonical name preserving suffixes such as V, ex, GX and VSTAR."""
+    if not value:
+        return ""
+    text = _COLLECTOR_NUM_RE.sub("", str(value))
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
 
 # ══════════════════════════════════════════════════════════════════════
 # v5.11 (2026-06-07): PREÇO TCG REAL via pokemontcg.io + câmbio USD→BRL
@@ -785,6 +826,13 @@ class CardData:
     # `.estat-tcg` declarado pelo MYP (usado onde o pokemontcg.io não cobre).
     tcg_source: str = "myp_estat"
     tcg_real_usd: Optional[float] = None         # preço real em USD (se via pokemontcg.io)
+    myp_finish: str = "unknown"                  # normal/holofoil/reverse_holofoil
+    tcg_finish: str = "unknown"                  # acabamento TCGCSV usado no preço
+    tcg_product_id: Optional[int] = None          # productId TCGplayer determinístico
+    tcg_product_name: str = ""                   # nome retornado pelo catálogo TCGCSV
+    tcg_collector_number: str = ""               # número completo retornado pelo TCGCSV
+    match_status: str = "REVIEW"                 # VERIFIED somente após os gates exatos
+    match_reason: str = "not_checked"
     myp_declared_tcg_brl: Optional[float] = None # `.estat-tcg` cru do MYP (auditoria)
     # v5.8 H2 (2026-05-16): MYP às vezes reporta .estat-tcg inflado (caso
     # Jirachi PR-SM_SM161: MYP=R$1499 vs TCGPlayer real $26=R$132 = 11x off).
@@ -870,6 +918,9 @@ class MYPScraper:
         # "tcgcsv" vs "pokemontcg.io"; ambos são REAIS, rótulos distintos só p/
         # auditoria/proveniência). Setado por _prefill_tcgcsv_set.
         self._tcgcsv_cids: set[str] = set()
+        # cid → candidatos completos. Diferente do cache legado, preserva nome,
+        # número completo, productId e preços separados por acabamento.
+        self._tcgcsv_candidates: dict[str, list[dict]] = {}
         self._tcgcsv_groups: Optional[list] = None   # cache de /groups (1× por run)
         self._tcgcsv_groups_fetched: bool = False
         self._stats = {
@@ -1235,6 +1286,7 @@ class MYPScraper:
         en_in_table = 0
         max_price_in_table = 0.0  # maior preço VISÍVEL nesta tabela
         table_en_prices: list[float] = []
+        table_en_offers: list[dict] = []
         jumbo_count = 0
         for row in table.find_all("tr"):
             row_text = row.get_text()
@@ -1343,6 +1395,13 @@ class MYPScraper:
             # EN + NM seller — preço já extraído acima
             if row_price:
                 table_en_prices.append(row_price)
+                table_en_offers.append({
+                    "price": row_price,
+                    "finish": normalize_finish(
+                        foil_txt if foil_el is not None else None,
+                        cell_present=foil_el is not None,
+                    ),
+                })
                 en_in_table += 1
 
         return {
@@ -1350,6 +1409,7 @@ class MYPScraper:
             "en": en_in_table,
             "max_price": max_price_in_table,
             "en_prices": table_en_prices,
+            "en_offers": table_en_offers,
             "jumbo": jumbo_count,
         }
 
@@ -1602,10 +1662,12 @@ class MYPScraper:
 
         # productId → número do colecionador (do extendedData "Number" = "NNN/MMM")
         num_by_pid: dict[int, str] = {}
+        product_by_pid: dict[int, dict] = {}
         for p in products.get("results") or []:
             pid = p.get("productId")
             if pid is None:
                 continue
+            product_by_pid[pid] = p
             for ed in p.get("extendedData") or []:
                 if ed.get("name") == "Number" and ed.get("value"):
                     num_by_pid[pid] = str(ed["value"])
@@ -1635,6 +1697,23 @@ class MYPScraper:
             usd = self._min_tcg_usd(by_pid.get(pid))
             if usd is None:
                 continue
+            product = product_by_pid.get(pid) or {}
+            prices_by_finish: dict[str, float] = {}
+            for subtype, price_obj in (by_pid.get(pid) or {}).items():
+                finish = normalize_finish(subtype)
+                value = price_obj.get("market") or price_obj.get("mid")
+                if finish == "unknown" or not value or float(value) <= 0:
+                    continue
+                value = float(value)
+                current = prices_by_finish.get(finish)
+                if current is None or value < current:
+                    prices_by_finish[finish] = value
+            self._tcgcsv_candidates.setdefault(cid, []).append({
+                "product_id": int(pid),
+                "product_name": str(product.get("name") or ""),
+                "collector_number": str(num_raw),
+                "prices_by_finish": prices_by_finish,
+            })
             if cid not in self._ptcg_cache or self._ptcg_cache[cid] is None:
                 self._ptcg_cache[cid] = usd
                 self._tcgcsv_cids.add(cid)
@@ -1645,6 +1724,44 @@ class MYPScraper:
                      f"TCG REAIS em cache (funciona no CI)")
             return True
         return False
+
+    def _strict_tcgcsv_quote(
+        self, card_name: str, edition_name: str, myp_finish: str,
+    ) -> tuple[Optional[dict], str]:
+        """Return one exact TCGCSV product/finish match, otherwise fail closed."""
+        cid = self._cid_for(card_name, edition_name)
+        if not cid:
+            return None, "set_or_collector_unmapped"
+        collector_match = _COLLECTOR_NUM_RE.search(card_name or "")
+        expected_number = normalize_collector_number(
+            collector_match.group(0) if collector_match else None
+        )
+        if not expected_number:
+            return None, "collector_missing"
+        if myp_finish not in {"normal", "holofoil", "reverse_holofoil"}:
+            return None, "myp_finish_unknown"
+
+        expected_name = normalize_product_name(card_name)
+        matches = []
+        for candidate in self._tcgcsv_candidates.get(cid, []):
+            if normalize_collector_number(candidate.get("collector_number")) != expected_number:
+                continue
+            if normalize_product_name(candidate.get("product_name")) != expected_name:
+                continue
+            if myp_finish not in (candidate.get("prices_by_finish") or {}):
+                continue
+            matches.append(candidate)
+        if not matches:
+            return None, "no_exact_name_number_finish_match"
+        if len(matches) != 1:
+            return None, "ambiguous_product_id"
+
+        candidate = matches[0]
+        return {
+            **candidate,
+            "finish": myp_finish,
+            "usd": candidate["prices_by_finish"][myp_finish],
+        }, "verified"
 
     # ── Step 3: Scrape product detail page (v2 — per-seller language) ─
     def scrape_product(self, url: str, edition_name: str) -> Optional[CardData]:
@@ -1761,6 +1878,7 @@ class MYPScraper:
         # tem EN visível, há risco de listing EN-NM real mais barato escondido
         # (caso bartsimpson Psyduck R$300 EN sendo truncado por 20 listings PT/JP).
         en_prices = []
+        en_offers = []
         en_sellers = 0
         jumbo_rows_seen = 0  # v5.8.3: rows com foil="Jumbo" (caso M-Rayquaza-EX XY 7)
         TABLE_CAP_THRESHOLD = 15   # tabela com >= 15 rows sem EN visível → candidato a truncamento
@@ -1781,6 +1899,7 @@ class MYPScraper:
                 "max_price": st["max_price"],
             })
             en_prices.extend(st["en_prices"])
+            en_offers.extend(st["en_offers"])
             en_sellers += st["en"]
             jumbo_rows_seen += st["jumbo"]
 
@@ -1879,6 +1998,7 @@ class MYPScraper:
                     break
                 pst = self._parse_seller_table(mkt)
                 en_prices.extend(pst["en_prices"])
+                en_offers.extend(pst["en_offers"])
                 en_sellers += pst["en"]
                 jumbo_rows_seen += pst["jumbo"]
                 self._stats["seller_pages_followed"] += 1
@@ -1918,6 +2038,14 @@ class MYPScraper:
         card.language = "EN"
         card.condition = "NM"
         card.myp_lowest_en_nm = min(en_prices)
+        lowest_finishes = {
+            offer["finish"] for offer in en_offers
+            if offer["price"] == card.myp_lowest_en_nm
+        }
+        card.myp_finish = (
+            next(iter(lowest_finishes))
+            if len(lowest_finishes) == 1 else "unknown"
+        )
         card.en_nm_sellers = en_sellers
         card.en_truncation_risk = truncation_risk
         # v5.8.3 (2026-05-18): 1 seller EN só = risco de mislabeling
@@ -1965,18 +2093,22 @@ class MYPScraper:
         # cobertura, sobrepõe o `.estat-tcg` do MYP (que mapeia a carta errada em
         # base-086 etc.); onde não houver, mantém o declarado (fallback).
         if card.myp_lowest_en_nm and card.myp_lowest_en_nm >= self.min_price:
-            real_brl = self._real_tcg_brl(card.name, edition_name)
-            if real_brl is not None:
+            quote, match_reason = self._strict_tcgcsv_quote(
+                card.name, edition_name, card.myp_finish,
+            )
+            if quote is not None and self.fx_usd_brl:
+                real_brl = quote["usd"] * self.fx_usd_brl
                 card.tcg_player_price = real_brl
-                card.tcg_real_usd = real_brl / self.fx_usd_brl
-                # v5.15: rótulo de proveniência — 'tcgcsv' ou 'pokemontcg.io'
-                # (ambos REAIS). `tcg_from_real` segue contando TODO preço real
-                # (a métrica de honestidade não distingue a rota); `tcg_from_tcgcsv`
-                # é o sub-contador da rota tcgcsv (a que funciona no CI).
-                card.tcg_source = self._real_tcg_source_label(card.name, edition_name)
+                card.tcg_real_usd = quote["usd"]
+                card.tcg_source = "tcgcsv"
+                card.tcg_finish = quote["finish"]
+                card.tcg_product_id = quote["product_id"]
+                card.tcg_product_name = quote["product_name"]
+                card.tcg_collector_number = quote["collector_number"]
+                card.match_status = "VERIFIED"
+                card.match_reason = "verified"
                 self._stats["tcg_from_real"] += 1
-                if card.tcg_source == "tcgcsv":
-                    self._stats["tcg_from_tcgcsv"] += 1
+                self._stats["tcg_from_tcgcsv"] += 1
                 # v5.11.3 (A1, resgatado do PR #25): o preço agora é o REAL do
                 # TCGplayer, não o `.estat-tcg` declarado. A flag de inflação do
                 # declarado (tcg_suspect) não se aplica mais — limpa pra não
@@ -1986,6 +2118,8 @@ class MYPScraper:
                     card.tcg_suspect = False
                     self._stats["tcg_suspects"] -= 1
             else:
+                card.match_status = "REVIEW"
+                card.match_reason = match_reason
                 card.tcg_source = "myp_estat"
                 self._stats["tcg_from_myp_fallback"] += 1
                 self._attribute_fallback(card.name, edition_name)
@@ -2002,7 +2136,8 @@ class MYPScraper:
         # preço entre produtos, SEM taxa/fee/markup embutido. O operador calcula
         # custos (frete, câmbio, taxas) por fora. NÃO adicionar multiplicador de
         # custo aqui (oposto do CardTrader scanner, que usa custo = preço × 1.06).
-        if card.myp_lowest_en_nm and card.tcg_player_price and card.myp_lowest_en_nm > 0:
+        if (card.match_status == "VERIFIED" and card.myp_lowest_en_nm
+                and card.tcg_player_price and card.myp_lowest_en_nm > 0):
             card.margin_brl = card.tcg_player_price - card.myp_lowest_en_nm
             card.margin_pct = card.margin_brl / card.myp_lowest_en_nm
 
@@ -2381,21 +2516,25 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
     # verdade do sinal de honestidade — não inferir por presença de outra coluna.
     headers = [
         "Card Name", "Edition", "Rarity",
-        "MYP EN NM (R$)", "TCG Player (R$)", "TCG US$", "TCG Source", "MYP Last Sale (R$)",
+        "MYP EN NM (R$)", "TCG Player (R$)", "TCG US$", "TCG Source",
+        "MYP Finish", "TCG Finish", "TCG Product ID", "Match Status", "Match Reason",
+        "TCG Product Name", "TCG Collector #", "MYP Last Sale (R$)",
         "Margin %", "Diff (R$)", "NM Sellers",
         "⚠️ EN Trunc", "⚠️ TCG Suspect", "⚠️ Single Seller", "⚠️ COLLECTOR#",
         "URL", "Updated", "TCG URL",
     ]
-    widths = [38, 32, 16, 16, 16, 12, 14, 17, 11, 13, 10, 11, 14, 14, 14, 55, 16, 55]
-    PRICE_COLS = {4, 5, 8, 10}      # MYP EN NM, TCG Player, Last Sale, Diff
+    widths = [38, 32, 16, 16, 16, 12, 14, 15, 15, 15, 14, 38, 28, 16, 17,
+              11, 13, 10, 11, 14, 14, 14, 55, 16, 55]
+    PRICE_COLS = {4, 5, 15, 17}     # MYP EN NM, TCG Player, Last Sale, Diff
     MYP_PRICE_COL = 4               # v5.8.8: hyperlink → página produto MYP
     TCG_PRICE_COL = 5               # v5.8.8: hyperlink → busca TCGplayer por nome
     TCG_SOURCE_COL = 7              # v5.14: fonte do preço (real/fallback)
-    MARGIN_COL = 9
-    EN_TRUNC_COL = 12
-    TCG_SUSPECT_COL = 13
-    SINGLE_SELLER_COL = 14
-    COLLECTOR_COL = 15
+    MATCH_STATUS_COL = 11
+    MARGIN_COL = 16
+    EN_TRUNC_COL = 19
+    TCG_SUSPECT_COL = 20
+    SINGLE_SELLER_COL = 21
+    COLLECTOR_COL = 22
 
     def write_headers(ws):
         for col, h in enumerate(headers, 1):
@@ -2409,7 +2548,7 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
         ws.freeze_panes = "A2"
 
     def write_card_row(ws, row, card):
-        diff = (card.tcg_player_price or 0) - (card.myp_lowest_en_nm or 0)
+        diff = card.margin_brl if card.match_status == "VERIFIED" else None
         trunc_flag = "⚠️ MAYBE" if card.en_truncation_risk else ""
         suspect_flag = "🚨 SUSPECT" if card.tcg_suspect else ""
         single_flag = "⚠️ 1 SELLER" if card.single_en_seller_risk else ""
@@ -2424,11 +2563,9 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
         # rows pegam link direto; em daily-scan de SV moderno (8 substrings),
         # cobertura é alta. Fallback de busca cobre o restante.
         tcg_link = (
-            tcg_direct_url(
-                card.name, card.edition,
-                oversized_collector_risk=card.oversized_collector_risk,
-            )
-            or tcg_search_url(card.name)
+            f"https://www.tcgplayer.com/product/{card.tcg_product_id}"
+            if card.match_status == "VERIFIED" and card.tcg_product_id
+            else tcg_search_url(card.name)
         )
         # v5.14: rótulo legível da fonte do preço. REAL = preço verificável do
         # TCGplayer (via pokemontcg.io OU, v5.15, via tcgcsv — a rota que funciona
@@ -2440,6 +2577,9 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
             card.name, card.edition, card.rarity,
             card.myp_lowest_en_nm, card.tcg_player_price, card.tcg_real_usd,
             tcg_source_label,
+            card.myp_finish, card.tcg_finish, card.tcg_product_id,
+            card.match_status, card.match_reason,
+            card.tcg_product_name, card.tcg_collector_number,
             card.myp_last_sale_brl,
             card.margin_pct, diff, card.en_nm_sellers,
             trunc_flag, suspect_flag, single_flag, collector_flag,
@@ -2479,6 +2619,12 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
                 # rotas REAIS (pokemontcg.io / tcgcsv) ficam sem destaque.
                 c.fill = yellow_fill
                 c.alignment = Alignment(horizontal="center")
+            if col == MATCH_STATUS_COL:
+                c.alignment = Alignment(horizontal="center")
+                if card.match_status == "VERIFIED":
+                    c.fill = green_fill
+                else:
+                    c.fill = red_fill
             if col == EN_TRUNC_COL and card.en_truncation_risk:
                 c.fill = red_fill
                 c.alignment = Alignment(horizontal="center")
@@ -2502,25 +2648,15 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
     ws1.title = "🔥 Deals"
     write_headers(ws1)
 
-    # v5.8.3 (2026-05-18): excluía single_en_seller_risk de Deals.
-    # v5.8.4 (2026-05-19): refinamento — single-seller SOZINHO mantém em
-    # Deals (com coluna visual `⚠️ 1 SELLER`). Só vira Validate-Manually se
-    # acompanhado de tcg_suspect OU en_truncation_risk.
-    # v5.8.5 (2026-05-19): oversized_collector_risk segue mesma lógica:
-    # sozinho mantém em Deals (coluna `⚠️ COLLECTOR#`), combinado com
-    # single_en_seller_risk escala pra Validate Manually (ambos sinais
-    # complementares — variant + idioma duvidoso = JP-mislabeled-as-EN).
-    def _combined_single_seller_risk(c) -> bool:
-        return c.single_en_seller_risk and (
-            c.tcg_suspect
-            or c.en_truncation_risk
-            or c.oversized_collector_risk
-        )
     deals = sorted(
         [c for c in cards
          if c.margin_pct and c.margin_pct >= threshold
+         and c.match_status == "VERIFIED"
+         and c.tcg_source in ("tcgcsv", "pokemontcg.io")
          and not c.tcg_suspect
-         and not _combined_single_seller_risk(c)],
+         and not c.en_truncation_risk
+         and not c.single_en_seller_risk
+         and not c.oversized_collector_risk],
         key=lambda x: x.margin_pct or 0, reverse=True,
     )
     for i, card in enumerate(deals, 2):
@@ -2551,7 +2687,7 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
     ws_top.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{max(len(top50)+1, 2)}"
 
     # ── Sheet 4: 🚨 Validate Manually ──
-    # Inclui cards com qualquer flag de risco de detecção:
+    # Inclui cards com qualquer flag de risco ou sem match exato:
     #   - en_truncation_risk (2026-05-12 v5.3): seller table no cap sem EN visível
     #   - single_en_seller_risk (v5.8.3 2026-05-18): 1 seller EN → possível mislabeling
     #   - v5.8.5 (2026-05-19): oversized_collector_risk SOZINHO permanece em Deals,
@@ -2561,9 +2697,11 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
     write_headers(ws_val)
     validate = sorted(
         [c for c in cards
-         if c.en_truncation_risk
+         if c.match_status != "VERIFIED"
+         or c.en_truncation_risk
          or c.single_en_seller_risk
-         or (c.oversized_collector_risk and c.single_en_seller_risk)],
+         or c.oversized_collector_risk
+         or c.tcg_suspect],
         key=lambda x: x.margin_pct or -999, reverse=True,
     )
     for i, card in enumerate(validate, 2):
