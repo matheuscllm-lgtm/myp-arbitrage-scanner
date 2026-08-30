@@ -1146,7 +1146,7 @@ def test_delivery_table_format():
     md = Path(md_out).read_text(encoding="utf-8")
 
     # Header no formato aprovado.
-    assert "| # | Margem % | MYP R$ | TCG US$ | Dif | Carta | Set | Acabamento | Product ID | Cond | Qtd | Links |" in md, \
+    assert "| # | Margem % | MYP R$ | TCG US$ | Dif | Carta | Set | Raridade | Cond | Qtd | Links |" in md, \
         "header da tabela de entrega não bate o formato aprovado"
     # Carta composta + link de oferta clicável + Cond NM + USD.
     assert "Charizard ex 125/191" in md, "Carta composta ausente do markdown"
@@ -1561,7 +1561,7 @@ def test_tcgcsv_recognized_as_real_in_summary():
     assert rc == 0
     text = Path(md).read_text(encoding="utf-8")
     sec = _section_of(text, "Venusaur ex")
-    assert sec is not None and "compra" in sec.lower(), \
+    assert sec is not None and "limpos" in sec.lower(), \
         f"deal tcgcsv (REAL+VERIFIED) devia estar no balde COMPRA, está em: {sec!r}\n{text[:900]}"
     # NÃO pode aparecer no balde fallback
     assert "FALLBACK `.estat-tcg`" not in text or "Venusaur ex" not in \
@@ -2030,7 +2030,7 @@ def test_summary_real_deal_stays_clean():
     assert rc == 0
     text = Path(md).read_text(encoding="utf-8")
     sec = _section_of(text, "Pikachu ex")
-    assert sec is not None and "compra" in sec.lower(), \
+    assert sec is not None and "limpos" in sec.lower(), \
         f"deal real+verified devia estar no balde COMPRA, está em: {sec!r}"
     assert "FALLBACK `.estat-tcg`" not in text or "Pikachu ex" not in \
         text.split("FALLBACK `.estat-tcg`")[-1], "deal real não pode estar no balde fallback"
@@ -2056,7 +2056,7 @@ def test_summary_ci_all_fallback_zero_clean():
     text = Path(md).read_text(encoding="utf-8")
     # Bloco limpo presente mas vazio:
     clean_block = text.split("## ⚠️")[0]
-    assert "Nenhuma compra foi aprovada pelo gate estrito nesta run" in clean_block, \
+    assert "Nenhuma compra aprovada pelo gate estrito nesta run" in clean_block, \
         f"CI all-fallback devia dar 0 deals limpos:\n{clean_block[:600]}"
     # Os 2 fallbacks listados no balde dedicado:
     assert "FALLBACK `.estat-tcg`" in text, "balde fallback ausente"
@@ -2082,7 +2082,7 @@ def test_summary_mix_real_and_fallback_deals():
     rc = build_markdown(xlsx, md, scan_type="weekly", run_id="", repo="x/y")
     assert rc == 0
     text = Path(md).read_text(encoding="utf-8")
-    assert "compra" in (_section_of(text, "Iron Hands ex") or "").lower(), \
+    assert "limpos" in (_section_of(text, "Iron Hands ex") or "").lower(), \
         "deal real+verified devia estar no balde COMPRA"
     assert "FALLBACK" in (_section_of(text, "Roaring Moon") or ""), \
         "deal fallback devia estar no balde fallback"
@@ -2108,7 +2108,7 @@ def test_summary_fallback_gate_old_xlsx():
     rc = build_markdown(xlsx, md, scan_type="weekly", run_id="", repo="x/y")
     assert rc == 0
     text = Path(md).read_text(encoding="utf-8")
-    assert "compra" in (_section_of(text, "Iron Hands ex") or "").lower(), \
+    assert "limpos" in (_section_of(text, "Iron Hands ex") or "").lower(), \
         "deal real (com USD+match audit) devia ficar em COMPRA"
     assert "FALLBACK" in (_section_of(text, "Roaring Moon") or ""), \
         "deal fallback (sem USD) devia ir pro balde fallback em XLSX antigo"
