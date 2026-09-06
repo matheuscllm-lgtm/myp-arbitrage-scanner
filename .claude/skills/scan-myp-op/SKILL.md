@@ -11,6 +11,10 @@ description: >-
   morre sem entregar).
 ---
 
+REGRA VIGENTE DO OPERADOR: ler DELIVERY_CHAT.md na raiz do repositório. Entrega somente no chat, preço de referência clicável, coleta nova sob demanda; não executar scans no GitHub Actions nem publicar resultados. Esta regra substitui instruções antigas conflitantes abaixo.
+
+
+
 # Scan MYP → ONE PIECE por grupos — pergunte, rode, entregue
 
 Mesmo formato dos skills Pokémon (`scan-myp`) e Dragon Ball (`scan-myp-dbz`),

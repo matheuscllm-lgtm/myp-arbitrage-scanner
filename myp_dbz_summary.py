@@ -22,6 +22,8 @@ Uso:
 """
 from __future__ import annotations
 
+from chat_format import reference_price
+
 import argparse
 import sys
 from datetime import datetime, timezone
@@ -237,7 +239,7 @@ def build_markdown(xlsx: str, output: str, run_id: str = "",
             lines.append(
                 f"| {i} | **{fmt_pct(c.get('Margin %'))}** | "
                 f"{fmt_brl(c.get('MYP EN NM (R$)'))} | "
-                f"{fmt_usd(c.get('TCG US$'))} | {fmt_brl(c.get('Diff (R$)'))} | "
+                f"{reference_price(fmt_usd(c.get('TCG US$')), c.get('TCG URL'))} | {fmt_brl(c.get('Diff (R$)'))} | "
                 f"{carta} | {md_cell(c.get('Edition'))} | "
                 f"{md_cell(c.get('Rarity')) or '—'} | NM | "
                 f"{c.get('NM Sellers') or 0} | {links} |")
@@ -265,7 +267,7 @@ def build_markdown(xlsx: str, output: str, run_id: str = "",
             lines.append(
                 f"| {i} | {fmt_pct(c.get('Margin %'))} | "
                 f"{fmt_brl(c.get('MYP EN NM (R$)'))} | "
-                f"{fmt_usd(c.get('TCG US$'))} | {fmt_brl(c.get('Diff (R$)'))} | "
+                f"{reference_price(fmt_usd(c.get('TCG US$')), c.get('TCG URL'))} | {fmt_brl(c.get('Diff (R$)'))} | "
                 f"{carta} | {md_cell(c.get('Edition'))} | "
                 f"{md_cell(c.get('Rarity')) or '—'} | NM | "
                 f"{c.get('NM Sellers') or 0} | {flag} | {links} |")

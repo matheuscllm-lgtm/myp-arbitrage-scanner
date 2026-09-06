@@ -1078,7 +1078,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--fx", type=float, default=None,
                     help="câmbio USD→BRL manual (default: frankfurter/er-api "
                          "ao vivo; sem fonte real o run FALHA ALTO)")
-    ap.add_argument("--cache-hours", type=float, default=20.0,
+    ap.add_argument("--cache-hours", type=float, default=0.0,
                     help="TTL do cache tcgcsv em disco (0 = sem cache)")
     ap.add_argument("--tcg-cache-dir", default="results/op_cache",
                     help="pasta do cache tcgcsv (dentro de results/, "

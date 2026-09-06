@@ -9,6 +9,10 @@ description: >-
   para o scan não morrer no meio sem entregar resultado).
 ---
 
+REGRA VIGENTE DO OPERADOR: ler DELIVERY_CHAT.md na raiz do repositório. Entrega somente no chat, preço de referência clicável, coleta nova sob demanda; não executar scans no GitHub Actions nem publicar resultados. Esta regra substitui instruções antigas conflitantes abaixo.
+
+
+
 # Scan do MYP por grupos — pergunte, rode, entregue
 
 O catálogo mapeado do MYP (as ~112 edições com preço TCGplayer REAL — ver

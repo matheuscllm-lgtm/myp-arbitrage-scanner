@@ -11,6 +11,10 @@ description: >-
   entregar).
 ---
 
+REGRA VIGENTE DO OPERADOR: ler DELIVERY_CHAT.md na raiz do repositório. Entrega somente no chat, preço de referência clicável, coleta nova sob demanda; não executar scans no GitHub Actions nem publicar resultados. Esta regra substitui instruções antigas conflitantes abaixo.
+
+
+
 # Scan MYP → DRAGON BALL por grupos — pergunte, rode, entregue
 
 Mesmo formato do skill Pokémon (`scan-myp`), para o scanner PARALELO
