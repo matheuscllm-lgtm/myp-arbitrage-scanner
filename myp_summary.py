@@ -13,6 +13,8 @@ Uso:
 """
 from __future__ import annotations
 
+from chat_format import reference_price
+
 import argparse
 import sys
 from datetime import datetime, timezone
@@ -387,20 +389,20 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
     # - Qtd = nº de ofertas EN-NM (NM Sellers) — quantos lotes o operador pode
     #   comprar; o scanner não captura estoque por seller, então é a contagem.
     # - Links = [oferta](MYP) · [TCG](TCGplayer) — clicáveis; TCG p/ validação NM.
-    lines.append("## 🟢 Top 50 deals limpos (sem flag SIR/HR/SAR)")
+    lines.append("## 🟢 Deals limpos (sem flag SIR/HR/SAR)")
     lines.append("")
     if not deals_clean:
         lines.append("> Nenhum deal limpo nesta run.")
     else:
         lines.append("| # | Margem % | MYP R$ | TCG US$ | Dif | Carta | Set | Raridade | Cond | Qtd | Links |")
         lines.append("|---|---:|---:|---:|---:|---|---|---|---|---:|---|")
-        for i, c in enumerate(deals_clean[:50], 1):
+        for i, c in enumerate(deals_clean, 1):
             name = c.get("Card Name")
             carta = md_cell(carta_label(name))
             ed = md_cell((c.get("Edition") or "").strip())
             rarity = md_cell((c.get("Rarity") or "").strip()) or "—"
             myp = fmt_brl(c.get("MYP EN NM (R$)"))
-            tcg_usd = fmt_usd(c.get("TCG US$"))
+            tcg_usd = reference_price(fmt_usd(c.get("TCG US$")), c.get("TCG URL"))
             margin = fmt_pct(c.get("Margin %"))
             diff = fmt_brl(c.get("Diff (R$)"))
             qty = c.get("NM Sellers") or 0
@@ -432,12 +434,12 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
         # operador e antes saíam sem links clicáveis.
         lines.append("| # | Carta | Edição | MYP R$ | TCG R$ | Margem (suspeita) | Links |")
         lines.append("|---|---|---|---:|---:|---:|---|")
-        for i, c in enumerate(deals_supranum[:50], 1):
+        for i, c in enumerate(deals_supranum, 1):
             name = c.get("Card Name")
             carta = md_cell(carta_label(name))
             ed = md_cell((c.get("Edition") or "")[:30])
             myp = fmt_brl(c.get("MYP EN NM (R$)"))
-            tcg = fmt_brl(c.get("TCG Player (R$)"))
+            tcg = reference_price(fmt_brl(c.get("TCG Player (R$)")), c.get("TCG URL") if _is_real(c) else c.get("URL"))
             margin = fmt_pct(c.get("Margin %"))
             links = delivery_links(
                 c.get("URL"), name, (c.get("Edition") or "").strip(),
@@ -461,12 +463,12 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
         # operador precisa do link de oferta MYP + TCG pra validar manualmente).
         lines.append("| # | Carta | Edição | MYP R$ | TCG decl R$ | Última venda R$ | Margem (fake) | Links |")
         lines.append("|---|---|---|---:|---:|---:|---:|---|")
-        for i, c in enumerate(deals_suspect[:50], 1):
+        for i, c in enumerate(deals_suspect, 1):
             name = c.get("Card Name")
             carta = md_cell(carta_label(name))
             ed = md_cell((c.get("Edition") or "")[:30])
             myp = fmt_brl(c.get("MYP EN NM (R$)"))
-            tcg = fmt_brl(c.get("TCG Player (R$)"))
+            tcg = reference_price(fmt_brl(c.get("TCG Player (R$)")), c.get("TCG URL") if _is_real(c) else c.get("URL"))
             last = fmt_brl(c.get("MYP Last Sale (R$)"))
             margin = fmt_pct(c.get("Margin %"))
             links = delivery_links(
@@ -495,13 +497,13 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
         lines.append("")
         lines.append("| # | Margem (estimada) | MYP R$ | TCG est. R$ | Dif (est.) | Carta | Set | Raridade | Cond | Qtd | Links |")
         lines.append("|---|---:|---:|---:|---:|---|---|---|---|---:|---|")
-        for i, c in enumerate(deals_fallback[:50], 1):
+        for i, c in enumerate(deals_fallback, 1):
             name = c.get("Card Name")
             carta = md_cell(carta_label(name))
             ed = md_cell((c.get("Edition") or "").strip())
             rarity = md_cell((c.get("Rarity") or "").strip()) or "—"
             myp = fmt_brl(c.get("MYP EN NM (R$)"))
-            tcg = fmt_brl(c.get("TCG Player (R$)"))
+            tcg = reference_price(fmt_brl(c.get("TCG Player (R$)")), c.get("TCG URL") if _is_real(c) else c.get("URL"))
             margin = fmt_pct(c.get("Margin %"))
             diff = fmt_brl(c.get("Diff (R$)"))
             qty = c.get("NM Sellers") or 0
@@ -529,7 +531,7 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
             name = md_cell((c.get("Card Name") or "")[:55])
             ed = md_cell((c.get("Edition") or "")[:30])
             myp = fmt_brl(c.get("MYP EN NM (R$)"))
-            tcg = fmt_brl(c.get("TCG Player (R$)"))
+            tcg = reference_price(fmt_brl(c.get("TCG Player (R$)")), c.get("TCG URL") if _is_real(c) else c.get("URL"))
             lines.append(f"| {name} | {ed} | {myp} | {tcg} |")
         lines.append("")
 
