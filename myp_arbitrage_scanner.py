@@ -103,7 +103,26 @@ MIN_EDITIONS_EXPECTED = 200      # v5.4 C2: catalog scrape sanity floor (~326 es
 # inatividade e mata o processo — mas o disco sobrevive. Salvando o progresso por
 # edição (cards + edições já feitas) num sidecar `<output>.resume.json`, um
 # `--resume` retoma de onde parou em vez de perder horas de scan.
-CHECKPOINT_VERSION = 1
+CHECKPOINT_VERSION = 2
+
+
+class ScanInterrupted(RuntimeError):
+    """Transient collection failure: preserve progress, never call it a full scan."""
+
+
+def rate_limit_wait(response, attempt: int) -> float:
+    from datetime import datetime, timezone
+    from email.utils import parsedate_to_datetime
+    raw = (getattr(response, "headers", {}) or {}).get("Retry-After", "")
+    try:
+        seconds = float(raw)
+    except (TypeError, ValueError):
+        try:
+            seconds = (parsedate_to_datetime(raw) - datetime.now(timezone.utc)).total_seconds()
+        except (TypeError, ValueError, OverflowError):
+            seconds = 0
+    import math
+    return max(60.0 * (attempt + 1), seconds if math.isfinite(seconds) else 0)
 TIMEOUT = 20                     # timeout HTTP em segundos
 HTTP_MAX_RETRIES = 3             # M1 fix: retries em transient errors
 # v5.19.3: status 4xx DEFINITIVOS — o recurso não existe e retry nunca muda o
@@ -992,13 +1011,15 @@ class MYPScraper:
                         log.warning(f"HTTP {status} definitivo em {url} — sem retry (recurso não existe).")
                         return None
                     if attempt < HTTP_MAX_RETRIES - 1:
-                        wait = (attempt + 1) * 2  # backoff 2s, 4s
+                        wait = rate_limit_wait(e.response, attempt) if status == 429 else (attempt + 1) * 2
                         self._stats["http_retries"] += 1
                         log.warning(f"Retry {attempt+1}/{HTTP_MAX_RETRIES} for {url}{last_status}: {e}, waiting {wait}s")
                         time.sleep(wait)
                         continue
             log.warning(f"Failed to fetch {url}{last_status} after {HTTP_MAX_RETRIES} attempts: {last_err}")
-            return None
+            if "429" in last_status:
+                raise ScanInterrupted(f"HTTP 429 persistente em {url}; limite de requisições, progresso salvo")
+            raise ScanInterrupted(f"Falha de coleta em {url}{last_status}; retries esgotados, progresso salvo")
         finally:
             # loop plumbing: tempo de parede total em _get (sleep+fetch+parse)
             self._stats["t_http_total"] += time.perf_counter() - _t0
@@ -2077,7 +2098,10 @@ class MYPScraper:
                 "cards": [asdict(c) for c in self.cards],
                 "done_editions": sorted(done_editions),
                 "stats": self._stats,
+                "done_products": sorted(getattr(self, "_done_products", set())),
+                "context": getattr(self, "_resume_context", None),
             }
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
             tmp = f"{path}.tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(payload, f)
@@ -2098,6 +2122,10 @@ class MYPScraper:
         if data.get("version") != CHECKPOINT_VERSION:
             log.warning(f"  ⚠️ Checkpoint {path} é de versão antiga — ignorando.")
             return set()
+        if data.get("context") != getattr(self, "_resume_context", None):
+            log.warning("Checkpoint de outro escopo/configuração — iniciando coleta nova.")
+            return set()
+        self._done_products = set(data.get("done_products", []))
         fields = CardData.__dataclass_fields__
         # filtra chaves desconhecidas (defensivo a mudança de schema do CardData)
         self.cards = [
@@ -2113,6 +2141,12 @@ class MYPScraper:
              edition_filter: list[str] = None,
              chunk_index: int = 0, chunk_total: int = 1,
              resume: bool = False, checkpoint_path: Optional[str] = None) -> list[CardData]:
+        self._done_products = set()
+        self._done_editions = set()
+        self._resume_context = dict(editions=edition_filter, max_editions=max_editions,
+                                    max_products=max_products, chunk_index=chunk_index,
+                                    chunk_total=chunk_total, threshold=self.margin_threshold,
+                                    min_price=self.min_price, tcg_source=self.tcg_source_mode)
         log.info("═" * 60)
         log.info("  MYP Cards Arbitrage Scanner")
         log.info(f"  Threshold: {self.margin_threshold*100:.0f}% | Language: EN only | Condition: NM")
@@ -2195,6 +2229,7 @@ class MYPScraper:
                 f"  ⏯️ Resume de {checkpoint_path}: {len(done_editions)} edição(ões) "
                 f"já feitas, {len(self.cards)} cards restaurados."
             )
+        self._done_editions = done_editions
 
         for i, ed in enumerate(editions):
             if ed["url"] in done_editions:
@@ -2232,17 +2267,30 @@ class MYPScraper:
                         self._prefill_ptcg_set(_setcode)
 
             for j, purl in enumerate(product_urls):
+                product_key = ed["url"] + "|" + purl
+                if product_key in self._done_products:
+                    continue
                 self._stats["products_scanned"] += 1
                 if (j + 1) % 10 == 0:
                     log.info(f"  Scanning {j+1}/{len(product_urls)}...")
 
-                card = self.scrape_product(purl, ed["title"])
+                try:
+                    card = self.scrape_product(purl, ed["title"])
+                except ScanInterrupted:
+                    if checkpoint_path:
+                        self._save_checkpoint(checkpoint_path, done_editions)
+                    raise
+                self._done_products.add(product_key)
                 if not card:
+                    if checkpoint_path and (j == 0 or (j + 1) % 10 == 0):
+                        self._save_checkpoint(checkpoint_path, done_editions)
                     continue
 
                 self._stats["en_found"] += 1
                 card.edition_url = ed["url"]
                 self.cards.append(card)
+                if checkpoint_path and (j == 0 or (j + 1) % 10 == 0):
+                    self._save_checkpoint(checkpoint_path, done_editions)
 
                 if card.margin_pct is not None and card.margin_pct >= self.margin_threshold:
                     log.info(
@@ -2626,7 +2674,7 @@ def generate_xlsx(cards: list[CardData], output_path: str, threshold: float):
 # ══════════════════════════════════════════════════════════════════════
 # ENTRY POINT
 # ══════════════════════════════════════════════════════════════════════
-if __name__ == "__main__":
+def main():
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -2714,10 +2762,22 @@ Exemplos:
     # v5.11.4: checkpoint vive ao lado do XLSX de saída (sobrevive ao reciclo
     # do container; o XLSX em si só é escrito no fim).
     checkpoint_path = f"{output_path}.resume.json"
-    cards = scraper.scan(max_editions=args.max_editions, max_products=args.max_products,
-                         edition_filter=args.editions,
-                         chunk_index=args.chunk_index, chunk_total=args.chunk_total,
-                         resume=args.resume, checkpoint_path=checkpoint_path)
+    try:
+        cards = scraper.scan(max_editions=args.max_editions, max_products=args.max_products,
+                             edition_filter=args.editions,
+                             chunk_index=args.chunk_index, chunk_total=args.chunk_total,
+                             resume=args.resume, checkpoint_path=checkpoint_path)
+    except (ScanInterrupted, KeyboardInterrupt) as exc:
+        import json
+        scraper._save_checkpoint(checkpoint_path, getattr(scraper, "_done_editions", set()))
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        generate_xlsx(scraper.cards, output_path, scraper.margin_threshold)
+        Path(output_path + ".status.json").write_text(json.dumps({
+            "status": "partial", "reason": str(exc) or "interrompido pelo operador",
+            "cards": len(scraper.cards), "checkpoint": checkpoint_path,
+        }, ensure_ascii=False), encoding="utf-8")
+        log.error(f"COLETA PARCIAL: {exc}; XLSX parcial e checkpoint preservados.")
+        raise SystemExit(2)
 
     # v5.4 M1 + invariant check: cron precisa distinguir "scan saudável com
     # zero deals" de "scraper quebrado". Exit codes:
@@ -2771,3 +2831,7 @@ Exemplos:
 
     generate_xlsx(cards, output_path, scraper.margin_threshold)
     print(f"\nDone! Open: {output_path}")
+
+
+if __name__ == "__main__":
+    main()

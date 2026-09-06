@@ -1144,6 +1144,9 @@ def test_scan_resume_skips_done_editions():
     fd, ckpt = tempfile.mkstemp(suffix=".resume.json"); _os.close(fd)
     with open(ckpt, "w", encoding="utf-8") as f:
         json.dump({"version": CHECKPOINT_VERSION,
+                   "context": dict(editions=None, max_editions=0, max_products=0,
+                                   chunk_index=0, chunk_total=1, threshold=0.3,
+                                   min_price=50.0, tcg_source="auto"),
                    "cards": [{"name": "Done (1/100)", "myp_lowest_en_nm": 100.0,
                               "tcg_player_price": 200.0, "margin_pct": 1.0}],
                    "done_editions": ["u1"], "stats": {}}, f)
@@ -2475,10 +2478,13 @@ def test_get_500_still_retries():
     _orig_sleep = M.time.sleep
     M.time.sleep = lambda s: None
     try:
-        out = sc._get("https://mypcards.com/pokemon/produto/1/instavel")
+        try:
+            sc._get("https://mypcards.com/pokemon/produto/1/instavel")
+            raise AssertionError("500 persistente não pode ser tratado como produto sem oferta")
+        except M.ScanInterrupted:
+            pass
     finally:
         M.time.sleep = _orig_sleep
-    assert out is None
     assert len(calls) == HTTP_MAX_RETRIES,         f"500 deve tentar {HTTP_MAX_RETRIES}x (fez {len(calls)})"
     assert sc._stats["http_4xx_no_retry"] == 0
     assert sc._stats["http_retries"] == HTTP_MAX_RETRIES - 1

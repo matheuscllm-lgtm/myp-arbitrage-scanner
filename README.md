@@ -77,3 +77,13 @@ commitados no repositório. Configuração e schedules em [`CLAUDE.md`](CLAUDE.m
 ## Author
 
 Matheus Chillemi
+
+## Recuperação de falhas de coleta
+
+HTTP 429 respeita Retry-After e espera pelo menos 60/120 segundos entre tentativas.
+Falha persistente encerra como parcial (exit 2), salvando XLSX, status JSON e
+checkpoint. O progresso é salvo dentro da edição, a cada dez produtos, e na
+interrupção. O checkpoint identifica produtos concluídos e escopo/configuração;
+retomar não duplica cartas nem pula o produto que falhou. Checkpoints antigos ou
+de outro escopo são ignorados. Use `--resume` explicitamente somente para a mesma
+solicitação interrompida; uma coleta nova começa com saída nova.
