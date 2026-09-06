@@ -2834,4 +2834,10 @@ Exemplos:
 
 
 if __name__ == "__main__":
+    # Redirected Windows output can default to cp1252, which cannot encode the
+    # CLI's symbols. Keep help, scan output and logging readable as UTF-8.
+    import sys
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     main()

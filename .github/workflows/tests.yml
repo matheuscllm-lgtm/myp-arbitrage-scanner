@@ -1,7 +1,7 @@
 name: tests
 
 # Public-repo CI: runs the offline test suite only. No secrets, no external
-# paid services, standard ubuntu-latest runner (free for public repositories).
+# paid services, standard Linux/Windows runners (free for public repositories).
 
 on:
   push:
@@ -14,7 +14,11 @@ permissions:
 
 jobs:
   pytest:
-    runs-on: ubuntu-latest
+    name: pytest (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
       - name: Checkout
