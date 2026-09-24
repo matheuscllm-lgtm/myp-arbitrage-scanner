@@ -2758,6 +2758,30 @@ def test_scrape_product_variant_match_e2e():
     print("  e2e: VERIFIED Master Ball exato; REVIEW mantém a linha c/ ref conservadora ✓")
 
 
+def test_scrape_product_bilingual_title_uses_en_name():
+    """v5.20: o h1 do MYP é "Nome PT (NNN/MMM)Nome EN" (padrão bilíngue da
+    plataforma). O clean_card_name guarda o PT; o match por nome do tcgcsv
+    (catálogo EN) também testa o nome EN — "Oddish de Erika" casa o produto
+    "Erika's Oddish" (e não as variantes '(Poke Ball)'/'(Energy Symbol
+    Pattern)' do mesmo nº em Ascended Heroes)."""
+    sc = _variants_scraper(ASC, PRE)
+    html = _variant_page("Oddish de Erika (001/217)Erika's Oddish", "400,00",
+                         [("60,00", "")])
+    sc._get = lambda url, save_debug=False: BeautifulSoup(html, "lxml")
+    card = sc.scrape_product("https://mypcards.com/pokemon/produto/3/oddish", ASC[1])
+    assert card is not None
+    assert card.name == "Oddish de Erika (001/217)", card.name   # display intacto
+    assert (card.match_status, card.tcg_product_id, card.tcg_finish) == \
+        ("VERIFIED", 675813, "Normal"), (card.match_status, card.match_reason)
+    # variante com nome EN exato depois do número
+    html = _variant_page("Umbreon (Padrão Master Ball) (059/131)Umbreon (Master Ball Pattern)",
+                         "900,00", [("250,00", "")])
+    sc._get = lambda url, save_debug=False: BeautifulSoup(html, "lxml")
+    card = sc.scrape_product("https://mypcards.com/pokemon/produto/4/umbreon-mb", PRE[1])
+    assert (card.match_status, card.tcg_product_id) == ("VERIFIED", 610679), card.match_reason
+    print("  título bilíngue: nome EN depois do nº casa o produto tcgcsv ✓")
+
+
 def test_v520_columns_roundtrip_aggregate_and_link():
     """v5.20: as 6 colunas de identidade saem APÓS 'TCG URL', sobrevivem ao
     aggregate dos chunks e o link TCG aponta o PRODUTO exato."""
@@ -2893,6 +2917,7 @@ def main():
         ("v5.20 acabamento inexistente → REVIEW", test_quote_finish_absent_in_product_goes_review),
         ("v5.20 Altered Art / desconhecido → REVIEW", test_quote_altered_and_unknown_labels_review),
         ("v5.20 e2e scrape_product VERIFIED/REVIEW", test_scrape_product_variant_match_e2e),
+        ("v5.20 título bilíngue: nome EN casa o tcgcsv", test_scrape_product_bilingual_title_uses_en_name),
         ("v5.20 colunas + aggregate + link de produto", test_v520_columns_roundtrip_aggregate_and_link),
         ("v5.20 summary: balde REVIEW + tabela canônica", test_summary_review_bucket_keeps_canonical_table),
     ]

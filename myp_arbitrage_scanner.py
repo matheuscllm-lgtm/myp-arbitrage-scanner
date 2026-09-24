@@ -1824,7 +1824,7 @@ class MYPScraper:
         return False
 
     def _tcgcsv_quote(self, card_name: str, edition_name: str,
-                      finish_labels: list) -> Optional[dict]:
+                      finish_labels: list, alt_names=None) -> Optional[dict]:
         """v5.20 (pendencias#10): referência TCGplayer do PRODUTO e ACABAMENTO
         certos, fail-closed.
 
@@ -1835,7 +1835,9 @@ class MYPScraper:
 
         1. IDENTIDADE — candidatos = produtos do mesmo numerador no set; o
            denominador do MYP ("(15/106)") filtra; nº único → aceita (legado);
-           nº compartilhado → exige nome normalizado EXATO e único.
+           nº compartilhado → exige nome normalizado EXATO e único — vale o
+           nome antes do número (PT) OU `alt_names` (o nome EN que o título
+           MYP traz depois do número).
         2. ACABAMENTO — o rótulo MYP da oferta mais barata escolhe o subtype
            (classify_myp_finish); ambíguo (ex. "Foil" numa rara com Holofoil e
            Reverse) → menor preço entre os compatíveis (limite inferior).
@@ -1868,8 +1870,10 @@ class MYPScraper:
             if len(cands) == 1:
                 ident, how = pool[0], "nº único no set"
             else:
-                want = normalize_card_name(card_name)
-                exact = [c for c in pool if c["name_norm"] == want]
+                wants = {normalize_card_name(n)
+                         for n in [card_name, *(alt_names or [])] if n}
+                wants.discard("")
+                exact = [c for c in pool if c["name_norm"] in wants]
                 if len(exact) == 1:
                     ident = exact[0]
                     how = f"nome exato entre {len(cands)} produtos com o nº"
@@ -1988,6 +1992,12 @@ class MYPScraper:
         # "(NNN/MMM)" (ex.: "Heatran-EX (109/116)Heatran-EX"). Copy-paste
         # limpo + casa o NUM_IN_NAME_RE ancorado do merge_myp_ct.py. DEPOIS do
         # skip de jumbo pra não engolir o keyword "Jumbo" trailing.
+        # v5.20: o título da plataforma é "Nome PT (NNN/MMM)Nome EN" (padrão
+        # bilíngue provado pela sonda do scanner DBZ, 2026-08-03). O nome EN
+        # que o clean descarta é guardado só pro match por nome do tcgcsv
+        # (catálogo EN): "Oddish de Erika" × "Erika's Oddish".
+        _nm = NAME_NNN_MMM_RE.match(card.name or "")
+        name_en = (card.name[_nm.end():].strip() if _nm else "")
         card.name = clean_card_name(card.name)
 
         # Product code
@@ -2272,7 +2282,8 @@ class MYPScraper:
             # v5.20 (pendencias#10): set coberto pelo tcgcsv → referência do
             # PRODUTO + ACABAMENTO certos (_tcgcsv_quote, fail-closed). Sem
             # candidatos tcgcsv p/ o cid → caminho legado (_real_tcg_brl).
-            quote = (self._tcgcsv_quote(card.name, edition_name, finish_labels)
+            quote = (self._tcgcsv_quote(card.name, edition_name, finish_labels,
+                                        alt_names=[name_en])
                      if self.fx_usd_brl else None)
             if quote is not None:
                 card.match_status = quote["status"]

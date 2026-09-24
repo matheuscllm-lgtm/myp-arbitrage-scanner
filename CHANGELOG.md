@@ -32,7 +32,9 @@ dados reais do tcgcsv.
    nº compartilhado → exige **nome normalizado EXATO e único**. A normalização
    (`normalize_card_name`) remove o sufixo ` - NNN/MMM` do tcgcsv — inclusive
    no meio (`Mew ex - 205/165 (151 Metal Card)`) — e o `(NNN/MMM)` do MYP,
-   preservando o qualificador de variante (`(Master Ball Pattern)`).
+   preservando o qualificador de variante (`(Master Ball Pattern)`). O título
+   MYP é bilíngue ("Nome PT (NNN/MMM)Nome EN"): o nome EN depois do número
+   também vale no match ("Oddish de Erika" casa "Erika's Oddish").
 2. **Acabamento** (`classify_myp_finish`): vazio/Normal → impressão padrão
    (não-Reverse; produto de acabamento único — ex. holo-only — casa ele);
    Foil → Holofoil/Reverse (ambíguo → **menor** preço); Reverse → Reverse
@@ -61,13 +63,16 @@ dados reais do tcgcsv.
 
 - Fixture com recorte **REAL** do tcgcsv (`test_tcgcsv_variants_fixture.json`:
   Surging Sparks, Prismatic Evolutions, Black Bolt, 151, Classic Collection,
-  Ascended Heroes, Shrouded Fable) + 14 testes novos; os testes que protegem o
+  Ascended Heroes, Shrouded Fable) + 15 testes novos; os testes que protegem o
   override do `.estat-tcg` (`test_real_tcg_overrides_estat`,
   `test_prices_card_without_estat_tcg`) ficaram intactos.
-- `python -m pytest -q`: **156 passed**; `python test_v5_8_offline.py`: **74/74**.
+- `python -m pytest -q`: **157 passed**; `python test_v5_8_offline.py`: **75/75**.
 - `bench.py` (mockado): 16 deals limpos antes e depois; 16 VERIFIED, 0 REVIEW.
-- **Pendente antes de tirar do draft:** scan real (artifact) contando COMPRA
-  verificada antes × depois — exige aval do operador (coleta de mercado).
+- Scan real antes × depois (req. 6 da pendência): **não executado** — a regra
+  vigente do operador (2026-09-24) proíbe scan no GitHub Actions e o MYP
+  bloqueia o container da nuvem (Cloudflare). Validação feita offline contra
+  o catálogo real do tcgcsv; o 1º scan local mostra o efeito no balde
+  "🔎 variante a validar".
 
 ## OP v1.0 — 2026-08-09 — scanner paralelo ONE PIECE + skill scan-myp-op (PR #98)
 
