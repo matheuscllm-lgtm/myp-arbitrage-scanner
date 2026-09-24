@@ -110,6 +110,21 @@ def card_from_row(headers: list[str], row: tuple) -> CardData | None:
     card.oversized_collector_risk = bool(rec.get("⚠️ COLLECTOR#"))
     card.product_url = rec.get("URL") or ""
     card.last_updated = rec.get("Updated") or ""
+    # v5.20 (pendencias#10): identidade do produto TCG da referência. Sem isto o
+    # consolidado perderia o "Match Status" → uma linha REVIEW (variante/
+    # acabamento sem match único) voltaria ao balde limpo, e o link TCG cairia
+    # no redirect por nº (versão base) em vez do produto exato. Chunks antigos
+    # não têm as colunas → .get() None → defaults (caminho legado).
+    card.myp_finish = rec.get("MYP Finish") or ""
+    card.tcg_finish = rec.get("TCG Finish") or ""
+    _pid = rec.get("TCG Product ID")
+    try:
+        card.tcg_product_id = int(_pid) if _pid not in (None, "") else None
+    except (TypeError, ValueError):
+        card.tcg_product_id = None
+    card.tcg_product_name = rec.get("TCG Product Name") or ""
+    card.match_status = rec.get("Match Status") or ""
+    card.match_reason = rec.get("Match Reason") or ""
     # margin_brl: derived
     if card.tcg_player_price and card.myp_lowest_en_nm:
         card.margin_brl = card.tcg_player_price - card.myp_lowest_en_nm

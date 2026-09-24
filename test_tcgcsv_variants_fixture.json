@@ -1,0 +1,498 @@
+{
+ "_fonte": "Recorte REAL de https://tcgcsv.com/tcgplayer/3 (dump de 2026-09-24): nomes, números, subtypes e preços exatamente como publicados — só os produtos usados nos testes do match por produto/acabamento (v5.20, pendencias#10). Não editar à mão: regerar do dump se o teste precisar de outro caso.",
+ "groups": [
+  {
+   "groupId": 24541,
+   "name": "ME: Ascended Heroes",
+   "abbreviation": "ASC"
+  },
+  {
+   "groupId": 24325,
+   "name": "SV: Black Bolt",
+   "abbreviation": "BLK"
+  },
+  {
+   "groupId": 23821,
+   "name": "SV: Prismatic Evolutions",
+   "abbreviation": "PRE"
+  },
+  {
+   "groupId": 23651,
+   "name": "SV08: Surging Sparks",
+   "abbreviation": "SSP"
+  },
+  {
+   "groupId": 23529,
+   "name": "SV: Shrouded Fable",
+   "abbreviation": "SFA"
+  },
+  {
+   "groupId": 23237,
+   "name": "SV: Scarlet & Violet 151",
+   "abbreviation": "MEW"
+  },
+  {
+   "groupId": 2931,
+   "name": "Celebrations: Classic Collection",
+   "abbreviation": "CCC"
+  }
+ ],
+ "sets": {
+  "23651": {
+   "products": [
+    {
+     "productId": 589856,
+     "name": "Alolan Dugtrio - 123/191",
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "123/191"
+      }
+     ]
+    },
+    {
+     "productId": 589857,
+     "name": "Alolan Dugtrio - 208/191",
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "208/191"
+      }
+     ]
+    }
+   ],
+   "prices": [
+    {
+     "productId": 589856,
+     "subTypeName": "Normal",
+     "marketPrice": 0.07,
+     "midPrice": 0.15
+    },
+    {
+     "productId": 589856,
+     "subTypeName": "Reverse Holofoil",
+     "marketPrice": 0.25,
+     "midPrice": 0.26
+    },
+    {
+     "productId": 589857,
+     "subTypeName": "Holofoil",
+     "marketPrice": 8.62,
+     "midPrice": 9.59
+    }
+   ]
+  },
+  "23821": {
+   "products": [
+    {
+     "productId": 610357,
+     "name": "Exeggutor",
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "002/131"
+      }
+     ]
+    },
+    {
+     "productId": 610361,
+     "name": "Leafeon ex - 006/131",
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "006/131"
+      }
+     ]
+    },
+    {
+     "productId": 610414,
+     "name": "Umbreon",
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "059/131"
+      }
+     ]
+    },
+    {
+     "productId": 610537,
+     "name": "Exeggutor (Poke Ball Pattern)",
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "002/131"
+      }
+     ]
+    },
+    {
+     "productId": 610578,
+     "name": "Umbreon (Poke Ball Pattern)",
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "059/131"
+      }
+     ]
+    },
+    {
+     "productId": 610638,
+     "name": "Exeggutor (Master Ball Pattern)",
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "002/131"
+      }
+     ]
+    },
+    {
+     "productId": 610679,
+     "name": "Umbreon (Master Ball Pattern)",
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "059/131"
+      }
+     ]
+    }
+   ],
+   "prices": [
+    {
+     "productId": 610357,
+     "subTypeName": "Normal",
+     "marketPrice": 0.07,
+     "midPrice": 0.15
+    },
+    {
+     "productId": 610357,
+     "subTypeName": "Reverse Holofoil",
+     "marketPrice": 0.17,
+     "midPrice": 0.21
+    },
+    {
+     "productId": 610361,
+     "subTypeName": "Holofoil",
+     "marketPrice": 4.4,
+     "midPrice": 4.86
+    },
+    {
+     "productId": 610414,
+     "subTypeName": "Holofoil",
+     "marketPrice": 0.47,
+     "midPrice": 0.5
+    },
+    {
+     "productId": 610414,
+     "subTypeName": "Reverse Holofoil",
+     "marketPrice": 0.76,
+     "midPrice": 0.73
+    },
+    {
+     "productId": 610537,
+     "subTypeName": "Holofoil",
+     "marketPrice": 0.36,
+     "midPrice": 0.4
+    },
+    {
+     "productId": 610578,
+     "subTypeName": "Holofoil",
+     "marketPrice": 3.73,
+     "midPrice": 4.49
+    },
+    {
+     "productId": 610638,
+     "subTypeName": "Holofoil",
+     "marketPrice": 10.53,
+     "midPrice": 11.5
+    },
+    {
+     "productId": 610679,
+     "subTypeName": "Holofoil",
+     "marketPrice": 73.07,
+     "midPrice": 78.11
+    }
+   ]
+  },
+  "24325": {
+   "products": [
+    {
+     "productId": 642180,
+     "name": "Klink",
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "061/086"
+      }
+     ]
+    },
+    {
+     "productId": 642261,
+     "name": "Klink - 139/086",
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "139/086"
+      }
+     ]
+    },
+    {
+     "productId": 642349,
+     "name": "Klink (Master Ball Pattern)",
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "061/086"
+      }
+     ]
+    },
+    {
+     "productId": 642421,
+     "name": "Klink (Poke Ball Pattern)",
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "061/086"
+      }
+     ]
+    }
+   ],
+   "prices": [
+    {
+     "productId": 642180,
+     "subTypeName": "Normal",
+     "marketPrice": 0.07,
+     "midPrice": 0.15
+    },
+    {
+     "productId": 642180,
+     "subTypeName": "Reverse Holofoil",
+     "marketPrice": 0.17,
+     "midPrice": 0.2
+    },
+    {
+     "productId": 642261,
+     "subTypeName": "Holofoil",
+     "marketPrice": 7.46,
+     "midPrice": 8.49
+    },
+    {
+     "productId": 642349,
+     "subTypeName": "Holofoil",
+     "marketPrice": 1.73,
+     "midPrice": 2.09
+    },
+    {
+     "productId": 642421,
+     "subTypeName": "Holofoil",
+     "marketPrice": 0.27,
+     "midPrice": 0.31
+    }
+   ]
+  },
+  "23237": {
+   "products": [
+    {
+     "productId": 517051,
+     "name": "Mew ex - 205/165",
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "205/165"
+      }
+     ]
+    },
+    {
+     "productId": 519481,
+     "name": "Mew ex - 205/165 (151 Metal Card)",
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "205/165"
+      }
+     ]
+    }
+   ],
+   "prices": [
+    {
+     "productId": 517051,
+     "subTypeName": "Holofoil",
+     "marketPrice": 27.81,
+     "midPrice": 30.73
+    },
+    {
+     "productId": 519481,
+     "subTypeName": "Normal",
+     "marketPrice": 22.86,
+     "midPrice": 28.61
+    }
+   ]
+  },
+  "2931": {
+   "products": [
+    {
+     "productId": 250321,
+     "name": "Venusaur",
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "15/102"
+      }
+     ]
+    },
+    {
+     "productId": 250323,
+     "name": "Here Comes Team Rocket!",
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "15/82"
+      }
+     ]
+    },
+    {
+     "productId": 250324,
+     "name": "Rocket's Zapdos",
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "15/132"
+      }
+     ]
+    },
+    {
+     "productId": 250333,
+     "name": "Claydol",
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "15/106"
+      }
+     ]
+    }
+   ],
+   "prices": [
+    {
+     "productId": 250321,
+     "subTypeName": "Holofoil",
+     "marketPrice": 10.58,
+     "midPrice": 12.42
+    },
+    {
+     "productId": 250323,
+     "subTypeName": "Holofoil",
+     "marketPrice": 0.79,
+     "midPrice": 0.99
+    },
+    {
+     "productId": 250324,
+     "subTypeName": "Holofoil",
+     "marketPrice": 3.25,
+     "midPrice": 4.7
+    },
+    {
+     "productId": 250333,
+     "subTypeName": "Holofoil",
+     "marketPrice": 0.42,
+     "midPrice": 0.48
+    }
+   ]
+  },
+  "24541": {
+   "products": [
+    {
+     "productId": 675813,
+     "name": "Erika's Oddish",
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "001/217"
+      }
+     ]
+    },
+    {
+     "productId": 676852,
+     "name": "Erika's Oddish (Poke Ball)",
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "001/217"
+      }
+     ]
+    },
+    {
+     "productId": 676992,
+     "name": "Erika's Oddish (Energy Symbol Pattern)",
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "001/217"
+      }
+     ]
+    }
+   ],
+   "prices": [
+    {
+     "productId": 675813,
+     "subTypeName": "Normal",
+     "marketPrice": 0.17,
+     "midPrice": 0.17
+    },
+    {
+     "productId": 676852,
+     "subTypeName": "Reverse Holofoil",
+     "marketPrice": 0.31,
+     "midPrice": 0.3
+    },
+    {
+     "productId": 676992,
+     "subTypeName": "Reverse Holofoil",
+     "marketPrice": 0.3,
+     "midPrice": 0.28
+    }
+   ]
+  },
+  "23529": {
+   "products": [
+    {
+     "productId": 560311,
+     "name": "Joltik",
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "001/064"
+      }
+     ]
+    },
+    {
+     "productId": 562155,
+     "name": "Basic Grass Energy",
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "1"
+      }
+     ]
+    }
+   ],
+   "prices": [
+    {
+     "productId": 560311,
+     "subTypeName": "Normal",
+     "marketPrice": 0.19,
+     "midPrice": 0.19
+    },
+    {
+     "productId": 560311,
+     "subTypeName": "Reverse Holofoil",
+     "marketPrice": 0.19,
+     "midPrice": 0.22
+    },
+    {
+     "productId": 562155,
+     "subTypeName": "Reverse Holofoil",
+     "marketPrice": 0.43,
+     "midPrice": 0.45
+    }
+   ]
+  }
+ }
+}

@@ -21,7 +21,7 @@ caminho só** — siga este arquivo e evite re-descobrir o que já está resolvi
 > referência** pra "economizar largura". Isso quebra o padrão. NÃO repita.
 
 **Toda linha entregue tem que ter os DOIS links, sempre, em TODO bucket**
-(limpos, supranumerário, suspeito, fallback, e qualquer verificação manual):
+(limpos, variante a validar, supranumerário, suspeito, fallback, e qualquer verificação manual):
 - **`[oferta]`** → página do produto MYP (onde comprar);
 - **`[TCG]`** → TCGplayer/referência (onde validar o preço).
 
@@ -74,7 +74,7 @@ sessão** (`SESSION-HANDOFF-<data>.md`): se for manter um handoff, atualize o
 scanner (extraído do antigo monorepo `tcg-arbitrage-scanners` em 2026-05-13).
 Se você encontrar um `myp_arbitrage_scanner.py` em qualquer outro lugar
 (`tcg-arbitrage-scanners`, `Scripts/`, cópia em Drive/Obsidian), é **STALE
-pré-extração** — não rode. Confira o cabeçalho: `Versão: v5.19.3` (ou
+pré-extração** — não rode. Confira o cabeçalho: `Versão: v5.20` (ou
 superior; a versão atual vive no cabeçalho de `myp_arbitrage_scanner.py` e no
 topo do `CHANGELOG.md` — histórico completo, uma entrada por versão, mora lá).
 
@@ -296,10 +296,10 @@ nunca improvisa um formato diferente.
 
 #### O que o `myp_summary.py` gera (e que você entrega assim, sem mexer)
 
-São até **quatro tabelas de deals** (a 4ª só aparece se houver deals com preço
-fallback) — mais uma **5ª seção diagnóstica condicional** (`🚨 EN truncation
-risk`, sobre o universo de cartas, não sobre deals; por isso é a única sem
-coluna Links). **TODAS as tabelas de deals** trazem a coluna **`Carta`**
+São até **cinco tabelas de deals** (a de variante a validar, a de suspeitos e a
+de fallback só aparecem se houver linhas) — mais uma **seção diagnóstica
+condicional** (`🚨 EN truncation risk`, sobre o universo de cartas, não sobre
+deals; por isso é a única sem coluna Links). **TODAS as tabelas de deals** trazem a coluna **`Carta`**
 (nome + número) e a coluna **`Links`** (`[oferta](url_MYP) · [TCG](url_TCGplayer)`):
 
 1. **🟢 Top 50 deals limpos** (sem flag SIR/HR/SAR **e com preço REAL** — os
@@ -307,19 +307,28 @@ coluna Links). **TODAS as tabelas de deals** trazem a coluna **`Carta`**
    ```
    | # | Margem % | MYP R$ | TCG US$ | Dif | Carta | Set | Raridade | Cond | Qtd | Links |
    ```
-2. **⚠️ Deals com flag supranumerário** (`card_num > set_total`, ex. `226/217` —
+2. **🔎 Deals com variante/acabamento TCG a validar** (v5.20, pendencias#10 —
+   preço REAL tcgcsv, mas o join não achou UM produto/acabamento: número com
+   versões Poké Ball/Master Ball sem nome exato, acabamento da oferta MYP que não
+   existe no produto, denominador divergente, rótulo `Altered Art`/desconhecido).
+   Referência = a versão **mais barata** entre os candidatos (margem = piso, nunca
+   inflada). **"(validar manualmente)"**; motivo na coluna `Motivo`. Colunas:
+   ```
+   | # | Margem (piso) | MYP R$ | TCG US$ | Dif | Carta | Set | Raridade | Cond | Qtd | Motivo | Links |
+   ```
+3. **⚠️ Deals com flag supranumerário** (`card_num > set_total`, ex. `226/217` —
    raridade dita "Comum" no MYP mas provavelmente IR/SIR/SAR). Marcados
    **"(validar manualmente)"** no título da seção. Colunas:
    ```
    | # | Carta | Edição | MYP R$ | TCG R$ | Margem (suspeita) | Links |
    ```
-3. **🚨 Deals com flag TCG suspect** (preço TCG declarado destoa da última venda —
+4. **🚨 Deals com flag TCG suspect** (preço TCG declarado destoa da última venda —
    mapeamento de carta provavelmente furado). Também **"(validar manualmente)"**.
    Colunas:
    ```
    | # | Carta | Edição | MYP R$ | TCG decl R$ | Última venda R$ | Margem (fake) | Links |
    ```
-4. **⚠️ Deals com preço FALLBACK `.estat-tcg`** (v5.14.3 — preço TCG é estimativa
+5. **⚠️ Deals com preço FALLBACK `.estat-tcg`** (v5.14.3 — preço TCG é estimativa
    do MYP, **não** o real do TCGplayer; margem pode ser ILUSÓRIA). Saem do balde
    limpo de propósito; **"(validar manualmente)"**. Desde a v5.15 o CI usa
    `--tcg-source tcgcsv` e entrega preço REAL — um deal só cai neste balde
@@ -349,10 +358,10 @@ Significado das colunas:
 
 #### Mostre TODOS os deals — nada de amostra curada
 
-A entrega traz **todos** os deals de cada bucket (limpos / supranumerário /
-suspeito / fallback), **não** uma seleção curada de "os melhores". Os buckets
-supranumerário, suspeito e fallback **sempre** vão marcados como **"validar
-manualmente"** com o caveat de que a margem pode ser falsa (mapeamento de carta
+A entrega traz **todos** os deals de cada bucket (limpos / variante a validar /
+supranumerário / suspeito / fallback), **não** uma seleção curada de "os
+melhores". Os buckets variante a validar, supranumerário, suspeito e fallback
+**sempre** vão marcados como **"validar manualmente"** com o caveat de que a margem pode ser falsa (mapeamento de carta
 errado / variante misclassificada / preço estimado). Você reporta margem, flags
 e fontes; **a decisão de comprar é do operador** — não rankeie "BUY NOW" nem
 recomende capital.
@@ -382,8 +391,12 @@ python myp_summary.py results/<scan>.xlsx --type weekly -o results/<scope>-<data
 
 O XLSX/CSV continua com **colunas separadas e URLs cruas** (`Card Name`, `Edition`,
 `URL`, …) + a coluna `TCG US$` (v5.11.1) + a coluna `TCG URL` (v5.11.2, texto plano,
-última coluna — é de onde a entrega lê o link TCGplayer, e que o scanner integrado
-consome). O formato composto (`Carta` + `Links` clicáveis) **só** existe na tabela
+18ª coluna — é de onde a entrega lê o link TCGplayer, e que o scanner integrado
+consome). **v5.20:** as 18 colunas legadas não mudam de ordem; depois de `TCG URL`
+vêm `MYP Finish`, `TCG Finish`, `TCG Product ID`, `TCG Product Name`,
+`Match Status` (`VERIFIED`/`REVIEW`) e `Match Reason` — e, com `TCG Product ID`,
+o `TCG URL` aponta o **produto exato** (`tcgplayer.com/product/<id>`) cujo preço
+entrou na margem. Todo consumidor lê por NOME (contrato travado em teste). O formato composto (`Carta` + `Links` clicáveis) **só** existe na tabela
 markdown de entrega que o `myp_summary.py` produz. Ou seja: o XLSX é o insumo; a
 entrega é o markdown do `myp_summary.py`. **Não tente entregar o XLSX "formatado à
 mão" — rode o script.**
@@ -550,7 +563,7 @@ iterativo de dev — **medir → mudar → verificar → repetir**:
 
 ```
 myp_arbitrage_scanner.py   o scanner (MYP → preço TCG real → XLSX). Cabeçalho traz a versão
-myp_summary.py             a ENTREGA canônica: XLSX → markdown (4 buckets de deals + seção diagnóstica condicional) — ver seção 📤
+myp_summary.py             a ENTREGA canônica: XLSX → markdown (5 buckets de deals + seção diagnóstica condicional) — ver seção 📤
 myp_dbz_scanner.py         scanner PARALELO de DRAGON BALL (dbsfusion+dbsmasters vs tcgcsv 80/27) — ver seção própria
 myp_dbz_summary.py         a ENTREGA do scan DBZ (espelho do myp_summary.py)
 myp_op_scanner.py          scanner PARALELO de ONE PIECE (/onepiece vs tcgcsv 68) — ver seção própria
@@ -608,7 +621,8 @@ threshold no bloco da frota). É outro projeto.
 
 ## Estado e histórico
 
-- Versão atual: **v5.19.3** (2026-07-03). O histórico completo — uma entrada
+- Versão atual: **v5.20** (2026-09-24 — match tcgcsv por produto +
+  acabamento, pendencias#10). O histórico completo — uma entrada
   detalhada por versão, com racional de cada decisão — está no **`CHANGELOG.md`**
   (fonte de verdade do estado, junto com o `main`).
 - **Pós-v5.19.3 mergeado** (scripts paralelos, fora do versionamento do
