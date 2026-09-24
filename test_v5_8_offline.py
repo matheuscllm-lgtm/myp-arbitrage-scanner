@@ -38,6 +38,21 @@ from myp_arbitrage_scanner import (
     OVERSIZED_FOIL_RE,
 )
 
+# Contrato de colunas do XLSX (lido por NOME pelo scanner integrado, aggregate,
+# summary e revalidate_deals). As 18 legadas não mudam de ordem; as de
+# identidade do produto TCG (v5.20, pendencias#10) entram depois de "TCG URL".
+LEGACY_18_COLUMNS = [
+    "Card Name", "Edition", "Rarity",
+    "MYP EN NM (R$)", "TCG Player (R$)", "TCG US$", "TCG Source", "MYP Last Sale (R$)",
+    "Margin %", "Diff (R$)", "NM Sellers",
+    "⚠️ EN Trunc", "⚠️ TCG Suspect", "⚠️ Single Seller", "⚠️ COLLECTOR#",
+    "URL", "Updated", "TCG URL",
+]
+V520_MATCH_COLUMNS = [
+    "MYP Finish", "TCG Finish", "TCG Product ID", "TCG Product Name",
+    "Match Status", "Match Reason",
+]
+
 # NOTE (v5.8.8, 2026-05-29): PT_CONDITION_MARKERS / EN_CONDITION_MARKERS foram
 # REMOVIDOS do scanner no commit a4d2111 (a detecção de idioma migrou de
 # "substring na linha" pra leitura da célula dedicada td.estoque-lista-
@@ -377,9 +392,13 @@ def test_tcg_url_column():
     ws = wb["All EN Cards"]
     hdr = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
     # v5.14: +1 coluna "TCG Source" (real/fallback) → 18 colunas. "TCG URL"
-    # segue sendo a última (o source foi inserido no meio, após "TCG US$").
-    assert len(hdr) == 18, f"esperava 18 colunas, veio {len(hdr)}: {hdr}"
-    assert hdr[-1] == "TCG URL", f"última coluna deveria ser 'TCG URL': {hdr[-1]!r}"
+    # segue sendo a 18ª (o source foi inserido no meio, após "TCG US$").
+    # v5.20 (pendencias#10): as 18 colunas legadas NÃO mudam de ordem; as 6 de
+    # identidade do produto TCG entram DEPOIS de "TCG URL" (consumidores leem
+    # por nome — scanner integrado, aggregate, summary, revalidate_deals).
+    assert hdr[:18] == LEGACY_18_COLUMNS, f"ordem das 18 colunas legadas mudou: {hdr[:18]}"
+    assert hdr[17] == "TCG URL", f"18ª coluna deveria ser 'TCG URL': {hdr[17]!r}"
+    assert hdr[18:] == V520_MATCH_COLUMNS, f"colunas v5.20 fora do lugar: {hdr[18:]}"
     assert "TCG Source" in hdr, f"coluna 'TCG Source' (v5.14) ausente: {hdr}"
     url_col = hdr.index("TCG URL") + 1
     tcg_price_col = hdr.index("TCG Player (R$)") + 1
@@ -407,7 +426,7 @@ def test_tcg_url_column():
     assert rows_checked == 2, f"esperava 2 rows, vi {rows_checked}"
 
     Path(out).unlink()
-    print(f"  Coluna 'TCG URL' (última, 18 cols) OK: direct + fallback ✓")
+    print(f"  Coluna 'TCG URL' (18ª de 24; 18 legadas intactas) OK: direct + fallback ✓")
 
 
 def test_myp_edition_to_setcode():
@@ -2491,6 +2510,339 @@ def test_get_500_still_retries():
     print("  _get 500: retries preservados (transiente) ✓")
 
 
+# ══════════════════════════════════════════════════════════════════════
+# v5.20 (pendencias#10): match tcgcsv por PRODUTO + ACABAMENTO, fail-closed.
+# Fixture = recorte REAL do tcgcsv (test_tcgcsv_variants_fixture.json): nomes
+# com sufixo " - NNN/MMM", variantes Poké Ball/Master Ball, "151 Metal Card",
+# Celebrations Classic Collection #15 (4 cartas), energia com o nº de carta.
+# ══════════════════════════════════════════════════════════════════════
+def _variants_fixture():
+    import json
+    fx = Path(__file__).parent / "test_tcgcsv_variants_fixture.json"
+    return json.loads(fx.read_text(encoding="utf-8"))
+
+
+def _variants_session(data):
+    """Sessão fake servindo /groups, /{gid}/products e /{gid}/prices do fixture."""
+    class _Resp:
+        def __init__(self, body, status=200):
+            self._body, self.status_code = body, status
+        def json(self):
+            return self._body
+
+    class _Sess:
+        def get(self, url, **kw):
+            if url.endswith("/groups"):
+                return _Resp({"results": data["groups"]})
+            parts = url.rstrip("/").split("/")
+            gid, kind = parts[-2], parts[-1]
+            st = data["sets"].get(gid)
+            if st is None or kind not in ("products", "prices"):
+                return _Resp(None, 404)
+            return _Resp({"results": st[kind]})
+    return _Sess()
+
+
+def _variants_scraper(*sets):
+    """Scraper em modo tcgcsv com os sets (setcode, edição MYP) pré-carregados."""
+    sc = MYPScraper(delay=0.0, min_price=50.0, tcg_source="tcgcsv")
+    sc.fx_usd_brl = 5.0
+    sc.session = _variants_session(_variants_fixture())
+    sc._fetch_ptcg_usd = lambda cid: (_ for _ in ()).throw(
+        AssertionError("modo tcgcsv não deve chamar pokemontcg.io"))
+    for setcode, edition in sets:
+        assert sc._prefill_tcgcsv_set(setcode, edition), f"prefill {setcode} falhou"
+    return sc
+
+
+PRE = ("sv8pt5", "SV: Prismatic Evolutions")
+SSP = ("sv8", "SV08: Surging Sparks")
+BLK = ("zsv10pt5", "SV: Black Bolt")
+MEW = ("sv3pt5", "SV: Scarlet & Violet 151")
+CCC = ("cel25c", "Celebrations: Classic Collection")
+ASC = ("me2pt5", "ME: Ascended Heroes")
+SFA = ("sv6pt5", "SV: Shrouded Fable")
+
+
+def test_normalize_card_name_real_tcgcsv_names():
+    """v5.20 req. 1: remove o sufixo ' - NNN/MMM' (inclusive no MEIO do nome) e o
+    '(NNN/MMM)', preservando qualificador de variante e mecânica."""
+    from myp_arbitrage_scanner import normalize_card_name as n
+    assert n("Alolan Dugtrio - 123/191") == "alolan dugtrio"
+    assert n("Mew ex - 205/165 (151 Metal Card)") == "mew ex 151 metal card"
+    assert n("Mew ex (205/165)") == "mew ex"                     # nome MYP
+    assert n("Exeggutor (Master Ball Pattern)") == "exeggutor master ball pattern"
+    assert n("Erika's Oddish (Poke Ball)") == n("Erika’s Oddish (Poké Ball)")
+    assert n("Klink - 139/086") == n("Klink (139/086)") == "klink"
+    assert n("Heatran-EX (109/116)") == "heatran ex"
+    print("  normalize_card_name: ' - NNN/MMM' + '(NNN/MMM)' fora, variante preservada ✓")
+
+
+def test_classify_myp_finish_vocab():
+    """v5.20 req. 2: vocabulário da célula td.estoque-lista-nomeenfoil."""
+    from myp_arbitrage_scanner import classify_myp_finish as cf
+    subs = ["Normal", "Holofoil", "Reverse Holofoil"]
+    def ok(label):
+        kind, pred = cf(label)
+        return kind, (None if pred is None else [s for s in subs if pred(s)])
+    assert ok("") == ("padrao", ["Normal", "Holofoil"])
+    assert ok("Normal") == ("padrao", ["Normal", "Holofoil"])
+    assert ok("Foil") == ("foil", ["Holofoil", "Reverse Holofoil"])
+    assert ok("Reverse Foil") == ("foil", ["Reverse Holofoil"])
+    assert ok("Full-Art") == ("foil", ["Holofoil"])
+    assert ok("Altered Art") == ("especial", None)
+    assert ok(None) == ("ausente", None)
+    assert ok("Promo Stamp") == ("desconhecido", None)
+    print("  vocabulário de acabamento MYP → subtypes TCG ✓")
+
+
+def test_quote_holo_only_product_empty_cell():
+    """v5.20 req. 2: produto que só existe como Holofoil no tcgcsv — célula
+    vazia (ou 'Normal') casa o Holofoil (Leafeon ex 006/131; Alolan Dugtrio
+    208/191, cujo nome real traz o sufixo ' - 208/191')."""
+    sc = _variants_scraper(PRE, SSP)
+    q = sc._tcgcsv_quote("Leafeon ex (006/131)", PRE[1], [""])
+    assert q["status"] == "VERIFIED", q
+    assert (q["product_id"], q["finish"], q["usd"]) == (610361, "Holofoil", 4.40), q
+    q = sc._tcgcsv_quote("Alolan Dugtrio (208/191)", SSP[1], ["Normal"])
+    assert q["status"] == "VERIFIED", q
+    assert (q["product_id"], q["finish"], q["usd"]) == (589857, "Holofoil", 8.62), q
+    print("  holo-only: célula vazia/Normal casa Holofoil ✓")
+
+
+def test_quote_finish_selects_subtype():
+    """v5.20: o rótulo da oferta MYP escolhe o subtype (Alolan Dugtrio 123/191:
+    Normal US$0,07 × Reverse US$0,25) — antes era sempre o menor."""
+    sc = _variants_scraper(SSP)
+    q = sc._tcgcsv_quote("Alolan Dugtrio (123/191)", SSP[1], ["Foil"])
+    assert (q["status"], q["finish"], q["usd"]) == ("VERIFIED", "Reverse Holofoil", 0.25), q
+    q = sc._tcgcsv_quote("Alolan Dugtrio (123/191)", SSP[1], [""])
+    assert (q["status"], q["finish"], q["usd"]) == ("VERIFIED", "Normal", 0.07), q
+    # célula ausente (drift) → sem restrição → menor entre acabamentos (legado)
+    q = sc._tcgcsv_quote("Alolan Dugtrio (123/191)", SSP[1], [None])
+    assert (q["status"], q["finish"], q["usd"]) == ("VERIFIED", "Normal", 0.07), q
+    # empate de preço com rótulos diferentes → união → menor
+    q = sc._tcgcsv_quote("Alolan Dugtrio (123/191)", SSP[1], ["", "Foil"])
+    assert (q["status"], q["usd"]) == ("VERIFIED", 0.07), q
+    print("  acabamento MYP escolhe o subtype (Foil→Reverse, vazio→Normal) ✓")
+
+
+def test_quote_foil_ambiguous_takes_min():
+    """v5.20: 'Foil' numa rara com Holofoil E Reverse (Umbreon 059/131: 0,47 ×
+    0,76) é ambíguo → menor preço (limite inferior: nunca infla a margem)."""
+    sc = _variants_scraper(PRE)
+    q = sc._tcgcsv_quote("Umbreon (059/131)", PRE[1], ["Foil"])
+    assert (q["status"], q["product_id"], q["finish"], q["usd"]) == \
+        ("VERIFIED", 610414, "Holofoil", 0.47), q
+    assert "menor preço" in q["reason"], q["reason"]
+    print("  Foil ambíguo (Holofoil/Reverse) → menor preço ✓")
+
+
+def test_quote_pattern_variants_never_pick_expensive():
+    """v5.20: Umbreon 059/131 tem 3 produtos REAIS — base US$0,47, Poké Ball
+    US$3,73, Master Ball US$73,07. Nome exato escolhe a variante; sem nome exato
+    → REVIEW com a versão MAIS BARATA (nunca a Master Ball)."""
+    sc = _variants_scraper(PRE, BLK)
+    q = sc._tcgcsv_quote("Umbreon (059/131)", PRE[1], [""])
+    assert (q["status"], q["product_id"], q["usd"]) == ("VERIFIED", 610414, 0.47), q
+    q = sc._tcgcsv_quote("Umbreon (Master Ball Pattern) (059/131)", PRE[1], [""])
+    assert (q["status"], q["product_id"], q["usd"]) == ("VERIFIED", 610679, 73.07), q
+    q = sc._tcgcsv_quote("Umbreon Master Ball (059/131)", PRE[1], [""])
+    assert q["status"] == "REVIEW", q
+    assert (q["product_id"], q["usd"]) == (610414, 0.47), q
+    assert "3 produtos TCG com o nº 059/131" in q["reason"], q["reason"]
+    q = sc._tcgcsv_quote("Klink (061/086)", BLK[1], ["Foil"])
+    assert (q["status"], q["product_id"], q["finish"], q["usd"]) == \
+        ("VERIFIED", 642180, "Reverse Holofoil", 0.17), q
+    print("  variantes Poké/Master Ball: nome exato decide; senão REVIEW c/ a mais barata ✓")
+
+
+def test_quote_denominator_fixes_classic_collection():
+    """v5.20: Celebrations Classic Collection #15 = 4 cartas DIFERENTES (Venusaur
+    15/102, Here Comes Team Rocket! 15/82, Rocket's Zapdos 15/132, Claydol
+    15/106). O join legado dava a todas o preço do Venusaur (US$10,58)."""
+    sc = _variants_scraper(CCC)
+    assert sc._ptcg_cache["cel25c-15"] == 10.58, "documenta o cache legado (Venusaur)"
+    q = sc._tcgcsv_quote("Claydol (15/106)", CCC[1], [""])
+    assert (q["status"], q["product_id"], q["usd"]) == ("VERIFIED", 250333, 0.42), q
+    q = sc._tcgcsv_quote("Venusaur (15/102)", CCC[1], [""])
+    assert (q["status"], q["product_id"], q["usd"]) == ("VERIFIED", 250321, 10.58), q
+    q = sc._tcgcsv_quote("Claydol (15/999)", CCC[1], [""])
+    assert q["status"] == "REVIEW" and "denominador diverge" in q["reason"], q
+    assert q["usd"] == 0.42, q      # conservador: a mais barata entre as 4
+    print("  denominador separa as 4 cartas #15 da Classic Collection ✓")
+
+
+def test_quote_energy_sharing_number():
+    """v5.20: Shrouded Fable 1 = Joltik 001/064 E 'Basic Grass Energy' (nº '1',
+    sem denominador) — o denominador + nome resolvem."""
+    sc = _variants_scraper(SFA)
+    q = sc._tcgcsv_quote("Joltik (001/064)", SFA[1], [""])
+    assert (q["status"], q["product_id"], q["finish"]) == ("VERIFIED", 560311, "Normal"), q
+    print("  energia com o mesmo nº não contamina a carta ✓")
+
+
+def test_quote_mew_metal_card():
+    """v5.20: 'Mew ex - 205/165' × 'Mew ex - 205/165 (151 Metal Card)' — o
+    sufixo ' - NNN/MMM' no MEIO do nome não impede o match exato."""
+    sc = _variants_scraper(MEW)
+    q = sc._tcgcsv_quote("Mew ex (205/165)", MEW[1], [""])
+    assert (q["status"], q["product_id"], q["finish"], q["usd"]) == \
+        ("VERIFIED", 517051, "Holofoil", 27.81), q
+    q = sc._tcgcsv_quote("Mew ex (151 Metal Card) (205/165)", MEW[1], [""])
+    assert (q["status"], q["product_id"], q["usd"]) == ("VERIFIED", 519481, 22.86), q
+    print("  Mew ex base × 151 Metal Card resolvidos pelo nome ✓")
+
+
+def test_quote_finish_absent_in_product_goes_review():
+    """v5.20 req. 5: 'Foil' no Erika's Oddish base (só Normal; os reverse são
+    produtos próprios '(Poke Ball)'/'(Energy Symbol Pattern)') → REVIEW com o
+    menor preço do produto, nunca preço inventado."""
+    sc = _variants_scraper(ASC)
+    q = sc._tcgcsv_quote("Erika's Oddish (001/217)", ASC[1], ["Foil"])
+    assert q["status"] == "REVIEW", q
+    assert (q["product_id"], q["usd"]) == (675813, 0.17), q
+    assert "não existe neste produto" in q["reason"], q["reason"]
+    q = sc._tcgcsv_quote("Erika's Oddish (001/217)", ASC[1], [""])
+    assert (q["status"], q["finish"], q["usd"]) == ("VERIFIED", "Normal", 0.17), q
+    print("  acabamento inexistente no produto → REVIEW conservador ✓")
+
+
+def test_quote_altered_and_unknown_labels_review():
+    """v5.20: 'Altered Art' (cópia alterada à mão) e rótulo desconhecido nunca
+    viram VERIFIED."""
+    sc = _variants_scraper(SSP)
+    for lab in ("Altered Art", "Promo Stamp"):
+        q = sc._tcgcsv_quote("Alolan Dugtrio (208/191)", SSP[1], [lab])
+        assert q["status"] == "REVIEW" and "não verificável" in q["reason"], (lab, q)
+        assert q["usd"] == 8.62, q
+    assert sc._tcgcsv_quote("Nada (999/191)", SSP[1], [""]) is None, \
+        "cid sem candidatos → None (caller segue o caminho legado)"
+    print("  Altered Art / rótulo desconhecido → REVIEW ✓")
+
+
+def _variant_page(card_h1, estat_brl, offers):
+    """Página MYP com ofertas EN-NM (preço, acabamento)."""
+    rows = "".join(_seller_row("Inglês", "NM - Quase nova", p, foil=f) for p, f in offers)
+    return (f'<html><body><h1>{card_h1}</h1>'
+            f'<span class="estat-tcg">TCG Player: R$ {estat_brl}</span>'
+            f'<table class="table-striped table-bordered"><tbody>{rows}</tbody></table>'
+            f'</body></html>')
+
+
+def test_scrape_product_variant_match_e2e():
+    """v5.20 e2e: scrape_product usa o acabamento da oferta MAIS BARATA e o
+    produto exato. Master Ball Umbreon (nome exato) → VERIFIED US$73,07;
+    nome sem match exato → REVIEW com a base (US$0,47), linha NÃO suprimida."""
+    sc = _variants_scraper(PRE)
+    html = _variant_page("Umbreon (Master Ball Pattern) (059/131)", "900,00",
+                         [("260,00", ""), ("250,00", "")])
+    sc._get = lambda url, save_debug=False: BeautifulSoup(html, "lxml")
+    card = sc.scrape_product("https://mypcards.com/pokemon/produto/1/umbreon-mb", PRE[1])
+    assert card is not None
+    assert (card.match_status, card.tcg_product_id, card.tcg_source) == \
+        ("VERIFIED", 610679, "tcgcsv"), card
+    assert abs(card.tcg_real_usd - 73.07) < 1e-6 and card.myp_finish == "(vazio)", card
+    assert abs(card.margin_pct - (73.07 * 5.0 - 250.0) / 250.0) < 1e-9, card.margin_pct
+
+    html = _variant_page("Umbreon Master Ball (059/131)", "900,00",
+                         [("120,00", "Normal"), ("100,00", "Foil")])
+    sc._get = lambda url, save_debug=False: BeautifulSoup(html, "lxml")
+    card = sc.scrape_product("https://mypcards.com/pokemon/produto/2/umbreon-x", PRE[1])
+    assert card is not None, "REVIEW não pode suprimir a linha"
+    assert card.myp_finish == "Foil", card.myp_finish       # oferta de R$100
+    assert (card.match_status, card.tcg_product_id) == ("REVIEW", 610414), card
+    assert abs(card.tcg_real_usd - 0.47) < 1e-6, card.tcg_real_usd
+    assert card.margin_pct is not None, "margem da linha REVIEW não é suprimida"
+    assert sc._stats["tcgcsv_match_verified"] == 1 and sc._stats["tcgcsv_match_review"] == 1
+    print("  e2e: VERIFIED Master Ball exato; REVIEW mantém a linha c/ ref conservadora ✓")
+
+
+def test_scrape_product_bilingual_title_uses_en_name():
+    """v5.20: o h1 do MYP é "Nome PT (NNN/MMM)Nome EN" (padrão bilíngue da
+    plataforma). O clean_card_name guarda o PT; o match por nome do tcgcsv
+    (catálogo EN) também testa o nome EN — "Oddish de Erika" casa o produto
+    "Erika's Oddish" (e não as variantes '(Poke Ball)'/'(Energy Symbol
+    Pattern)' do mesmo nº em Ascended Heroes)."""
+    sc = _variants_scraper(ASC, PRE)
+    html = _variant_page("Oddish de Erika (001/217)Erika's Oddish", "400,00",
+                         [("60,00", "")])
+    sc._get = lambda url, save_debug=False: BeautifulSoup(html, "lxml")
+    card = sc.scrape_product("https://mypcards.com/pokemon/produto/3/oddish", ASC[1])
+    assert card is not None
+    assert card.name == "Oddish de Erika (001/217)", card.name   # display intacto
+    assert (card.match_status, card.tcg_product_id, card.tcg_finish) == \
+        ("VERIFIED", 675813, "Normal"), (card.match_status, card.match_reason)
+    # variante com nome EN exato depois do número
+    html = _variant_page("Umbreon (Padrão Master Ball) (059/131)Umbreon (Master Ball Pattern)",
+                         "900,00", [("250,00", "")])
+    sc._get = lambda url, save_debug=False: BeautifulSoup(html, "lxml")
+    card = sc.scrape_product("https://mypcards.com/pokemon/produto/4/umbreon-mb", PRE[1])
+    assert (card.match_status, card.tcg_product_id) == ("VERIFIED", 610679), card.match_reason
+    print("  título bilíngue: nome EN depois do nº casa o produto tcgcsv ✓")
+
+
+def test_v520_columns_roundtrip_aggregate_and_link():
+    """v5.20: as 6 colunas de identidade saem APÓS 'TCG URL', sobrevivem ao
+    aggregate dos chunks e o link TCG aponta o PRODUTO exato."""
+    from myp_aggregate import load_chunk_cards
+    c = CardData(
+        name="Umbreon (Master Ball Pattern) (059/131)", edition="SV: Prismatic Evolutions",
+        product_url="https://myp/umbreon", myp_lowest_en_nm=250.0,
+        tcg_player_price=365.35, tcg_real_usd=73.07, tcg_source="tcgcsv",
+        margin_pct=0.4614, margin_brl=115.35, en_nm_sellers=2, last_updated="2026-09-24",
+        myp_finish="(vazio)", tcg_finish="Holofoil", tcg_product_id=610679,
+        tcg_product_name="Umbreon (Master Ball Pattern)", match_status="VERIFIED",
+        match_reason="nome exato entre 3 produtos com o nº",
+    )
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        out = f.name
+    generate_xlsx([c], out, threshold=0.30)
+    ws = load_workbook(out)["All EN Cards"]
+    hdr = [x.value for x in next(ws.iter_rows(min_row=1, max_row=1))]
+    assert hdr[:18] == LEGACY_18_COLUMNS and hdr[18:] == V520_MATCH_COLUMNS, hdr
+    row = {h: ws.cell(row=2, column=i + 1).value for i, h in enumerate(hdr)}
+    assert row["TCG URL"] == "https://www.tcgplayer.com/product/610679", row["TCG URL"]
+    assert row["Match Status"] == "VERIFIED" and row["TCG Product ID"] == 610679, row
+    back = load_chunk_cards(Path(out))
+    assert len(back) == 1
+    b = back[0]
+    assert (b.match_status, b.tcg_product_id, b.tcg_finish, b.tcg_product_name,
+            b.myp_finish, b.match_reason) == \
+        ("VERIFIED", 610679, "Holofoil", "Umbreon (Master Ball Pattern)", "(vazio)",
+         "nome exato entre 3 produtos com o nº"), b
+    Path(out).unlink()
+    print("  colunas v5.20 após 'TCG URL' + round-trip aggregate + link de produto ✓")
+
+
+def test_summary_review_bucket_keeps_canonical_table():
+    """v5.20 req. 5: REVIEW sai do balde limpo pra um balde 'validar' próprio,
+    com Motivo e os 2 links — e a tabela canônica dos limpos NÃO muda."""
+    from myp_summary import build_markdown
+    ok = _tcgcsv_deal("Venusaur ex (001/142)", 50.0, 80.0, 16.0)
+    rv = _tcgcsv_deal("Umbreon Master Ball (059/131)", 50.0, 90.0, 18.0)
+    rv.match_status, rv.tcg_product_id = "REVIEW", 610414
+    rv.match_reason = "3 produtos TCG com o nº 059/131: nenhum com o nome exato"
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        xlsx = f.name
+    generate_xlsx([ok, rv], xlsx, threshold=0.30)
+    with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as f:
+        md = f.name
+    assert build_markdown(xlsx, md, scan_type="daily", run_id="", repo="x/y") == 0
+    text = Path(md).read_text(encoding="utf-8")
+    assert "| # | Margem % | MYP R$ | TCG US$ | Dif | Carta | Set | Raridade | Cond | Qtd | Links |" \
+        in text, "tabela canônica dos limpos mudou"
+    assert "limpos" in (_section_of(text, "Venusaur ex") or "").lower()
+    sec = _section_of(text, "Umbreon Master Ball")
+    assert sec is not None and "variante/acabamento TCG a validar" in sec, sec
+    line = next(l for l in text.splitlines() if "Umbreon Master Ball" in l and l.startswith("|"))
+    assert "nenhum com o nome exato" in line, line
+    assert "[oferta](" in line and "[TCG](https://www.tcgplayer.com/product/610414)" in line, line
+    assert "**🔎 Variante a validar:** 1" in text
+    Path(xlsx).unlink(); Path(md).unlink()
+    print("  summary: REVIEW em balde próprio (Motivo + 2 links); tabela limpa intacta ✓")
+
+
 def main():
     tests = [
         ("threshold constant", test_threshold_constant),
@@ -2553,6 +2905,21 @@ def main():
         ("fix: generate_xlsx cria dir-alvo ausente (clone limpo sem results/)", test_xlsx_creates_missing_output_dir),
         ("v5.19.1 dual-flag (supranum+suspect) sai em 1 balde só", test_summary_dual_flag_deal_single_bucket),
         ("v5.19.1 pipe em nome/edição escapado na tabela", test_summary_pipe_in_name_escaped),
+        ("v5.20 normalize_card_name (nomes reais tcgcsv)", test_normalize_card_name_real_tcgcsv_names),
+        ("v5.20 vocabulário de acabamento MYP", test_classify_myp_finish_vocab),
+        ("v5.20 holo-only: célula vazia casa Holofoil", test_quote_holo_only_product_empty_cell),
+        ("v5.20 acabamento escolhe o subtype", test_quote_finish_selects_subtype),
+        ("v5.20 Foil ambíguo → menor preço", test_quote_foil_ambiguous_takes_min),
+        ("v5.20 variantes Poké/Master Ball (nunca a cara)", test_quote_pattern_variants_never_pick_expensive),
+        ("v5.20 denominador (Classic Collection #15)", test_quote_denominator_fixes_classic_collection),
+        ("v5.20 energia com o mesmo nº", test_quote_energy_sharing_number),
+        ("v5.20 Mew ex × 151 Metal Card", test_quote_mew_metal_card),
+        ("v5.20 acabamento inexistente → REVIEW", test_quote_finish_absent_in_product_goes_review),
+        ("v5.20 Altered Art / desconhecido → REVIEW", test_quote_altered_and_unknown_labels_review),
+        ("v5.20 e2e scrape_product VERIFIED/REVIEW", test_scrape_product_variant_match_e2e),
+        ("v5.20 título bilíngue: nome EN casa o tcgcsv", test_scrape_product_bilingual_title_uses_en_name),
+        ("v5.20 colunas + aggregate + link de produto", test_v520_columns_roundtrip_aggregate_and_link),
+        ("v5.20 summary: balde REVIEW + tabela canônica", test_summary_review_bucket_keeps_canonical_table),
     ]
     failed = 0
     for name, fn in tests:

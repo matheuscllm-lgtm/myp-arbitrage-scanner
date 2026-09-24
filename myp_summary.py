@@ -262,9 +262,25 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
     # R$2867 vs MYP R$60 → 4678%). Agora fallback sai do balde limpo e vai pro
     # balde dedicado `deals_fallback` ("validar manualmente"). Regra dura do
     # CLAUDE.md: "Nunca trate fallback como real".
+    # v5.20 (pendencias#10): "o preço é da VERSÃO certa?" — coluna "Match
+    # Status" do XLSX. REVIEW = o join tcgcsv não achou produto/acabamento
+    # únicos (variante Poké Ball/Master Ball, acabamento MYP sem subtype TCG,
+    # denominador divergente…) e usou a referência CONSERVADORA (menor preço
+    # entre os candidatos). Preço é real, mas a variante precisa de validação
+    # → sai do balde limpo e vai pro balde dedicado `deals_review`. XLSX antigo
+    # (sem a coluna) → nunca REVIEW (comportamento legado).
+    def _is_review(c) -> bool:
+        return str(c.get("Match Status") or "").strip().upper() == "REVIEW"
+
     deals_clean = [
         c for c in deals_sorted
         if not _is_rarity_mislabel(c) and not _is_suspect(c) and _is_real(c)
+        and not _is_review(c)
+    ]
+    deals_review = [
+        c for c in deals_sorted
+        if not _is_rarity_mislabel(c) and not _is_suspect(c) and _is_real(c)
+        and _is_review(c)
     ]
     deals_fallback = [
         c for c in deals_sorted
@@ -276,7 +292,8 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
     # Precedência: tcg_suspect é o sinal mais forte (o PREÇO de referência é
     # provavelmente de outra carta → margem fake), então ele fica dono da linha;
     # o supranumerário fica com o resto. Nenhum deal some: limpos + fallback +
-    # suspect + supranum = todos os deals ≥threshold, cada um em UM balde.
+    # suspect + supranum (+ review, v5.20) = todos os deals ≥threshold, cada
+    # um em UM balde.
     deals_supranum = [c for c in deals_sorted
                       if _is_rarity_mislabel(c) and not _is_suspect(c)]
     deals_suspect = [c for c in deals_sorted if _is_suspect(c)]
@@ -304,6 +321,7 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
     threshold = summary_data.get("Margin Threshold", "25%")
     lines.append(f"**Cards EN escaneados:** {total} | **Deals (≥{threshold}):** {deals_n} | "
                  f"**Limpos (preço real):** {len(deals_clean)} | "
+                 f"**🔎 Variante a validar:** {len(deals_review)} | "
                  f"**Fallback:** {len(deals_fallback)} | "
                  f"**🚨 TCG suspects:** {len(deals_suspect)} | "
                  f"**Truncation:** {len(truncations)}")
@@ -343,6 +361,9 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
     deals_clarif = (f" — {len(deals_clean)} deal(s) limpo(s) ≥{threshold} (preço real)"
                     if deals_clean else
                     f" — nenhum deal limpo ≥{threshold} nesta run")
+    if deals_review:
+        deals_clarif += (f"; {len(deals_review)} deal(s) com variante/acabamento "
+                         f"TCG a validar (referência conservadora — em balde à parte)")
     if deals_fallback:
         deals_clarif += (f"; {len(deals_fallback)} deal(s) só com preço fallback "
                          f"`.estat-tcg` (margem NÃO-confiável — em balde à parte)")
@@ -416,6 +437,46 @@ def build_markdown(xlsx: str, output: str, scan_type: str,
                 f"{carta} | {ed} | {rarity} | NM | {qty} | {links} |"
             )
     lines.append("")
+
+    # ── v5.20: variante/acabamento TCG sem match único (validar manualmente) ──
+    # Preço REAL (tcgcsv), mas o join não identificou UM produto/acabamento
+    # (ex.: mesmo nº com versões Poké Ball/Master Ball; acabamento MYP que não
+    # existe no produto; denominador divergente). A referência é CONSERVADORA
+    # (a versão mais barata) — a margem é um piso, não é inflada. Mesmas colunas
+    # canônicas do balde limpo + Motivo; os 2 links (oferta · TCG) em toda linha.
+    if deals_review:
+        lines.append("## 🔎 Deals com variante/acabamento TCG a validar (validar manualmente)")
+        lines.append("")
+        lines.append("> O preço TCG é **real** (tcgcsv), mas o número desta carta tem mais "
+                     "de uma versão no TCGplayer (ex.: padrão Poké Ball/Master Ball) **ou** o "
+                     "acabamento da oferta MYP não casou um só acabamento do produto. A "
+                     "referência usada é a **versão mais barata** (margem = piso, nunca "
+                     "inflada). **Antes de operar:** confira no Link TCG se a versão/"
+                     "acabamento é o da oferta — o motivo está na coluna Motivo.")
+        lines.append("")
+        lines.append("| # | Margem (piso) | MYP R$ | TCG US$ | Dif | Carta | Set | Raridade | Cond | Qtd | Motivo | Links |")
+        lines.append("|---|---:|---:|---:|---:|---|---|---|---|---:|---|---|")
+        for i, c in enumerate(deals_review, 1):
+            name = c.get("Card Name")
+            carta = md_cell(carta_label(name))
+            ed = md_cell((c.get("Edition") or "").strip())
+            rarity = md_cell((c.get("Rarity") or "").strip()) or "—"
+            myp = fmt_brl(c.get("MYP EN NM (R$)"))
+            tcg_usd = reference_price(fmt_usd(c.get("TCG US$")), c.get("TCG URL"))
+            margin = fmt_pct(c.get("Margin %"))
+            diff = fmt_brl(c.get("Diff (R$)"))
+            qty = c.get("NM Sellers") or 0
+            motivo = md_cell((c.get("Match Reason") or "").strip()) or "—"
+            links = delivery_links(
+                c.get("URL"), name, ed,
+                oversized=bool(c.get("⚠️ COLLECTOR#")),
+                tcg_url=c.get("TCG URL"),
+            )
+            lines.append(
+                f"| {i} | {margin} | {myp} | {tcg_usd} | {diff} | "
+                f"{carta} | {ed} | {rarity} | NM | {qty} | {motivo} | {links} |"
+            )
+        lines.append("")
 
     # ── Deals com flag SIR (alto risco) ──
     lines.append("## ⚠️ Deals com raridade suspeita (supranumerário + 'Comum' — validar)")

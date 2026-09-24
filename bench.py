@@ -107,7 +107,10 @@ def _product_html(num: int) -> str:
     número de colecionador único por produto (cids distintos → cache miss →
     1 round-trip pokemontcg.io por card, que é o que o batch vai otimizar)."""
     return (
-        f"<html><body><h1>Bench Card ({num:03d}/999)</h1>"
+        # v5.20: denominador /191 = o mesmo do fixture tcgcsv (products "n/191")
+        # — o match por produto (pendencias#10) exige nº+denominador batendo;
+        # com /999 todo card viraria REVIEW (denominador diverge).
+        f"<html><body><h1>Bench Card ({num:03d}/191)</h1>"
         f'<span class="estat-tcg">TCG Player: R$ 300,00</span>'
         f'<table class="table-striped table-bordered"><tbody>'
         f'<tr><td><span class="flag-icon" title="Inglês"></span></td>'
@@ -184,12 +187,15 @@ def run_once(args) -> tuple[float, dict]:
     # v5.13: o bench precisa demonstrar a SAÍDA (deals), não só velocidade/calls
     # — senão uma otimização que zerasse os deals passaria no gate. Deal = card
     # com margem ≥ threshold (mesma definição do summary do scanner, L1615).
-    # `deals_clean` exclui tcg_suspect (o que de fato entra na sheet 🔥 Deals).
+    # `deals_clean` exclui tcg_suspect (o que de fato entra na sheet 🔥 Deals)
+    # e, v5.20, Match Status REVIEW (variante/acabamento TCG sem match único —
+    # vai pro balde "validar" do summary, não pro limpo).
     stats = dict(sc._stats)
     thr = sc.margin_threshold
     stats["deals"] = sum(1 for c in sc.cards if c.margin_pct and c.margin_pct >= thr)
     stats["deals_clean"] = sum(1 for c in sc.cards
-                               if c.margin_pct and c.margin_pct >= thr and not c.tcg_suspect)
+                               if c.margin_pct and c.margin_pct >= thr and not c.tcg_suspect
+                               and c.match_status != "REVIEW")
     return wall, stats
 
 
@@ -236,6 +242,9 @@ def main():
         # por ela. No default agora estes sobem e ptcg_calls fica 0 (esperado).
         ("tcgcsv_prefill_sets", f"{stats.get('tcgcsv_prefill_sets', 0):8d}"),
         ("tcg_from_tcgcsv", f"{stats.get('tcg_from_tcgcsv', 0):8d}"),
+        # v5.20: match tcgcsv por produto/acabamento (REVIEW = sem match único).
+        ("  match_verified", f"{stats.get('tcgcsv_match_verified', 0):8d}"),
+        ("  match_review", f"{stats.get('tcgcsv_match_review', 0):8d}"),
         ("t_http_total_s", f"{stats.get('t_http_total', 0.0):8.2f}"),
         ("t_ptcg_total_s", f"{stats.get('t_ptcg_total', 0.0):8.2f}"),
         ("t_editions_total_s", f"{stats.get('t_editions_total', 0.0):8.2f}"),

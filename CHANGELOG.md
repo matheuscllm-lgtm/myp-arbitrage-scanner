@@ -1,5 +1,79 @@
 # Changelog
 
+## v5.20 — 2026-09-24 — match tcgcsv por PRODUTO + ACABAMENTO (pendencias#10)
+
+**O que muda em uma frase:** a referência TCGplayer deixa de ser "o 1º produto
+com aquele número do colecionador, no acabamento mais barato" e passa a ser o
+**produto e o acabamento da oferta MYP** — quando isso não é identificável com
+certeza, a linha vai pra um balde **"variante a validar"** com o motivo e uma
+referência **conservadora** (a versão mais barata), sem sumir da entrega.
+Refaz a ideia do PR #99 (fechado em 2026-09-16) sobre a `main`, validada contra
+dados reais do tcgcsv.
+
+### O problema, medido (dump tcgcsv de 2026-09-24, 108 sets mapeados)
+
+- **414 números** de colecionador têm MAIS DE UM produto TCGplayer no mesmo set:
+  padrões Poké Ball/Master Ball (Prismatic Evolutions, Black Bolt, White
+  Flare), "Energy Symbol Pattern"/"Poke Ball" (Ascended Heroes), "151 Metal
+  Card", energia básica com o nº de uma carta (Shrouded Fable 1–8).
+  Ex.: **Umbreon 059/131** = base US$0,47 · Poké Ball US$3,73 · **Master Ball
+  US$73,07** (155×).
+- O join legado (só numerador; 1º produto com preço vence) dava a **4 cartas
+  diferentes** da Celebrations Classic Collection #15 (Venusaur 15/102,
+  Claydol 15/106, Rocket's Zapdos 15/132, Here Comes Team Rocket! 15/82) o
+  preço do **Venusaur (US$10,58)** — o Claydol vale US$0,42.
+- O acabamento declarado na oferta MYP (célula `td.estoque-lista-nomeenfoil`)
+  era ignorado: o preço era sempre o menor subtype do produto.
+
+### O que o scanner faz agora (`_tcgcsv_quote`, fail-closed)
+
+1. **Identidade:** candidatos = todos os produtos do numerador no set; o
+   **denominador** do MYP (`(15/106)`) filtra; nº único → aceita (como antes);
+   nº compartilhado → exige **nome normalizado EXATO e único**. A normalização
+   (`normalize_card_name`) remove o sufixo ` - NNN/MMM` do tcgcsv — inclusive
+   no meio (`Mew ex - 205/165 (151 Metal Card)`) — e o `(NNN/MMM)` do MYP,
+   preservando o qualificador de variante (`(Master Ball Pattern)`). O título
+   MYP é bilíngue ("Nome PT (NNN/MMM)Nome EN"): o nome EN depois do número
+   também vale no match ("Oddish de Erika" casa "Erika's Oddish").
+2. **Acabamento** (`classify_myp_finish`): vazio/Normal → impressão padrão
+   (não-Reverse; produto de acabamento único — ex. holo-only — casa ele);
+   Foil → Holofoil/Reverse (ambíguo → **menor** preço); Reverse → Reverse
+   Holofoil; Holo/Full-Art → Holofoil; **Altered Art** (cópia alterada à mão)
+   e rótulo desconhecido → REVIEW; célula ausente → sem restrição (legado).
+   Empate de preço entre ofertas com rótulos diferentes → união → menor.
+3. **Sem match único → `Match Status = REVIEW`** com o motivo em `Match
+   Reason` e referência = a versão mais barata entre os candidatos (margem =
+   piso, nunca inflada). Produto identificado sem preço → fallback honesto.
+
+### Saída
+
+- **XLSX:** as 18 colunas legadas NÃO mudam de ordem; depois de `TCG URL` vêm
+  `MYP Finish`, `TCG Finish`, `TCG Product ID`, `TCG Product Name`,
+  `Match Status`, `Match Reason`. Com `TCG Product ID`, o `TCG URL` aponta o
+  **produto exato** (`tcgplayer.com/product/<id>`). `myp_aggregate.py`
+  preserva as 6 colunas entre chunks. Summary ganhou "🔎 Variante TCG a validar".
+- **Entrega (`myp_summary.py`):** tabela canônica dos limpos intacta (compatível
+  com `chat_format.reference_price`); linhas REVIEW saem do balde limpo pra
+  "🔎 Deals com variante/acabamento TCG a validar" (colunas canônicas + Motivo,
+  2 links por linha); contagem na linha de stats.
+- `bench.py`: fixture com denominador coerente (/191) + métricas
+  `match_verified`/`match_review`; `deals_clean` exclui REVIEW.
+
+### Validação
+
+- Fixture com recorte **REAL** do tcgcsv (`test_tcgcsv_variants_fixture.json`:
+  Surging Sparks, Prismatic Evolutions, Black Bolt, 151, Classic Collection,
+  Ascended Heroes, Shrouded Fable) + 15 testes novos; os testes que protegem o
+  override do `.estat-tcg` (`test_real_tcg_overrides_estat`,
+  `test_prices_card_without_estat_tcg`) ficaram intactos.
+- `python -m pytest -q`: **157 passed**; `python test_v5_8_offline.py`: **75/75**.
+- `bench.py` (mockado): 16 deals limpos antes e depois; 16 VERIFIED, 0 REVIEW.
+- Scan real antes × depois (req. 6 da pendência): **não executado** — a regra
+  vigente do operador (2026-09-24) proíbe scan no GitHub Actions e o MYP
+  bloqueia o container da nuvem (Cloudflare). Validação feita offline contra
+  o catálogo real do tcgcsv; o 1º scan local mostra o efeito no balde
+  "🔎 variante a validar".
+
 ## OP v1.0 — 2026-08-09 — scanner paralelo ONE PIECE + skill scan-myp-op (PR #98)
 
 **O que muda em uma frase:** o repo ganha um scanner PARALELO de One Piece
